@@ -1,0 +1,8 @@
+{
+  "id": "blank-agent",
+  "name": "Blank Agent",
+  "version": "1.0.0",
+  "model": "claude-haiku-4-5-20251001",
+  "session_type": "stateless",
+  "subscribe_topics": ["agent.blank-agent.inbox", "topic.blank.ping"]
+}
