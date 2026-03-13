@@ -24,14 +24,35 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { module as coreModule } from '../modules/core/module.config'
-import { module as ticketsModule } from '../modules/tickets/module.config'
 
-const modules = [coreModule, ticketsModule]
 const route = useRoute()
 const connected = ref(true)
+
+// Core modules (always present)
+const coreModules = [coreModule]
+
+// Plugin metadata injected from main.ts bootstrap (via app.provide)
+interface PluginMeta { id: string; name: string; uiEntry: string | null }
+const pluginMeta = inject<PluginMeta[]>('pluginMeta', [])
+
+// Static nav entries for known federation plugins
+const PLUGIN_NAV: Record<string, { label: string; icon: string; path: string }> = {
+  'dev-team': { label: 'Tickety', icon: '📋', path: '/tickets' },
+}
+
+const pluginModules = computed(() =>
+  pluginMeta
+    .filter((p) => p.uiEntry && PLUGIN_NAV[p.id])
+    .map((p) => {
+      const nav = PLUGIN_NAV[p.id]!
+      return { id: p.id, label: nav.label, icon: nav.icon, routes: [{ path: nav.path }] }
+    }),
+)
+
+const modules = computed(() => [...coreModules, ...pluginModules.value])
 
 function isActive(path: string): boolean {
   if (path === '/') return route.path === '/'
