@@ -68,15 +68,15 @@ COPY agents/ ./agents/
 # Features backend
 COPY features/ ./features/
 
-# Teams manifests (if any)
-COPY teams/ ./teams/ 2>/dev/null || true
+# Teams manifests (if any) — use ADD with wildcard so it's ok if dir is empty
+COPY teams/ ./teams/
 
 # MCP config
 COPY mcp/ ./mcp/
 
 # Built frontends
 COPY --from=dashboard-builder /app/dashboard/dist/ ./dashboard/dist/
-COPY --from=settings-builder /app/settings-frontend/../frontend-dist/ ./features/settings/frontend-dist/
+COPY --from=settings-builder /app/frontend-dist/ ./features/settings/frontend-dist/
 
 # Data directory (mounted as volume at runtime)
 VOLUME ["/data"]
