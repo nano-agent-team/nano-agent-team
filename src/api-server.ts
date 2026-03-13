@@ -2,12 +2,14 @@
  * API Server — Express HTTP core
  *
  * Built-in routes (core):
- *   GET  /api/health  — agent statuses
- *   GET  /api/events  — SSE stream
- *   GET  /            — static dashboard/dist/
+ *   GET  /api/health        — agent statuses
+ *   GET  /api/events        — SSE stream
+ *   POST /api/chat/settings — NATS bridge for settings agent
+ *   POST /internal/reload   — live reload features after setup_complete
+ *   GET  /                  — static dashboard/dist/
  *
- * Plugin routes are registered via loadTeamPlugins() from team plugin.mjs files.
- * Example: dev-team plugin registers /api/tickets routes.
+ * Plugin routes are registered via loadFeature() from features/{id}/plugin.mjs
+ * and via loadTeamPlugins() from agents/{id}/plugin.mjs (legacy).
  */
 
 import fs from 'fs';
@@ -15,16 +17,19 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import express, { type Request, type Response } from 'express';
-import type { NatsConnection } from 'nats';
+import { StringCodec, type NatsConnection } from 'nats';
 
-import { API_PORT, AGENTS_DIR } from './config.js';
+import { API_PORT, AGENTS_DIR, DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 import { publish } from './nats-client.js';
 import type { AgentManager } from './agent-manager.js';
+import type { ConfigService } from './config-service.js';
+import type { SetupMode } from './setup-detector.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const codec = StringCodec();
 
-// ─── Plugin interface ─────────────────────────────────────────────────────────
+// ─── Plugin / Feature interface ───────────────────────────────────────────────
 
 export interface TeamPlugin {
   /** Called once at startup to register routes and NATS listeners */
@@ -35,6 +40,9 @@ export interface TeamPlugin {
     opts: {
       emitSseEvent: (event: string, data: unknown) => void;
       publishNats: (subject: string, payload: string) => Promise<void>;
+      dataDir: string;
+      configService: ConfigService;
+      reloadFeatures: () => Promise<void>;
     },
   ): Promise<void>;
 }
@@ -54,17 +62,66 @@ export function emitSseEvent(event: string, data: unknown): void {
   }
 }
 
-// ─── Plugin loader ────────────────────────────────────────────────────────────
+// ─── Feature loader ───────────────────────────────────────────────────────────
 
-/**
- * Scans agents/ subdirectories for plugin.mjs files and loads them.
- * Each team directory (e.g. agents/dev-team/) can have a plugin.mjs that
- * registers additional Express routes and NATS listeners.
- */
+const loadedFeatures = new Map<string, boolean>();
+const FEATURES_DIR = path.join(__dirname, '..', 'features');
+
+export async function loadFeature(
+  featureId: string,
+  app: express.Application,
+  nc: NatsConnection,
+  manager: AgentManager,
+  configService: ConfigService,
+  reloadFeatures: () => Promise<void>,
+): Promise<void> {
+  if (loadedFeatures.has(featureId)) return;
+
+  const featurePath = path.join(FEATURES_DIR, featureId);
+  const featureJsonPath = path.join(featurePath, 'feature.json');
+
+  if (!fs.existsSync(featureJsonPath)) {
+    logger.warn({ featureId, featurePath }, 'Feature not found — skipping');
+    return;
+  }
+
+  const manifest = JSON.parse(fs.readFileSync(featureJsonPath, 'utf8')) as {
+    plugin: string;
+    id: string;
+  };
+  const pluginPath = path.join(featurePath, manifest.plugin);
+
+  try {
+    logger.info({ featureId, pluginPath }, 'Loading feature');
+    const mod = await import(pluginPath) as { default?: TeamPlugin } | TeamPlugin;
+    const plugin = ('default' in mod ? mod.default : mod) as TeamPlugin | undefined;
+
+    if (plugin && typeof plugin.register === 'function') {
+      await plugin.register(app, nc, manager, {
+        emitSseEvent,
+        publishNats: async (subject, payload) => { await publish(nc, subject, payload); },
+        dataDir: DATA_DIR,
+        configService,
+        reloadFeatures,
+      });
+      loadedFeatures.set(featureId, true);
+      logger.info({ featureId }, 'Feature loaded');
+    } else {
+      logger.warn({ featureId }, 'Feature plugin has no register() — skipping');
+    }
+  } catch (err) {
+    logger.error({ err, featureId }, 'Failed to load feature');
+  }
+}
+
+// ─── Legacy team plugin loader (agents/*/plugin.mjs) ─────────────────────────
+
 async function loadTeamPlugins(
   app: express.Application,
   nc: NatsConnection,
   manager: AgentManager,
+  configService: ConfigService,
+  reloadFeatures: () => Promise<void>,
 ): Promise<void> {
   const agentsDir = path.resolve(AGENTS_DIR);
   if (!fs.existsSync(agentsDir)) return;
@@ -82,13 +139,16 @@ async function loadTeamPlugins(
       const plugin = ('default' in mod ? mod.default : mod) as TeamPlugin | undefined;
 
       if (plugin && typeof plugin.register === 'function') {
-        const publishNats = async (subject: string, payload: string): Promise<void> => {
-          await publish(nc, subject, payload);
-        };
-        await plugin.register(app, nc, manager, { emitSseEvent, publishNats });
+        await plugin.register(app, nc, manager, {
+          emitSseEvent,
+          publishNats: async (subject, payload) => { await publish(nc, subject, payload); },
+          dataDir: DATA_DIR,
+          configService,
+          reloadFeatures,
+        });
         logger.info({ plugin: pluginPath }, 'Team plugin registered');
       } else {
-        logger.warn({ plugin: pluginPath }, 'Plugin has no register() export — skipping');
+        logger.warn({ plugin: pluginPath }, 'Plugin has no register() — skipping');
       }
     } catch (err) {
       logger.error({ err, plugin: pluginPath }, 'Failed to load team plugin');
@@ -96,21 +156,79 @@ async function loadTeamPlugins(
   }
 }
 
+// ─── Plugin list for dashboard ────────────────────────────────────────────────
+
+async function getPluginList(): Promise<Array<{ id: string; name: string; uiEntry: string | null }>> {
+  // Collect from loaded features with frontend
+  const list: Array<{ id: string; name: string; uiEntry: string | null }> = [];
+
+  if (!fs.existsSync(FEATURES_DIR)) return list;
+  const entries = fs.readdirSync(FEATURES_DIR, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const featureJsonPath = path.join(FEATURES_DIR, entry.name, 'feature.json');
+    if (!fs.existsSync(featureJsonPath)) continue;
+    try {
+      const manifest = JSON.parse(fs.readFileSync(featureJsonPath, 'utf8')) as {
+        id: string; name: string; frontend?: { remote: string };
+      };
+      const remotePath = manifest.frontend?.remote
+        ? path.join(FEATURES_DIR, entry.name, manifest.frontend.remote)
+        : null;
+      list.push({
+        id: manifest.id,
+        name: manifest.name,
+        uiEntry: remotePath && fs.existsSync(remotePath)
+          ? `/features/${entry.name}/${manifest.frontend!.remote}`
+          : null,
+      });
+    } catch { /* ignore invalid */ }
+  }
+
+  return list;
+}
+
 // ─── App factory ─────────────────────────────────────────────────────────────
 
 export async function createApiApp(
   manager: AgentManager,
   nc: NatsConnection,
+  configService: ConfigService,
+  opts: { setupMode: SetupMode },
 ): Promise<express.Application> {
   const app = express();
   app.use(express.json());
+
+  // Closure for re-use in /internal/reload
+  const reloadFeatures = async (): Promise<void> => {
+    const config = await configService.load();
+    if (!config) return;
+    for (const featureId of config.installed.features) {
+      await loadFeature(featureId, app, nc, manager, configService, reloadFeatures);
+    }
+  };
+
+  // ── Always load settings feature ─────────────────────────────────────────
+  await loadFeature('settings', app, nc, manager, configService, reloadFeatures);
+
+  // ── In ready mode, also load team plugins and installed features ──────────
+  if (opts.setupMode === 'ready') {
+    await reloadFeatures();
+    await loadTeamPlugins(app, nc, manager, configService, reloadFeatures);
+  }
 
   // ── Core health endpoint ──────────────────────────────────────────────────
 
   app.get('/api/health', (_req: Request, res: Response) => {
     try {
       const agents = manager.getStates();
-      res.json({ status: 'ok', agents, ts: Date.now() });
+      res.json({
+        status: 'ok',
+        setupMode: opts.setupMode,
+        agents,
+        ts: Date.now(),
+      });
     } catch (err) {
       logger.error({ err }, 'GET /api/health error');
       res.status(500).json({ error: 'Internal server error' });
@@ -137,9 +255,49 @@ export async function createApiApp(
     });
   });
 
-  // ── Load team plugins (registers additional routes) ───────────────────────
+  // ── Chat with settings agent (NATS bridge) ────────────────────────────────
 
-  await loadTeamPlugins(app, nc, manager);
+  app.post('/api/chat/settings', async (req: Request, res: Response) => {
+    const { message, sessionId } = req.body as { message?: string; sessionId?: string };
+    if (!message) return res.status(400).json({ error: '"message" required' });
+
+    const sid = sessionId ?? 'default';
+    const replySubject = `chat.reply.${sid}.${Date.now()}`;
+
+    try {
+      const sub = nc.subscribe(replySubject, { max: 1, timeout: 30_000 });
+
+      await nc.publish(
+        'agent.settings.inbox',
+        codec.encode(JSON.stringify({ content: message, sessionId: sid, replyTo: replySubject })),
+      );
+
+      for await (const msg of sub) {
+        const data = JSON.parse(codec.decode(msg.data)) as unknown;
+        res.json({ reply: data });
+        break;
+      }
+    } catch (err) {
+      logger.error({ err }, 'Chat settings error');
+      res.status(503).json({ error: 'Settings agent not responding', detail: String(err) });
+    }
+  });
+
+  // ── Internal reload (called by setup_complete MCP tool) ───────────────────
+
+  app.post('/internal/reload', async (_req: Request, res: Response) => {
+    try {
+      await reloadFeatures();
+      await loadTeamPlugins(app, nc, manager, configService, reloadFeatures);
+      const plugins = await getPluginList();
+      emitSseEvent('system', { type: 'plugins-updated', plugins });
+      logger.info('Live reload completed');
+      res.json({ ok: true });
+    } catch (err) {
+      logger.error({ err }, 'Live reload failed');
+      res.status(500).json({ error: String(err) });
+    }
+  });
 
   // ── Static dashboard (serve last, after all API routes) ───────────────────
 
@@ -160,8 +318,13 @@ export async function createApiApp(
 
 // ─── Start server ─────────────────────────────────────────────────────────────
 
-export async function startApiServer(manager: AgentManager, nc: NatsConnection): Promise<void> {
-  const app = await createApiApp(manager, nc);
+export async function startApiServer(
+  manager: AgentManager,
+  nc: NatsConnection,
+  configService: ConfigService,
+  opts: { setupMode: SetupMode },
+): Promise<void> {
+  const app = await createApiApp(manager, nc, configService, opts);
 
   await new Promise<void>((resolve) => {
     app.listen(API_PORT, () => {

@@ -1,74 +1,116 @@
 /**
  * nano-agent-team — startup entry point
  *
- * 1. Connect to NATS JetStream
- * 2. Ensure AGENTS stream exists (agent.>, topic.>, health.>)
- * 3. Load agent manifests from agents/ directory
- * 4. Ensure durable consumers for each agent
- * 5. Start Docker containers via AgentManager
- * 6. Start health monitoring
- * 7. Log "ready"
+ * Startup sequence:
+ * 1. Detect setup mode (first-run / setup-incomplete / ready)
+ * 2. Connect to NATS JetStream
+ * 3. Ensure AGENTS stream
+ * 4. Always start settings agent (handles onboarding)
+ * 5a. Setup mode: start only settings agent, expose setup UI
+ * 5b. Ready mode: load all agents + features from config
+ * 6. Start API server
  */
 
-import { NATS_URL, AGENTS_DIR } from './config.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { DATA_DIR, NATS_URL, AGENTS_DIR } from './config.js';
 import { logger } from './logger.js';
 import { connectNats, ensureStream, ensureConsumer, closeNats, publish } from './nats-client.js';
-import { loadAgents } from './agent-registry.js';
+import { loadAgents, loadManifest } from './agent-registry.js';
 import { AgentManager } from './agent-manager.js';
 import { startApiServer } from './api-server.js';
+import { detectSetupMode, isSetupRequired } from './setup-detector.js';
+import { ConfigService } from './config-service.js';
+import { startEmbeddedNats, stopEmbeddedNats } from './nats-embedded.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function main(): Promise<void> {
-  logger.info({ natsUrl: NATS_URL, agentsDir: AGENTS_DIR }, 'Starting nano-agent-team');
+  // ── 1. Detect setup mode ────────────────────────────────────────────────────
+  const setupMode = await detectSetupMode(DATA_DIR);
+  logger.info({ setupMode, dataDir: DATA_DIR }, 'Starting nano-agent-team');
 
-  // Connect to NATS
-  const nc = await connectNats(NATS_URL);
+  // ── 2. Start embedded NATS if needed, then connect ─────────────────────────
+  // NATS_EMBEDDED=true (or default in Docker) → spawn nats-server subprocess
+  // If NATS_URL is explicitly set to a remote URL, skip embedded
+  const useEmbedded = process.env.NATS_EMBEDDED !== 'false' && !process.env.NATS_URL;
+  const natsUrl = useEmbedded ? await startEmbeddedNats() : NATS_URL;
 
-  // Ensure AGENTS stream exists (agent.>, topic.>, health.>)
+  const nc = await connectNats(natsUrl);
+
+  // ── 3. Ensure AGENTS stream ─────────────────────────────────────────────────
   await ensureStream(nc, 'AGENTS', ['agent.>', 'topic.>', 'health.>']);
   logger.info('Stream AGENTS ready');
 
-  // Load agent manifests
-  const agents = loadAgents(AGENTS_DIR);
-
-  if (agents.length === 0) {
-    logger.warn('No agents found — add agent directories under agents/');
+  // ── 4. Always register settings agent consumer ──────────────────────────────
+  const settingsAgentDir = path.join(path.resolve(AGENTS_DIR), 'settings');
+  let settingsAgent;
+  try {
+    const manifest = loadManifest(settingsAgentDir);
+    settingsAgent = { manifest, dir: settingsAgentDir };
+    await ensureConsumer(nc, 'AGENTS', manifest.id, manifest.subscribe_topics);
+    logger.info({ id: manifest.id, topics: manifest.subscribe_topics }, 'Settings agent consumer ready');
+  } catch (err) {
+    logger.warn({ err }, 'Settings agent manifest not found — setup UI will use form-only mode');
   }
 
-  // Ensure durable consumer per agent
-  for (const agent of agents) {
-    await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
-    logger.info(
-      { id: agent.manifest.id, topics: agent.manifest.subscribe_topics },
-      'Agent consumer ready',
-    );
-  }
-
-  // Start agent containers
   const manager = new AgentManager(nc);
-  await manager.startAll(agents);
+  const configService = new ConfigService(DATA_DIR);
 
-  // Start health monitoring (Docker API + NATS heartbeats)
-  manager.startHealthMonitoring();
+  if (isSetupRequired(setupMode)) {
+    // ── 5a. Setup mode ─────────────────────────────────────────────────────────
+    logger.info({ setupMode }, 'Setup mode active');
 
-  // Start API server (health + SSE + plugin routes + dashboard)
-  await startApiServer(manager, nc);
+    // Start only settings agent
+    if (settingsAgent) {
+      await manager.startAll([settingsAgent]);
+      manager.startHealthMonitoring();
+    }
 
-  logger.info(
-    { agents: agents.map((a) => a.manifest.id) },
-    'nano-agent-team ready',
-  );
+  } else {
+    // ── 5b. Ready mode ─────────────────────────────────────────────────────────
+    const appConfig = await configService.load();
 
-  // Publish health.check every 30 minutes (Scrum Master agent listens)
-  setInterval(() => {
-    void publish(nc, 'topic.health.check', JSON.stringify({ ts: Date.now() }));
-    logger.debug('Published topic.health.check');
-  }, 30 * 60 * 1000);
+    // Load all agents (settings agent is in agents/ so it gets loaded too)
+    const agents = loadAgents(AGENTS_DIR);
+    for (const agent of agents) {
+      await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
+      logger.info({ id: agent.manifest.id, topics: agent.manifest.subscribe_topics }, 'Agent consumer ready');
+    }
 
-  // Graceful shutdown
+    await manager.startAll(agents);
+    manager.startHealthMonitoring();
+
+    logger.info(
+      { agents: agents.map((a) => a.manifest.id) },
+      'nano-agent-team ready',
+    );
+
+    // Publish health.check every 30 minutes (Scrum Master agent listens)
+    setInterval(() => {
+      void publish(nc, 'topic.health.check', JSON.stringify({ ts: Date.now() }));
+      logger.debug('Published topic.health.check');
+    }, 30 * 60 * 1000);
+
+    // Log installed features/teams
+    if (appConfig?.installed) {
+      logger.info(
+        { features: appConfig.installed.features, teams: appConfig.installed.teams },
+        'Installed packages loaded',
+      );
+    }
+  }
+
+  // ── 6. Start API server ─────────────────────────────────────────────────────
+  // Settings feature is always loaded inside startApiServer
+  await startApiServer(manager, nc, configService, { setupMode });
+
+  // ── Graceful shutdown ───────────────────────────────────────────────────────
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutting down...');
     await manager.stopAll();
     await closeNats(nc);
+    stopEmbeddedNats();
     process.exit(0);
   };
 

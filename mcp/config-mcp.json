@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "config": {
+      "command": "node",
+      "args": ["/app/dist/mcp/config-server.js"],
+      "env": {
+        "DATA_DIR": "/data",
+        "API_PORT": "3001",
+        "FEATURES_DIR": "/app/features",
+        "TEAMS_DIR": "/app/teams"
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+version: '3.9'
+
+# Development compose — builds image locally, mounts ./data for persistence
+# Usage: docker compose -f docker-compose.dev.yml up --build
+
+services:
+  nano-agent-team:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: nano-agent-team:dev
+    container_name: nano-agent-team
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      # Persistent data: config, SQLite, sessions, vault, workspaces
+      - ./data:/data
+      # Docker socket — needed to spawn agent containers
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      DATA_DIR: /data
+      LOG_LEVEL: info
+      # Embedded NATS (default — no NATS_URL needed)
+      # To use external NATS: set NATS_URL=nats://nats:4222 and NATS_EMBEDDED=false
+      # NATS_URL: nats://nats:4222
+      # NATS_EMBEDDED: "false"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

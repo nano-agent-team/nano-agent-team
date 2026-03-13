@@ -9,3 +9,17 @@ declare module 'devTeamPlugin/TicketsView' {
   const TicketsView: DefineComponent<Record<string, never>, Record<string, never>, any>
   export default TicketsView
 }
+
+declare module 'settingsPlugin/SetupWizard' {
+  import { DefineComponent } from 'vue'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const SetupWizard: DefineComponent<Record<string, never>, Record<string, never>, any>
+  export default SetupWizard
+}
+
+declare module 'settingsPlugin/SettingsView' {
+  import { DefineComponent } from 'vue'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const SettingsView: DefineComponent<Record<string, never>, Record<string, never>, any>
+  export default SettingsView
+}

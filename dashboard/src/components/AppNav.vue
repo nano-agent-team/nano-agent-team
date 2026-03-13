@@ -41,6 +41,7 @@ const pluginMeta = inject<PluginMeta[]>('pluginMeta', [])
 // Static nav entries for known federation plugins
 const PLUGIN_NAV: Record<string, { label: string; icon: string; path: string }> = {
   'dev-team': { label: 'Tickety', icon: '📋', path: '/tickets' },
+  'settings': { label: 'Settings', icon: '⚙️', path: '/settings' },
 }
 
 const pluginModules = computed(() =>
@@ -52,7 +53,10 @@ const pluginModules = computed(() =>
     }),
 )
 
-const modules = computed(() => [...coreModules, ...pluginModules.value])
+// Settings is always available (core feature)
+const settingsModule = { id: 'settings', label: 'Settings', icon: '⚙️', routes: [{ path: '/settings' }] }
+
+const modules = computed(() => [...coreModules, ...pluginModules.value, settingsModule])
 
 function isActive(path: string): boolean {
   if (path === '/') return route.path === '/'

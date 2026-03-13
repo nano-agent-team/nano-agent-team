@@ -1,0 +1,10 @@
+{
+  "id": "settings",
+  "name": "Setup & Settings Assistant",
+  "version": "1.0.0",
+  "description": "Guides users through initial setup and manages system configuration.",
+  "model": "claude-sonnet-4-5",
+  "session_type": "persistent",
+  "subscribe_topics": ["agent.settings.inbox"],
+  "mcp_config": "/app/mcp/config-mcp.json"
+}
