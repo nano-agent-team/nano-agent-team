@@ -116,6 +116,13 @@ function scanDirectory(dir: string, agents: LoadedAgent[], depth = 0): void {
       }
     } else if (depth === 0) {
       // No manifest — treat as plugin group, scan one level deeper
+      // Guard against broken symlinks (target might not exist in container)
+      try {
+        fs.readdirSync(agentDir);
+      } catch {
+        logger.warn({ dir: agentDir }, 'Skipping plugin group — directory not accessible (broken symlink?)');
+        continue;
+      }
       logger.debug({ dir: agentDir }, 'Scanning plugin group directory');
       scanDirectory(agentDir, agents, depth + 1);
     }

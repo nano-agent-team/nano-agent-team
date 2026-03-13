@@ -54,8 +54,8 @@ async function main(): Promise<void> {
     logger.warn({ err }, 'Settings agent manifest not found — setup UI will use form-only mode');
   }
 
-  const manager = new AgentManager(nc);
   const configService = new ConfigService(DATA_DIR);
+  const manager = new AgentManager(nc, configService);
 
   if (isSetupRequired(setupMode)) {
     // ── 5a. Setup mode ─────────────────────────────────────────────────────────

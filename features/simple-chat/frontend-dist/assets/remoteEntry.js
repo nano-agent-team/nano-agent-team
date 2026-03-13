@@ -1,12 +1,9 @@
 const currentImports = {};
       const exportSet = new Set(['Module', '__esModule', 'default', '_export_sfc']);
       let moduleMap = {
-"./SetupWizard":()=>{
-      dynamicLoadingCss(["__federation_expose_SetupWizard-Cef3ZibG.css"], false, './SetupWizard');
-      return __federation_import('./__federation_expose_SetupWizard-5XyOAPA1.js').then(module =>Object.keys(module).every(item => exportSet.has(item)) ? () => module.default : () => module)},
-"./SettingsView":()=>{
-      dynamicLoadingCss(["__federation_expose_SettingsView-LqDfBAs5.css"], false, './SettingsView');
-      return __federation_import('./__federation_expose_SettingsView-DiLCUoPd.js').then(module =>Object.keys(module).every(item => exportSet.has(item)) ? () => module.default : () => module)},};
+"./SimpleChatView":()=>{
+      dynamicLoadingCss(["__federation_expose_SimpleChatView-BYBy1g7f.css"], false, './SimpleChatView');
+      return __federation_import('./__federation_expose_SimpleChatView-tqde-7bs.js').then(module =>Object.keys(module).every(item => exportSet.has(item)) ? () => module.default : () => module)},};
       const seen = {};
       const dynamicLoadingCss = (cssFilePaths, dontAppendStylesToHead, exposeItemName) => {
         const metaUrl = import.meta.url;
@@ -47,7 +44,7 @@ const currentImports = {};
          }
          
           if (dontAppendStylesToHead) {
-            const key = 'css__settingsPlugin__' + exposeItemName;
+            const key = 'css__simpleChatPlugin__' + exposeItemName;
             window[key] = window[key] || [];
             window[key].push(href);
             return;

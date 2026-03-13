@@ -28,6 +28,7 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import type { LoadedAgent } from './agent-registry.js';
+import type { ConfigService } from './config-service.js';
 import { codec } from './nats-client.js';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -56,9 +57,35 @@ export class AgentManager {
   private docker: Dockerode;
   private healthTimer?: NodeJS.Timeout;
 
-  constructor(private readonly nc: NatsConnection) {
+  constructor(
+    private readonly nc: NatsConnection,
+    private readonly configService?: ConfigService,
+  ) {
     // Default: connects via /var/run/docker.sock on Linux
     this.docker = new Dockerode();
+  }
+
+  /** Resolve API key: reads fresh OAuth token from credentials file for oauth providers */
+  private async resolveApiKey(): Promise<string> {
+    if (this.configService) {
+      try {
+        const config = await this.configService.load();
+        // For OAuth, always read fresh token from credentials file (auto-refreshed by Claude Code CLI)
+        if (config?.provider?.type === 'claude-code-oauth') {
+          const homeDir = process.env.HOME ?? '/root';
+          const credPath = path.join(homeDir, '.claude', '.credentials.json');
+          if (fs.existsSync(credPath)) {
+            const creds = JSON.parse(fs.readFileSync(credPath, 'utf8')) as {
+              claudeAiOauth?: { accessToken?: string };
+            };
+            const token = creds.claudeAiOauth?.accessToken;
+            if (token) return token;
+          }
+        }
+        if (config?.provider?.apiKey) return config.provider.apiKey;
+      } catch { /* fallback */ }
+    }
+    return ANTHROPIC_API_KEY;
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -88,24 +115,42 @@ export class AgentManager {
       await this.removeContainerIfExists(containerName);
 
       // DB dir for MCP server mount
-      const dbDir = path.dirname(DB_PATH);
-      fs.mkdirSync(dbDir, { recursive: true });
+      // HOST_DATA_DIR lets Docker daemon (on host) resolve the correct bind path
+      // when nano-live's /data volume differs from the host's /data directory.
+      const dbDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
+      fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
       // Build env vars for the container
+      const apiKey = await this.resolveApiKey();
+
+      // Read CLAUDE.md and pass as env var — agent dir is mounted from inside nano-live
+      // but Docker daemon resolves bind paths on the host where /app/ may not exist.
+      const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
+      const claudeMdContent = fs.existsSync(claudeMdPath)
+        ? fs.readFileSync(claudeMdPath, 'utf8')
+        : '';
+
       const env = [
         `NATS_URL=${this.resolveNatsUrl()}`,
         `AGENT_ID=${id}`,
         `SUBSCRIBE_TOPICS=${agent.manifest.subscribe_topics.join(',')}`,
-        `ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}`,
+        // OAuth tokens (sk-ant-oat*) must NOT be set as ANTHROPIC_API_KEY — Claude Code CLI
+        // validates API key format and rejects OAuth tokens. Use CLAUDE_CODE_OAUTH_TOKEN instead.
+        ...(apiKey && !apiKey.startsWith('sk-ant-oat') ? [`ANTHROPIC_API_KEY=${apiKey}`] : []),
+        ...(apiKey && apiKey.startsWith('sk-ant-oat') ? [`CLAUDE_CODE_OAUTH_TOKEN=${apiKey}`] : []),
         ...(ANTHROPIC_BASE_URL ? [`ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}`] : []),
         `MODEL=${agent.manifest.model ?? 'claude-haiku-4-5-20251001'}`,
         `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
         `LOG_LEVEL=info`,
         // Tickets MCP server DB path inside container
         `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
+        // Pass CLAUDE.md content as env var (avoids Docker bind mount path resolution issues)
+        ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
         // Pass GitHub token if available (for gh CLI and git push)
         ...(process.env.GH_TOKEN ? [`GH_TOKEN=${process.env.GH_TOKEN}`] : []),
         ...(process.env.GITHUB_TOKEN ? [`GH_TOKEN=${process.env.GITHUB_TOKEN}`] : []),
+        // Pass repo URL if available (set by team install from config_env_map)
+        ...(process.env.REPO_URL ? [`REPO_URL=${process.env.REPO_URL}`] : []),
       ];
 
       // Volume: agent dir → /workspace/agent (read-only)
@@ -123,6 +168,14 @@ export class AgentManager {
       const sessionDir = path.join(DATA_DIR, 'sessions', id);
       fs.mkdirSync(sessionDir, { recursive: true });
       binds.push(`${sessionDir}:/workspace/sessions:rw`);
+
+      // Volume: Claude Code credentials → /root/.claude (read-write so Claude Code can write session cache)
+      // Auth token is passed via CLAUDE_CODE_OAUTH_TOKEN env var — no need to mount .claude.json
+      const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
+      if (fs.existsSync(claudeDir)) {
+        binds.push(`${claudeDir}:/root/.claude:rw`);
+        logger.debug({ id, claudeDir }, 'Mounting .claude dir (rw)');
+      }
 
       // Volume: SSH keys → /root/.ssh (optional, for agents needing git SSH push)
       if (agent.manifest.ssh_mount) {

@@ -23,3 +23,17 @@ declare module 'settingsPlugin/SettingsView' {
   const SettingsView: DefineComponent<Record<string, never>, Record<string, never>, any>
   export default SettingsView
 }
+
+declare module 'simpleChatPlugin/SimpleChatView' {
+  import { DefineComponent } from 'vue'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const SimpleChatView: DefineComponent<Record<string, never>, Record<string, never>, any>
+  export default SimpleChatView
+}
+
+declare module 'issueTrackerPlugin/TicketsView' {
+  import { DefineComponent } from 'vue'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const TicketsView: DefineComponent<Record<string, never>, Record<string, never>, any>
+  export default TicketsView
+}

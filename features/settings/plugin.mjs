@@ -17,7 +17,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -70,6 +70,43 @@ export default {
       const dir = path.dirname(configPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+    }
+
+    async function saveOauthTokenToConfig() {
+      try {
+        // Try reading token from ~/.claude/.credentials.json (older Claude Code versions)
+        let token = null;
+        const credPaths = [
+          path.join(process.env.HOME ?? '/root', '.claude', '.credentials.json'),
+          '/root/.claude/.credentials.json',
+        ];
+        for (const p of credPaths) {
+          try {
+            const creds = JSON.parse(fs.readFileSync(p, 'utf8'));
+            if (creds?.claudeAiOauth?.accessToken) {
+              token = creds.claudeAiOauth.accessToken;
+              break;
+            }
+          } catch { /* not present */ }
+        }
+
+        // Fallback: use CLAUDE_CODE_OAUTH_TOKEN env var if Claude Code set it
+        if (!token && process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+          token = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+        }
+
+        if (!token) {
+          console.log('[settings] OAuth login completed but token not accessible — will use mounted .claude dir');
+          return;
+        }
+
+        const config = loadConfig() ?? {};
+        config.provider = { ...(config.provider ?? {}), type: 'claude-code-oauth', apiKey: token };
+        saveConfig(config);
+        console.log('[settings] OAuth token saved to config.json');
+      } catch (err) {
+        console.warn('[settings] Could not save OAuth token to config.json:', err);
+      }
     }
 
     function maskSecrets(config) {
@@ -293,17 +330,19 @@ export default {
       proc.stdout.on('data', handleOutput);
       proc.stderr.on('data', handleOutput);
 
-      proc.on('exit', (code) => {
+      proc.on('exit', (exitCode) => {
         authLoginProc = null;
         if (!responded) {
           responded = true;
           clearTimeout(urlTimeout);
-          if (code === 0) {
+          if (exitCode === 0) {
+            // Already logged in — save token to config.json
+            void saveOauthTokenToConfig();
             res.json({ url: null, alreadyLoggedIn: true });
           } else {
-            res.status(500).json({ error: `claude auth login exited with code ${code}` });
+            res.status(500).json({ error: `claude auth login exited with code ${exitCode}` });
           }
-        } else if (code === 0) {
+        } else if (exitCode === 0) {
           authLoginSession = null;
           emitSseEvent('auth-completed', { type: 'claude-code-oauth' });
         }
@@ -333,6 +372,9 @@ export default {
             const t = setTimeout(resolve, 10_000);
             authLoginSession?.proc?.on('exit', () => { clearTimeout(t); resolve(); });
           });
+
+          // Přečteme token z Claude Code a uložíme do config.json
+          await saveOauthTokenToConfig();
           res.json({ ok: true });
         } else {
           const body = await resp.text().catch(() => '');
@@ -358,6 +400,252 @@ export default {
         } catch { /* skip */ }
       }
       res.json({ ok: false });
+    });
+
+    // ── GET /api/hub/catalog ─────────────────────────────────────────────────
+    // Returns available teams/agents from hub GitHub repo (or local fallback)
+    app.get('/api/hub/catalog', async (req, res) => {
+      const config = loadConfig() ?? {};
+      const hubRepo = config?.hub?.url ?? 'nano-agent-team/hub';
+      const hubBranch = config?.hub?.branch ?? 'main';
+
+      function fetchHubCatalogViaGit() {
+        // Use git clone into a cache dir — no rate limits, no token needed for public repos
+        const ghToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? config?.hub?.ghToken ?? '';
+        const hubGitUrl = ghToken
+          ? `https://x-access-token:${ghToken}@github.com/${hubRepo}.git`
+          : `https://github.com/${hubRepo}.git`;
+        const cacheDir = path.join(dataDir, 'hub-cache');
+
+        // Clone or pull
+        if (fs.existsSync(path.join(cacheDir, '.git'))) {
+          const pull = spawnSync('git', ['-C', cacheDir, 'fetch', '--depth=1', 'origin', hubBranch], { encoding: 'utf8', timeout: 30_000 });
+          spawnSync('git', ['-C', cacheDir, 'reset', '--hard', `origin/${hubBranch}`], { encoding: 'utf8' });
+        } else {
+          fs.mkdirSync(cacheDir, { recursive: true });
+          const clone = spawnSync('git', ['clone', '--depth=1', '--branch', hubBranch, hubGitUrl, cacheDir], { encoding: 'utf8', timeout: 30_000 });
+          if (clone.status !== 0) throw new Error(`git clone failed: ${clone.stderr}`);
+        }
+
+        function readDirItems(dir, manifestFile) {
+          const items = [];
+          if (!fs.existsSync(dir)) return items;
+          for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            if (!entry.isDirectory()) continue;
+            const mPath = path.join(dir, entry.name, manifestFile);
+            if (!fs.existsSync(mPath)) continue;
+            try {
+              const m = JSON.parse(fs.readFileSync(mPath, 'utf8'));
+              const setupPath = path.join(dir, entry.name, 'setup.json');
+              let requires = [];
+              if (fs.existsSync(setupPath)) {
+                try { requires = JSON.parse(fs.readFileSync(setupPath, 'utf8')).requires ?? []; } catch { /* skip */ }
+              }
+              items.push({ id: m.id ?? entry.name, name: m.name ?? entry.name, type: manifestFile === 'team.json' ? 'team' : 'agent', description: m.description ?? '', requires });
+            } catch { /* skip */ }
+          }
+          return items;
+        }
+
+        return {
+          source: 'hub',
+          teams: readDirItems(path.join(cacheDir, 'teams'), 'team.json'),
+          agents: readDirItems(path.join(cacheDir, 'agents'), 'manifest.json'),
+        };
+      }
+
+      try {
+        const catalog = fetchHubCatalogViaGit();
+        return res.json(catalog);
+      } catch (hubErr) {
+        console.warn('[settings] Hub git fetch failed, falling back to local scan:', hubErr.message);
+      }
+
+      // Fallback: local scan
+      const result = { source: 'local', teams: [], agents: [] };
+      const teamsDir = path.join(__dirname, '..', '..', 'teams');
+      if (fs.existsSync(teamsDir)) {
+        for (const entry of fs.readdirSync(teamsDir, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          const tjPath = path.join(teamsDir, entry.name, 'team.json');
+          if (!fs.existsSync(tjPath)) continue;
+          try {
+            const m = JSON.parse(fs.readFileSync(tjPath, 'utf8'));
+            const setupPath = path.join(teamsDir, entry.name, 'setup.json');
+            let requires = [];
+            if (fs.existsSync(setupPath)) {
+              try { requires = JSON.parse(fs.readFileSync(setupPath, 'utf8')).requires ?? []; } catch { /* skip */ }
+            }
+            result.teams.push({ id: m.id ?? entry.name, name: m.name, description: m.description ?? '', requires });
+          } catch { /* skip */ }
+        }
+      }
+      res.json(result);
+    });
+
+    // ── POST /api/hub/generate-ssh ────────────────────────────────────────────
+    app.post('/api/hub/generate-ssh', (req, res) => {
+      const { teamId } = req.body ?? {};
+      if (!teamId || !/^[a-zA-Z0-9_-]+$/.test(teamId)) {
+        return res.status(400).json({ error: 'Invalid teamId' });
+      }
+
+      const keysDir = path.join(dataDir, 'keys');
+      if (!fs.existsSync(keysDir)) fs.mkdirSync(keysDir, { recursive: true });
+
+      const keyPath = path.join(keysDir, `${teamId}_ed25519`);
+      // Remove existing key files if present
+      try { fs.unlinkSync(keyPath); } catch { /* ignore */ }
+      try { fs.unlinkSync(`${keyPath}.pub`); } catch { /* ignore */ }
+
+      const result = spawnSync('ssh-keygen', ['-t', 'ed25519', '-f', keyPath, '-N', '', '-C', `nanoclaw-${teamId}`], {
+        encoding: 'utf8',
+      });
+
+      if (result.status !== 0) {
+        return res.status(500).json({ error: result.stderr || 'ssh-keygen failed' });
+      }
+
+      try {
+        const publicKey = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim();
+        res.json({ publicKey });
+      } catch (err) {
+        res.status(500).json({ error: `Could not read public key: ${String(err)}` });
+      }
+    });
+
+    // ── POST /api/hub/install ─────────────────────────────────────────────────
+    app.post('/api/hub/install', async (req, res) => {
+      const { items = [], config: installConfig = {} } = req.body ?? {};
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: '"items" array required' });
+      }
+
+      const cfg = loadConfig() ?? {};
+      const hubRepo = cfg?.hub?.url ?? 'nano-agent-team/hub';
+      const hubBranch = cfg?.hub?.branch ?? 'main';
+      const hubGitUrl = `https://github.com/${hubRepo}.git`;
+      const installed = [];
+      const errors = [];
+
+      function progress(step, detail = '') {
+        emitSseEvent('hub-install-progress', { step, detail, ts: Date.now() });
+      }
+
+      /** Sparse-clone a single path from hub into destDir */
+      function hubSparseClone(sparsePath, destDir) {
+        if (fs.existsSync(destDir)) return; // already installed
+        const tmpDir = `/tmp/hub-${sparsePath.replace(/\//g, '-')}-${Date.now()}`;
+        try {
+          const clone = spawnSync('git', [
+            'clone', '--depth=1', '--filter=blob:none', '--sparse',
+            '--branch', hubBranch, hubGitUrl, tmpDir,
+          ], { encoding: 'utf8', timeout: 60_000 });
+          if (clone.status !== 0) throw new Error(clone.stderr || 'git clone failed');
+
+          const sparse = spawnSync('git', ['-C', tmpDir, 'sparse-checkout', 'set', sparsePath], { encoding: 'utf8' });
+          if (sparse.status !== 0) throw new Error(sparse.stderr || 'sparse-checkout failed');
+
+          const srcPath = path.join(tmpDir, sparsePath);
+          if (!fs.existsSync(srcPath)) throw new Error(`${sparsePath} not found in hub`);
+
+          fs.mkdirSync(destDir, { recursive: true });
+          spawnSync('cp', ['-r', `${srcPath}/.`, destDir], { encoding: 'utf8' });
+        } finally {
+          try { spawnSync('rm', ['-rf', tmpDir]); } catch { /* ignore */ }
+        }
+      }
+
+      /** Build a feature component */
+      function buildComponent(featureDir, component) {
+        const compDir = path.join(featureDir, component.path);
+        if (!fs.existsSync(compDir)) return;
+        const buildCmd = component.build ?? 'npm ci && npm run build';
+        console.log(`[hub/install] Building ${component.type} in ${compDir}: ${buildCmd}`);
+        const result = spawnSync('sh', ['-c', buildCmd], { cwd: compDir, encoding: 'utf8', timeout: 120_000 });
+        if (result.status !== 0) {
+          throw new Error(`Build failed in ${compDir}: ${result.stderr || result.stdout}`);
+        }
+      }
+
+      for (const teamId of items) {
+        if (!/^[a-zA-Z0-9_-]+$/.test(teamId)) {
+          errors.push({ id: teamId, error: 'Invalid team id' });
+          continue;
+        }
+
+        try {
+          // 1. Clone team manifest
+          progress('clone-team', teamId);
+          const teamDir = path.join(dataDir, 'teams', teamId);
+          hubSparseClone(`teams/${teamId}`, teamDir);
+
+          // 2. Read team.json → get agents + features
+          const teamJson = JSON.parse(fs.readFileSync(path.join(teamDir, 'team.json'), 'utf8'));
+          const agentIds = teamJson.agents ?? [];
+          const featureIds = teamJson.features ?? [];
+          const configEnvMap = teamJson.config_env_map ?? {};
+
+          // 3. Clone agents
+          for (const agentId of agentIds) {
+            progress('clone-agent', agentId);
+            const agentDir = path.join(dataDir, 'agents', agentId);
+            hubSparseClone(`agents/${agentId}`, agentDir);
+          }
+
+          // 4. Clone + build features
+          for (const featureId of featureIds) {
+            progress('clone-feature', featureId);
+            const featureDir = path.join(dataDir, 'features', featureId);
+            hubSparseClone(`features/${featureId}`, featureDir);
+
+            const featureJsonPath = path.join(featureDir, 'feature.json');
+            if (fs.existsSync(featureJsonPath)) {
+              const featureJson = JSON.parse(fs.readFileSync(featureJsonPath, 'utf8'));
+              for (const component of featureJson.components ?? []) {
+                progress('build', `${featureId}/${component.type}`);
+                buildComponent(featureDir, component);
+              }
+            }
+          }
+
+          // 5. Apply config_env_map
+          for (const [configKey, envKey] of Object.entries(configEnvMap)) {
+            if (installConfig[configKey] !== undefined) {
+              process.env[envKey] = String(installConfig[configKey]);
+            }
+          }
+
+          // 6. Save config
+          const current = loadConfig() ?? cfg;
+          const updatedCfg = deepMerge(current, {
+            teams: { [teamId]: { config: installConfig, env_map: configEnvMap } },
+            installed: {
+              teams: [...new Set([...(current.installed?.teams ?? []), teamId])],
+            },
+          });
+          saveConfig(updatedCfg);
+
+          installed.push(teamId);
+        } catch (err) {
+          errors.push({ id: teamId, error: String(err) });
+        }
+      }
+
+      // 7. Reload features + start new agents
+      progress('reload', 'Spouštím agenty...');
+      try {
+        if (reloadFeatures) await reloadFeatures();
+      } catch (err) {
+        console.warn('[hub/install] reloadFeatures error:', err.message);
+      }
+      progress('done', installed.join(', '));
+
+      if (errors.length > 0 && installed.length === 0) {
+        return res.status(500).json({ ok: false, errors });
+      }
+
+      res.json({ ok: true, installed, errors: errors.length ? errors : undefined });
     });
 
     // ── Serve settings frontend static assets ───────────────────────────────

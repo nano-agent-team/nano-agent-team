@@ -1,20 +1,23 @@
-import { createApp, defineAsyncComponent } from 'vue'
+import { createApp, defineAsyncComponent, type Component } from 'vue'
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import App from './App.vue'
 import './assets/main.css'
 
-// Import built-in core module only
 import { module as coreModule } from './modules/core/module.config'
 
-// ── Plugin discovery ───────────────────────────────────────────────────────
-// Fetch plugin list from core Express — used only to know which plugins are
-// installed so AppNav can render navigation links.
-// The actual Vue components are loaded via Module Federation at route-level.
+// ── Interfaces ────────────────────────────────────────────────────────────
+
+interface PluginRoute {
+  path: string
+  component: string
+  nav?: { label: string; icon: string }
+}
 
 interface PluginMeta {
   id: string
   name: string
   uiEntry: string | null
+  routes: PluginRoute[]
 }
 
 interface ConfigStatus {
@@ -22,6 +25,26 @@ interface ConfigStatus {
   setupCompleted: boolean
   missing: string[]
 }
+
+// ── Component registry ────────────────────────────────────────────────────
+// Maps component name (from feature.json routes[].component) to a lazy loader.
+// Only built-in federation remotes need to be listed here.
+// New features installed from hub use the same names — extend this list if needed.
+
+type LazyLoader = () => Promise<{ default: Component } | Component>
+
+const componentRegistry: Record<string, LazyLoader> = {
+  SettingsView: () =>
+    import('settingsPlugin/SettingsView').then((m) => m.default ?? m),
+  SimpleChatView: () =>
+    import('simpleChatPlugin/SimpleChatView').then((m) => m.default ?? m),
+  TicketsView: () =>
+    import('issueTrackerPlugin/TicketsView')
+      .catch(() => import('devTeamPlugin/TicketsView'))
+      .then((m) => m.default ?? m),
+}
+
+// ── Data fetching ─────────────────────────────────────────────────────────
 
 async function fetchPlugins(): Promise<PluginMeta[]> {
   try {
@@ -43,30 +66,34 @@ async function fetchSetupStatus(): Promise<ConfigStatus> {
   }
 }
 
-// ── Plugin routes (Module Federation) ────────────────────────────────────
-// Each known plugin is wired as a lazy federation import.
-function buildPluginRoutes(): RouteRecordRaw[] {
-  return [
-    {
-      path: '/tickets',
-      component: defineAsyncComponent(() =>
-        import('devTeamPlugin/TicketsView').then((m) => m.default ?? m),
-      ),
-    },
-    {
-      path: '/settings',
-      component: defineAsyncComponent(() =>
-        import('settingsPlugin/SettingsView').then((m) => m.default ?? m),
-      ),
-    },
-  ]
+// ── Dynamic route builder ─────────────────────────────────────────────────
+// Derives routes from /api/plugins response — no hardcoding needed.
+
+function buildPluginRoutes(plugins: PluginMeta[]): RouteRecordRaw[] {
+  const routes: RouteRecordRaw[] = []
+  const seen = new Set<string>()
+
+  for (const plugin of plugins) {
+    for (const r of plugin.routes ?? []) {
+      if (seen.has(r.path)) continue
+      const loader = componentRegistry[r.component]
+      if (!loader) continue // unknown component — skip
+      seen.add(r.path)
+      routes.push({
+        path: r.path,
+        component: defineAsyncComponent(loader),
+      })
+    }
+  }
+
+  return routes
 }
 
+// ── Bootstrap ─────────────────────────────────────────────────────────────
+
 async function bootstrap() {
-  // Check setup status first
   const setupStatus = await fetchSetupStatus()
 
-  // If setup is not complete, show SetupWizard as a full-page gate
   if (!setupStatus.complete) {
     const SetupWizard = defineAsyncComponent(() =>
       import('settingsPlugin/SetupWizard').then((m) => m.default ?? m),
@@ -81,12 +108,11 @@ async function bootstrap() {
     return
   }
 
-  // Normal mode — fetch plugin metadata for AppNav
   const plugins = await fetchPlugins()
 
   const routes: RouteRecordRaw[] = [
     ...coreModule.routes,
-    ...buildPluginRoutes(),
+    ...buildPluginRoutes(plugins),
   ]
 
   const router = createRouter({
@@ -96,31 +122,20 @@ async function bootstrap() {
 
   const app = createApp(App)
   app.use(router)
-
-  // Provide plugin metadata to all components (used by AppNav)
   app.provide('pluginMeta', plugins)
-
   app.mount('#app')
 
-  // Listen for SSE plugins-updated event (after setup_complete or live install)
-  listenForReload(router, plugins)
+  listenForReload()
 }
 
-function listenForReload(router: ReturnType<typeof createRouter>, plugins: PluginMeta[]) {
+function listenForReload() {
   try {
     const es = new EventSource('/api/events')
-
     es.addEventListener('system', (e) => {
       const event = JSON.parse(e.data) as { type: string }
-      if (event.type === 'plugins-updated') {
-        // Refresh the page — simplest way to pick up new routes
-        window.location.reload()
-      }
+      if (event.type === 'plugins-updated') window.location.reload()
     })
-
-    es.addEventListener('setup-completed', () => {
-      window.location.reload()
-    })
+    es.addEventListener('setup-completed', () => window.location.reload())
   } catch { /* SSE not critical */ }
 }
 

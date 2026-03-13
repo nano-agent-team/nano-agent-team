@@ -19,6 +19,7 @@ export const ANTHROPIC_BASE_URL = process.env.ANTHROPIC_BASE_URL ?? '';
  *   1. ANTHROPIC_API_KEY env var (explicit key)
  *   2. CLAUDE_CODE_OAUTH_TOKEN env var (Claude Code subscription)
  *   3. ~/.claude/.credentials.json → claudeAiOauth.accessToken (auto-synced by Claude Code)
+ *   4. DATA_DIR/config.json → provider.apiKey (saved by setup wizard)
  */
 function resolveAnthropicApiKey(): string {
   if (process.env.ANTHROPIC_API_KEY) return process.env.ANTHROPIC_API_KEY;
@@ -26,16 +27,21 @@ function resolveAnthropicApiKey(): string {
   try {
     const credPath = path.join(os.homedir(), '.claude', '.credentials.json');
     const creds = JSON.parse(fs.readFileSync(credPath, 'utf8'));
-    return creds?.claudeAiOauth?.accessToken ?? '';
-  } catch {
-    return '';
-  }
+    if (creds?.claudeAiOauth?.accessToken) return creds.claudeAiOauth.accessToken;
+  } catch { /* not present */ }
+  try {
+    const dataDir = process.env.DATA_DIR ?? path.join(os.homedir(), 'nano-agent-team', 'data');
+    const configPath = path.join(dataDir, 'config.json');
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    if (config?.provider?.apiKey) return config.provider.apiKey;
+  } catch { /* not present */ }
+  return '';
 }
 
 export const ANTHROPIC_API_KEY = resolveAnthropicApiKey();
 export const API_PORT = parseInt(process.env.API_PORT ?? '3001', 10);
 export const DB_PATH =
-  process.env.DB_PATH ?? path.join(os.homedir(), 'nano-agent-team', 'data', 'nano-agent-team.db');
+  process.env.DB_PATH ?? path.join(DATA_DIR, 'nano-agent-team.db');
 export const AGENT_RESTART_MAX = parseInt(process.env.AGENT_RESTART_MAX ?? '3', 10);
 export const AGENT_RESTART_DELAY_MS = parseInt(process.env.AGENT_RESTART_DELAY_MS ?? '5000', 10);
 export const HEALTH_CHECK_INTERVAL_MS = parseInt(

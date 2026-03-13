@@ -4,8 +4,120 @@
       <h1>⚙️ Settings</h1>
     </div>
 
-    <div class="settings-body">
-      <!-- Config status -->
+    <!-- ── Tab: Hub ─────────────────────────────────────────────────────── -->
+    <div v-if="activeTab === 'hub'" class="settings-body">
+      <div class="settings-section">
+        <h2>Hub — Katalog</h2>
+        <div v-if="catalogLoading" class="loading">Načítám katalog...</div>
+        <div v-else-if="catalogError" class="error-msg">{{ catalogError }}</div>
+        <div v-else>
+          <div v-if="catalog.teams.length === 0 && catalog.agents.length === 0" class="empty-installed">
+            Katalog je prázdný nebo nedostupný.
+          </div>
+
+          <template v-if="catalog.teams.length > 0">
+            <h3 class="catalog-group-label">Týmy</h3>
+          </template>
+
+          <div
+            v-for="item in catalog.teams"
+            :key="item.id"
+            :class="['catalog-card', expandedItem === item.id ? 'catalog-card--expanded' : '']"
+          >
+            <div class="catalog-card-header" @click="toggleItem(item.id)">
+              <div class="catalog-card-info">
+                <span class="catalog-name">{{ item.name }}</span>
+                <span class="catalog-type">{{ item.type === 'team' ? 'Tým' : 'Agent' }}</span>
+                <span v-if="installedItems.includes(item.id)" class="badge-installed">✓ Nainstalováno</span>
+              </div>
+              <span class="catalog-toggle">{{ expandedItem === item.id ? '▲' : '▼' }}</span>
+            </div>
+
+            <div v-if="expandedItem === item.id" class="requires-form">
+              <p v-if="item.description" class="item-desc">{{ item.description }}</p>
+
+              <div v-for="field in item.requires" :key="field.key" class="field-row">
+                <label class="field-label">{{ field.label }}</label>
+
+                <!-- SSH generate -->
+                <div v-if="field.type === 'generate_ssh'" class="ssh-field">
+                  <button
+                    class="btn-secondary"
+                    :disabled="sshGenerating === item.id"
+                    @click="generateSsh(item.id)"
+                  >
+                    {{ sshGenerating === item.id ? 'Generuji...' : 'Vygenerovat klíč' }}
+                  </button>
+                  <div v-if="sshPublicKeys[item.id]" class="ssh-pubkey">
+                    <code>{{ sshPublicKeys[item.id] }}</code>
+                    <button class="btn-copy" @click="copyToClipboard(sshPublicKeys[item.id])">
+                      {{ copied === item.id ? '✓' : 'Kopírovat' }}
+                    </button>
+                    <p class="ssh-hint">Přidej tento public key do GitHub Deploy Keys repozitáře.</p>
+                  </div>
+                </div>
+
+                <!-- Boolean -->
+                <input
+                  v-else-if="field.type === 'boolean'"
+                  type="checkbox"
+                  :checked="!!itemConfigs[item.id]?.[field.key]"
+                  @change="setItemConfig(item.id, field.key, ($event.target as HTMLInputElement).checked)"
+                />
+
+                <!-- Text / Password -->
+                <input
+                  v-else
+                  :type="field.type === 'password' ? 'password' : 'text'"
+                  :placeholder="field.placeholder ?? ''"
+                  :value="itemConfigs[item.id]?.[field.key] ?? ''"
+                  class="field-input"
+                  @input="setItemConfig(item.id, field.key, ($event.target as HTMLInputElement).value)"
+                />
+
+                <p v-if="field.help" class="field-help">{{ field.help }}</p>
+              </div>
+
+              <div v-if="installErrors[item.id]" class="error-msg">{{ installErrors[item.id] }}</div>
+
+              <div v-if="installingItem === item.id && installLog.length" class="install-log">
+                <div v-for="(line, i) in installLog" :key="i" class="install-log-line">{{ line }}</div>
+              </div>
+
+              <button
+                class="btn-primary"
+                :disabled="installingItem === item.id || installedItems.includes(item.id)"
+                @click="installItem(item)"
+              >
+                {{ installingItem === item.id ? '⏳ Instaluji...' : installedItems.includes(item.id) ? '✓ Nainstalováno' : 'Instalovat' }}
+              </button>
+            </div>
+          </div>
+
+          <template v-if="catalog.agents.length > 0">
+            <h3 class="catalog-group-label" style="margin-top:16px">Standalone agenti</h3>
+          </template>
+
+          <div
+            v-for="item in catalog.agents"
+            :key="item.id"
+            :class="['catalog-card', expandedItem === item.id ? 'catalog-card--expanded' : '']"
+          >
+            <div class="catalog-card-header" @click="toggleItem(item.id)">
+              <div class="catalog-card-info">
+                <span class="catalog-name">{{ item.name }}</span>
+                <span class="catalog-type">Agent</span>
+                <span v-if="installedItems.includes(item.id)" class="badge-installed">✓ Nainstalováno</span>
+              </div>
+              <span class="catalog-toggle">{{ expandedItem === item.id ? '▲' : '▼' }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Tab: Systém ──────────────────────────────────────────────────── -->
+    <div v-if="activeTab === 'system'" class="settings-body">
       <div class="settings-section">
         <h2>Stav systému</h2>
         <div class="status-row">
@@ -24,42 +136,6 @@
         </div>
       </div>
 
-      <!-- Chat with settings agent -->
-      <div class="settings-section">
-        <h2>Asistent</h2>
-        <p class="section-desc">Zeptej se na cokoliv ohledně nastavení systému.</p>
-
-        <div class="chat-messages" ref="chatEl">
-          <div
-            v-for="(msg, i) in messages"
-            :key="i"
-            :class="['chat-msg', msg.role]"
-          >
-            <span class="chat-role">{{ msg.role === 'user' ? 'Ty' : '🤖' }}</span>
-            <span class="chat-text">{{ msg.text }}</span>
-          </div>
-          <div v-if="thinking" class="chat-msg assistant thinking">
-            <span class="chat-role">🤖</span>
-            <span class="chat-text">...</span>
-          </div>
-        </div>
-
-        <div class="chat-input-row">
-          <input
-            v-model="chatInput"
-            type="text"
-            placeholder="Napiš zprávu..."
-            class="chat-input"
-            :disabled="thinking"
-            @keyup.enter="sendMessage"
-          />
-          <button class="btn-send" :disabled="thinking || !chatInput.trim()" @click="sendMessage">
-            Odeslat
-          </button>
-        </div>
-      </div>
-
-      <!-- Installed packages -->
       <div class="settings-section">
         <h2>Nainstalováno</h2>
         <div v-if="config?.installed?.teams?.length" class="installed-group">
@@ -75,6 +151,34 @@
           Nic nenainstalováno.
         </div>
       </div>
+
+      <div class="settings-section">
+        <h2>Asistent</h2>
+        <p class="section-desc">Zeptej se na cokoliv ohledně nastavení systému.</p>
+        <div class="chat-messages" ref="chatEl">
+          <div v-for="(msg, i) in messages" :key="i" :class="['chat-msg', msg.role]">
+            <span class="chat-role">{{ msg.role === 'user' ? 'Ty' : '🤖' }}</span>
+            <span class="chat-text">{{ msg.text }}</span>
+          </div>
+          <div v-if="thinking" class="chat-msg assistant thinking">
+            <span class="chat-role">🤖</span>
+            <span class="chat-text">...</span>
+          </div>
+        </div>
+        <div class="chat-input-row">
+          <input
+            v-model="chatInput"
+            type="text"
+            placeholder="Napiš zprávu..."
+            class="chat-input"
+            :disabled="thinking"
+            @keyup.enter="sendMessage"
+          />
+          <button class="btn-send" :disabled="thinking || !chatInput.trim()" @click="sendMessage">
+            Odeslat
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -84,9 +188,40 @@ import { ref, onMounted, nextTick } from 'vue'
 
 interface Message { role: 'user' | 'assistant'; text: string }
 interface ConfigStatus { complete: boolean; missing: string[]; setupCompleted: boolean }
+interface CatalogField {
+  key: string; label: string; type: string;
+  placeholder?: string; help?: string; shared?: boolean
+}
+interface CatalogItem {
+  id: string; name: string; type: 'team' | 'agent';
+  description?: string; requires: CatalogField[]
+}
+interface Catalog { teams: CatalogItem[]; agents: CatalogItem[] }
 
-const config = ref<Record<string, any> | null>(null)
+const tabs = [
+  { id: 'hub', label: '🛒 Hub' },
+  { id: 'system', label: '⚙️ Systém' },
+]
+const activeTab = ref(window.location.pathname === '/settings' ? 'system' : 'hub')
+
+const config = ref<Record<string, unknown> | null>(null)
 const status = ref<ConfigStatus>({ complete: false, missing: [], setupCompleted: false })
+
+// Hub catalog
+const catalog = ref<Catalog>({ teams: [], agents: [] })
+const catalogLoading = ref(false)
+const catalogError = ref('')
+const expandedItem = ref<string | null>(null)
+const itemConfigs = ref<Record<string, Record<string, unknown>>>({})
+const installedItems = ref<string[]>([])
+const installingItem = ref<string | null>(null)
+const installErrors = ref<Record<string, string>>({})
+const installLog = ref<string[]>([])
+const sshGenerating = ref<string | null>(null)
+const sshPublicKeys = ref<Record<string, string>>({})
+const copied = ref<string | null>(null)
+
+// Chat
 const messages = ref<Message[]>([])
 const chatInput = ref('')
 const thinking = ref(false)
@@ -94,7 +229,7 @@ const chatEl = ref<HTMLElement | null>(null)
 const sessionId = `settings-${Date.now()}`
 
 onMounted(async () => {
-  await Promise.all([loadConfig(), loadStatus()])
+  await Promise.all([loadConfig(), loadStatus(), loadCatalog()])
   messages.value.push({
     role: 'assistant',
     text: 'Ahoj! Jsem tvůj settings asistent. Zeptej se mě na cokoliv ohledně konfigurace nebo instalace.',
@@ -104,7 +239,7 @@ onMounted(async () => {
 async function loadConfig() {
   try {
     const res = await fetch('/api/config')
-    if (res.ok) config.value = await res.json() as Record<string, any>
+    if (res.ok) config.value = await res.json() as Record<string, unknown>
   } catch { /* ignore */ }
 }
 
@@ -115,36 +250,131 @@ async function loadStatus() {
   } catch { /* ignore */ }
 }
 
+async function loadCatalog() {
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const res = await fetch('/api/hub/catalog')
+    if (!res.ok) { catalogError.value = `Chyba ${res.status}: ${res.statusText}`; return }
+    catalog.value = await res.json() as Catalog
+    // Mark already installed
+    const cfg = config.value as { installed?: { teams?: string[]; agents?: string[] } } | null
+    installedItems.value = [
+      ...(cfg?.installed?.teams ?? []),
+      ...(cfg?.installed?.agents ?? []),
+    ]
+  } catch (e) {
+    catalogError.value = String(e)
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+function toggleItem(id: string) {
+  expandedItem.value = expandedItem.value === id ? null : id
+}
+
+function setItemConfig(itemId: string, key: string, value: unknown) {
+  if (!itemConfigs.value[itemId]) itemConfigs.value[itemId] = {}
+  itemConfigs.value[itemId][key] = value
+}
+
+async function generateSsh(itemId: string) {
+  sshGenerating.value = itemId
+  try {
+    const res = await fetch('/api/hub/generate-ssh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ teamId: itemId }),
+    })
+    const data = await res.json() as { publicKey?: string; error?: string }
+    if (data.publicKey) sshPublicKeys.value[itemId] = data.publicKey
+    else installErrors.value[itemId] = data.error ?? 'Chyba generování klíče'
+  } catch (e) {
+    installErrors.value[itemId] = String(e)
+  } finally {
+    sshGenerating.value = null
+  }
+}
+
+async function copyToClipboard(text: string) {
+  await navigator.clipboard.writeText(text)
+  copied.value = text
+  setTimeout(() => { copied.value = null }, 2000)
+}
+
+const STEP_LABELS: Record<string, string> = {
+  'clone-team':    '📦 Stahuji manifest týmu',
+  'clone-agent':   '🤖 Stahuji agenta',
+  'clone-feature': '⚙️ Stahuji feature',
+  'build':         '🔨 Stavím',
+  'reload':        '🚀 Spouštím agenty',
+  'done':          '✅ Hotovo',
+}
+
+async function installItem(item: CatalogItem) {
+  installingItem.value = item.id
+  installErrors.value[item.id] = ''
+  installLog.value = []
+
+  // Listen for progress via SSE
+  const es = new EventSource('/api/events')
+  es.addEventListener('hub-install-progress', (e) => {
+    const d = JSON.parse(e.data) as { step: string; detail: string }
+    const label = STEP_LABELS[d.step] ?? d.step
+    installLog.value.push(d.detail ? `${label}: ${d.detail}` : label)
+  })
+
+  try {
+    const res = await fetch('/api/hub/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        items: [item.id],
+        config: itemConfigs.value[item.id] ?? {},
+      }),
+    })
+    const data = await res.json() as { ok?: boolean; installed?: string[]; error?: string; errors?: {id:string;error:string}[] }
+    if (data.ok) {
+      installedItems.value.push(item.id)
+      expandedItem.value = null
+      installLog.value = []
+    } else {
+      const errMsg = data.error ?? data.errors?.[0]?.error ?? 'Instalace selhala'
+      installErrors.value[item.id] = errMsg
+    }
+  } catch (e) {
+    installErrors.value[item.id] = String(e)
+  } finally {
+    es.close()
+    installingItem.value = null
+  }
+}
+
 async function sendMessage() {
   const text = chatInput.value.trim()
   if (!text || thinking.value) return
-
   messages.value.push({ role: 'user', text })
   chatInput.value = ''
   thinking.value = true
   await scrollToBottom()
-
   try {
     const res = await fetch('/api/chat/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, sessionId }),
     })
-
     if (res.ok) {
       const data = await res.json() as { reply: unknown }
-      const replyText = typeof data.reply === 'string'
-        ? data.reply
-        : JSON.stringify(data.reply)
+      const replyText = typeof data.reply === 'string' ? data.reply : JSON.stringify(data.reply)
       messages.value.push({ role: 'assistant', text: replyText })
-      // Refresh config after agent may have changed it
       await loadConfig()
       await loadStatus()
     } else {
-      messages.value.push({ role: 'assistant', text: '(Asistent není dostupný — zkus to znovu)' })
+      messages.value.push({ role: 'assistant', text: '(Asistent není dostupný)' })
     }
   } catch {
-    messages.value.push({ role: 'assistant', text: '(Chyba připojení k asistentovi)' })
+    messages.value.push({ role: 'assistant', text: '(Chyba připojení)' })
   } finally {
     thinking.value = false
     await scrollToBottom()
@@ -168,15 +398,40 @@ async function scrollToBottom() {
 .settings-header h1 {
   font-size: 20px;
   font-weight: 700;
-  margin: 0 0 24px;
+  margin: 0 0 12px;
 }
+
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border, #30363d);
+  padding-bottom: 0;
+}
+
+.tab-btn {
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted, #8b949e);
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: -1px;
+}
+.tab-btn.active {
+  color: var(--accent, #58a6ff);
+  border-bottom-color: var(--accent, #58a6ff);
+}
+.tab-btn:hover { color: var(--text, #e6edf3); }
+
+.settings-body { display: flex; flex-direction: column; gap: 16px; }
 
 .settings-section {
   background: var(--surface, #161b22);
   border: 1px solid var(--border, #30363d);
   border-radius: 8px;
   padding: 20px;
-  margin-bottom: 16px;
 }
 
 .settings-section h2 {
@@ -188,94 +443,96 @@ async function scrollToBottom() {
   margin: 0 0 16px;
 }
 
-.section-desc {
-  font-size: 13px;
-  color: var(--text-muted, #8b949e);
-  margin: 0 0 12px;
-}
+.loading { font-size: 13px; color: var(--text-muted, #8b949e); }
+.catalog-group-label { font-size: 12px; font-weight: 600; color: var(--text-muted, #8b949e); text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px; }
+.error-msg { color: var(--danger, #f85149); font-size: 13px; margin: 8px 0; }
 
-.status-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
+/* Catalog cards */
+.catalog-card {
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
   margin-bottom: 8px;
-  font-size: 13px;
+  overflow: hidden;
 }
+.catalog-card--expanded { border-color: var(--accent, #58a6ff); }
 
-.status-label { color: var(--text-muted, #8b949e); min-width: 80px; }
-.status-value { font-family: monospace; }
-
-.status-badge {
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 11px;
-  font-weight: 600;
-}
-.status-badge.ok { background: rgba(63, 185, 80, 0.15); color: var(--accent2, #3fb950); }
-.status-badge.warn { background: rgba(210, 153, 34, 0.15); color: #d29922; }
-
-.missing-list {
-  margin-top: 8px;
+.catalog-card-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  font-size: 12px;
+  padding: 12px 16px;
+  cursor: pointer;
+  background: var(--surface2, #1c2128);
 }
-.missing-label { color: var(--danger, #f85149); }
-.missing-item {
-  background: rgba(248, 81, 73, 0.1);
-  color: var(--danger, #f85149);
+.catalog-card-header:hover { background: #21262d; }
+
+.catalog-card-info { display: flex; align-items: center; gap: 10px; }
+.catalog-name { font-size: 14px; font-weight: 600; }
+.catalog-type {
+  font-size: 11px;
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--accent, #58a6ff);
   padding: 2px 6px;
   border-radius: 4px;
 }
-
-.chat-messages {
-  height: 200px;
-  overflow-y: auto;
-  background: var(--bg, #0d1117);
-  border: 1px solid var(--border, #30363d);
-  border-radius: 6px;
-  padding: 12px;
-  margin-bottom: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.chat-msg {
-  display: flex;
-  gap: 8px;
-  font-size: 13px;
-}
-
-.chat-role {
-  min-width: 24px;
+.badge-installed {
   font-size: 11px;
-  color: var(--text-muted, #8b949e);
-  padding-top: 1px;
+  background: rgba(63, 185, 80, 0.1);
+  color: var(--accent2, #3fb950);
+  padding: 2px 6px;
+  border-radius: 4px;
 }
+.catalog-toggle { font-size: 11px; color: var(--text-muted, #8b949e); }
 
-.chat-msg.user .chat-text { color: var(--text, #e6edf3); }
-.chat-msg.assistant .chat-text { color: var(--accent, #58a6ff); }
-.chat-msg.thinking .chat-text { color: var(--text-muted, #8b949e); font-style: italic; }
+.requires-form { padding: 16px; background: var(--bg, #0d1117); display: flex; flex-direction: column; gap: 12px; }
+.item-desc { font-size: 13px; color: var(--text-muted, #8b949e); margin: 0; }
 
-.chat-input-row { display: flex; gap: 8px; }
+.field-row { display: flex; flex-direction: column; gap: 4px; }
+.field-label { font-size: 12px; color: var(--text-muted, #8b949e); font-weight: 600; }
+.field-help { font-size: 11px; color: var(--text-muted, #8b949e); margin: 0; }
 
-.chat-input {
-  flex: 1;
+.field-input {
   padding: 8px 12px;
-  background: var(--bg, #0d1117);
+  background: var(--surface, #161b22);
   border: 1px solid var(--border, #30363d);
   border-radius: 6px;
   color: var(--text, #e6edf3);
   font-size: 13px;
   outline: none;
 }
-.chat-input:focus { border-color: var(--accent, #58a6ff); }
+.field-input:focus { border-color: var(--accent, #58a6ff); }
 
-.btn-send {
-  padding: 8px 16px;
+.ssh-field { display: flex; flex-direction: column; gap: 8px; }
+.ssh-pubkey { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; }
+.ssh-pubkey code {
+  font-size: 11px;
+  background: var(--surface2, #1c2128);
+  padding: 6px 10px;
+  border-radius: 4px;
+  word-break: break-all;
+  flex: 1;
+}
+.ssh-hint { font-size: 11px; color: var(--text-muted, #8b949e); margin: 0; width: 100%; }
+
+.install-log {
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: monospace;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.install-log-line { color: var(--accent2, #3fb950); }
+.install-log-line:last-child { color: var(--text, #e6edf3); }
+
+.btn-primary {
+  align-self: flex-start;
+  padding: 8px 20px;
   background: var(--accent, #58a6ff);
   color: #0d1117;
   border: none;
@@ -284,22 +541,74 @@ async function scrollToBottom() {
   font-weight: 600;
   cursor: pointer;
 }
-.btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.installed-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-  font-size: 13px;
-}
-.installed-label { color: var(--text-muted, #8b949e); min-width: 60px; }
-.installed-item {
+.btn-secondary {
+  padding: 6px 14px;
   background: var(--surface2, #1c2128);
-  padding: 2px 8px;
-  border-radius: 4px;
-  font-size: 12px;
+  color: var(--text, #e6edf3);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
 }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn-copy {
+  padding: 4px 10px;
+  background: var(--surface2, #1c2128);
+  color: var(--text-muted, #8b949e);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+/* System tab */
+.section-desc { font-size: 13px; color: var(--text-muted, #8b949e); margin: 0 0 12px; }
+.status-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; font-size: 13px; }
+.status-label { color: var(--text-muted, #8b949e); min-width: 80px; }
+.status-value { font-family: monospace; }
+.status-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.status-badge.ok { background: rgba(63, 185, 80, 0.15); color: var(--accent2, #3fb950); }
+.status-badge.warn { background: rgba(210, 153, 34, 0.15); color: #d29922; }
+.missing-list { margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.missing-label { color: var(--danger, #f85149); }
+.missing-item { background: rgba(248, 81, 73, 0.1); color: var(--danger, #f85149); padding: 2px 6px; border-radius: 4px; }
+.installed-group { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; font-size: 13px; }
+.installed-label { color: var(--text-muted, #8b949e); min-width: 60px; }
+.installed-item { background: var(--surface2, #1c2128); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
 .empty-installed { font-size: 13px; color: var(--text-muted, #8b949e); }
+
+.chat-messages {
+  height: 200px; overflow-y: auto;
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: 12px; margin-bottom: 12px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.chat-msg { display: flex; gap: 8px; font-size: 13px; }
+.chat-role { min-width: 24px; font-size: 11px; color: var(--text-muted, #8b949e); padding-top: 1px; }
+.chat-msg.user .chat-text { color: var(--text, #e6edf3); }
+.chat-msg.assistant .chat-text { color: var(--accent, #58a6ff); }
+.chat-msg.thinking .chat-text { color: var(--text-muted, #8b949e); font-style: italic; }
+.chat-input-row { display: flex; gap: 8px; }
+.chat-input {
+  flex: 1; padding: 8px 12px;
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  color: var(--text, #e6edf3);
+  font-size: 13px; outline: none;
+}
+.chat-input:focus { border-color: var(--accent, #58a6ff); }
+.btn-send {
+  padding: 8px 16px;
+  background: var(--accent, #58a6ff);
+  color: #0d1117;
+  border: none; border-radius: 6px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
 </style>

@@ -77,7 +77,10 @@ export async function loadFeature(
 ): Promise<void> {
   if (loadedFeatures.has(featureId)) return;
 
-  const featurePath = path.join(FEATURES_DIR, featureId);
+  // Check built-in features dir first, then installed features in /data/features/
+  const builtinPath = path.join(FEATURES_DIR, featureId);
+  const installedPath = path.join(DATA_DIR, 'features', featureId);
+  const featurePath = fs.existsSync(path.join(builtinPath, 'feature.json')) ? builtinPath : installedPath;
   const featureJsonPath = path.join(featurePath, 'feature.json');
 
   if (!fs.existsSync(featureJsonPath)) {
@@ -158,33 +161,57 @@ async function loadTeamPlugins(
 
 // ─── Plugin list for dashboard ────────────────────────────────────────────────
 
-async function getPluginList(): Promise<Array<{ id: string; name: string; uiEntry: string | null }>> {
-  // Collect from loaded features with frontend
-  const list: Array<{ id: string; name: string; uiEntry: string | null }> = [];
+interface PluginRoute { path: string; component: string; nav?: { label: string; icon: string } }
+interface PluginInfo {
+  id: string;
+  name: string;
+  uiEntry: string | null;
+  routes: PluginRoute[];
+}
 
-  if (!fs.existsSync(FEATURES_DIR)) return list;
-  const entries = fs.readdirSync(FEATURES_DIR, { withFileTypes: true });
+const mountedStatic = new Set<string>();
 
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const featureJsonPath = path.join(FEATURES_DIR, entry.name, 'feature.json');
-    if (!fs.existsSync(featureJsonPath)) continue;
-    try {
-      const manifest = JSON.parse(fs.readFileSync(featureJsonPath, 'utf8')) as {
-        id: string; name: string; frontend?: { remote: string };
-      };
-      const remotePath = manifest.frontend?.remote
-        ? path.join(FEATURES_DIR, entry.name, manifest.frontend.remote)
-        : null;
-      list.push({
-        id: manifest.id,
-        name: manifest.name,
-        uiEntry: remotePath && fs.existsSync(remotePath)
-          ? `/features/${entry.name}/${manifest.frontend!.remote}`
-          : null,
-      });
-    } catch { /* ignore invalid */ }
+async function getPluginList(app?: express.Application): Promise<PluginInfo[]> {
+  const list: PluginInfo[] = [];
+
+  function scanDir(dir: string, urlPrefix: string) {
+    if (!fs.existsSync(dir)) return;
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const featureJsonPath = path.join(dir, entry.name, 'feature.json');
+      if (!fs.existsSync(featureJsonPath)) continue;
+      try {
+        const manifest = JSON.parse(fs.readFileSync(featureJsonPath, 'utf8')) as {
+          id: string; name: string;
+          frontend?: { remote: string; routes?: PluginRoute[] };
+        };
+        const remotePath = manifest.frontend?.remote
+          ? path.join(dir, entry.name, manifest.frontend.remote)
+          : null;
+        const uiEntry = remotePath && fs.existsSync(remotePath)
+          ? `${urlPrefix}/${entry.name}/${manifest.frontend!.remote}`
+          : null;
+
+        // Mount static files for this feature if not already done
+        if (app && !mountedStatic.has(entry.name)) {
+          app.use(`${urlPrefix}/${entry.name}`, express.static(path.join(dir, entry.name)));
+          mountedStatic.add(entry.name);
+        }
+
+        if (!list.find(p => p.id === manifest.id)) {
+          list.push({
+            id: manifest.id,
+            name: manifest.name,
+            uiEntry,
+            routes: manifest.frontend?.routes ?? [],
+          });
+        }
+      } catch { /* ignore */ }
+    }
   }
+
+  scanDir(FEATURES_DIR, '/features');
+  scanDir(path.join(DATA_DIR, 'features'), '/features/data');
 
   return list;
 }
@@ -204,19 +231,45 @@ export async function createApiApp(
   const reloadFeatures = async (): Promise<void> => {
     const config = await configService.load();
     if (!config) return;
+
+    // Load features from config.installed.features
     for (const featureId of config.installed.features) {
       await loadFeature(featureId, app, nc, manager, configService, reloadFeatures);
     }
+
+    // Also scan /data/features/ for installed features (added by hub install)
+    const dataFeaturesDir = path.join(DATA_DIR, 'features');
+    if (fs.existsSync(dataFeaturesDir)) {
+      for (const entry of fs.readdirSync(dataFeaturesDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        await loadFeature(entry.name, app, nc, manager, configService, reloadFeatures);
+      }
+    }
+
+    // Scan /data/agents/ and start any new agents
+    const dataAgentsDir = path.join(DATA_DIR, 'agents');
+    if (fs.existsSync(dataAgentsDir)) {
+      const { loadAgents } = await import('./agent-registry.js');
+      const installedAgents = loadAgents(dataAgentsDir);
+      for (const agent of installedAgents) {
+        if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
+          await manager.startAgent(agent);
+        }
+      }
+    }
   };
 
-  // ── Always load settings feature ─────────────────────────────────────────
-  await loadFeature('settings', app, nc, manager, configService, reloadFeatures);
+  // ── Plugin list registered FIRST — must not be overridden by team plugins ──
 
-  // ── In ready mode, also load team plugins and installed features ──────────
-  if (opts.setupMode === 'ready') {
-    await reloadFeatures();
-    await loadTeamPlugins(app, nc, manager, configService, reloadFeatures);
-  }
+  app.get('/api/plugins', async (_req: Request, res: Response) => {
+    try {
+      const plugins = await getPluginList(app);
+      res.json(plugins);
+    } catch (err) {
+      logger.error({ err }, 'GET /api/plugins error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
 
   // ── Core health endpoint ──────────────────────────────────────────────────
 
@@ -298,6 +351,20 @@ export async function createApiApp(
       res.status(500).json({ error: String(err) });
     }
   });
+
+  // ── Static files for features (must be before catch-all) ────────────────────
+  app.use('/features/settings', express.static(path.join(FEATURES_DIR, 'settings')));
+  app.use('/features/simple-chat', express.static(path.join(FEATURES_DIR, 'simple-chat')));
+  app.use('/features/data', express.static(path.join(DATA_DIR, 'features')));
+
+  // ── Load features and team plugins (after core API routes) ──────────────────
+  await loadFeature('settings', app, nc, manager, configService, reloadFeatures);
+  await loadFeature('simple-chat', app, nc, manager, configService, reloadFeatures);
+
+  if (opts.setupMode === 'ready') {
+    await reloadFeatures();
+    await loadTeamPlugins(app, nc, manager, configService, reloadFeatures);
+  }
 
   // ── Static dashboard (serve last, after all API routes) ───────────────────
 

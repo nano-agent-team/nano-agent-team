@@ -10,6 +10,11 @@
     "remote": "./frontend-dist/assets/remoteEntry.js",
     "routes": [
       {
+        "path": "/hub",
+        "component": "SettingsView",
+        "nav": { "label": "Hub", "icon": "🛒" }
+      },
+      {
         "path": "/settings",
         "component": "SettingsView",
         "nav": { "label": "Settings", "icon": "⚙️" }

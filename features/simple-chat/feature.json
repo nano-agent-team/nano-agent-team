@@ -1,0 +1,19 @@
+{
+  "id": "simple-chat",
+  "name": "Simple Chat",
+  "version": "1.0.0",
+  "type": "feature",
+  "provides": ["chat"],
+  "requires": [],
+  "plugin": "./plugin.mjs",
+  "frontend": {
+    "remote": "./frontend-dist/assets/remoteEntry.js",
+    "routes": [
+      {
+        "path": "/chat",
+        "component": "SimpleChatView",
+        "nav": { "label": "Chat", "icon": "💬" }
+      }
+    ]
+  }
+}
