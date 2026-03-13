@@ -1,10 +1,11 @@
 # nano-agent-team — Core server Dockerfile
 #
 # Multi-stage build:
-#   1. ts-builder     — compile TypeScript
-#   2. dashboard-builder — build Vue 3 dashboard
-#   3. settings-builder  — build settings feature frontend
-#   4. runtime        — lean production image
+#   1. ts-builder          — compile TypeScript
+#   2. dashboard-builder   — build Vue 3 dashboard
+#   3. settings-builder    — build settings feature frontend
+#   4. simple-chat-builder — build simple-chat feature frontend
+#   5. runtime             — lean production image
 #
 # Usage:
 #   docker build -t nano-agent-team .
@@ -45,14 +46,28 @@ COPY features/settings/frontend/ ./
 RUN npm run build
 
 
-# ── Stage 4: Runtime ──────────────────────────────────────────────────────────
+# ── Stage 4: Simple Chat feature frontend builder ────────────────────────────
+FROM node:22-alpine AS simple-chat-builder
+WORKDIR /app/simple-chat-frontend
+
+COPY features/simple-chat/frontend/package.json features/simple-chat/frontend/package-lock.json* ./
+RUN npm ci
+
+COPY features/simple-chat/frontend/ ./
+# Build output goes to ../frontend-dist (relative to frontend/ dir)
+RUN npm run build
+
+
+# ── Stage 5: Runtime ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
-# Install nats-server for embedded NATS + Docker CLI for agent containers
+# Install nats-server for embedded NATS + Docker CLI for agent containers + openssh for hub install
 RUN apk add --no-cache \
     nats-server \
     docker-cli \
+    openssh-keygen \
+    git \
     && rm -rf /var/cache/apk/*
 
 # Install Claude Code CLI (provides `claude auth login` for OAuth setup)
@@ -81,6 +96,7 @@ COPY mcp/ ./mcp/
 # Built frontends
 COPY --from=dashboard-builder /app/dashboard/dist/ ./dashboard/dist/
 COPY --from=settings-builder /app/frontend-dist/ ./features/settings/frontend-dist/
+COPY --from=simple-chat-builder /app/frontend-dist/ ./features/simple-chat/frontend-dist/
 
 # Data directory (mounted as volume at runtime)
 VOLUME ["/data"]

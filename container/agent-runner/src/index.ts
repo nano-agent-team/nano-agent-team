@@ -29,6 +29,7 @@ const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';
 const MODEL = process.env.MODEL ?? 'claude-haiku-4-5-20251001';
 const SESSION_TYPE = (process.env.SESSION_TYPE ?? 'stateless') as 'stateless' | 'persistent';
 const CLAUDE_MD_PATH = '/workspace/agent/CLAUDE.md';
+const AGENT_SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT ?? '';
 const SESSION_FILE = '/workspace/sessions/session_id';
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const DB_PATH = process.env.DB_PATH ?? '/workspace/db/nano-agent-team.db';
@@ -100,12 +101,13 @@ async function main(): Promise<void> {
     log.warn('SUBSCRIBE_TOPICS is empty — agent will not receive any messages');
   }
 
-  // Copy CLAUDE.md to /workspace/CLAUDE.md so Claude Code reads it automatically as cwd context
-  // Claude Agent SDK ignores options.systemPrompt — Claude Code uses CLAUDE.md from cwd instead
+  // Write CLAUDE.md to /workspace/CLAUDE.md so Claude Code reads it automatically as cwd context.
+  // Priority: AGENT_SYSTEM_PROMPT env var (injected by AgentManager) > file mount > fallback.
   const WORKSPACE_CLAUDE_MD = '/workspace/CLAUDE.md';
-  if (fs.existsSync(CLAUDE_MD_PATH)) {
-    fs.copyFileSync(CLAUDE_MD_PATH, WORKSPACE_CLAUDE_MD);
-    log.info({ src: CLAUDE_MD_PATH, dst: WORKSPACE_CLAUDE_MD }, 'CLAUDE.md copied to workspace cwd');
+  const systemPromptContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
+  if (systemPromptContent) {
+    fs.writeFileSync(WORKSPACE_CLAUDE_MD, systemPromptContent, 'utf8');
+    log.info({ agentId: AGENT_ID, source: AGENT_SYSTEM_PROMPT ? 'env' : 'file' }, 'CLAUDE.md written to workspace cwd');
   } else {
     fs.writeFileSync(
       WORKSPACE_CLAUDE_MD,
@@ -171,17 +173,17 @@ async function main(): Promise<void> {
     }
 
     // Build prompt: prepend agent role context from CLAUDE.md, then the actual message
-    const claudeMdContent = fs.existsSync(CLAUDE_MD_PATH)
-      ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8')
-      : '';
+    // Priority: AGENT_SYSTEM_PROMPT env var > file mount
+    const claudeMdContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
 
+    // For chat agents: use only the text field. For event agents without text: include full payload.
     const eventContext = payload.text
       ? String(payload.text)
-      : `Přijata událost na topic "${subject}":\n\n${JSON.stringify(payload, null, 2)}`;
+      : `Event on topic "${subject}":\n\n${JSON.stringify(payload, null, 2)}`;
 
-    // Combine: role instructions + event to process
+    // Combine: role instructions (system prompt) + user message
     const prompt: string = claudeMdContent
-      ? `${claudeMdContent}\n\n---\n\n${eventContext}\n\nJdi do akce — zpracuj tuto zprávu přesně dle instrukcí výše.`
+      ? `${claudeMdContent}\n\n---\n\n${eventContext}`
       : eventContext;
 
     log.info({ agentId: AGENT_ID, subject, promptLen: prompt.length }, 'Message received');
@@ -264,7 +266,9 @@ async function main(): Promise<void> {
     };
 
     try {
-      await js.publish(replySubject, codec.encode(JSON.stringify(reply)));
+      // Use core NATS publish for replies — reply subjects (chat.reply.*)
+      // are not in the JetStream stream, so js.publish would timeout.
+      nc.publish(replySubject, codec.encode(JSON.stringify(reply)));
       log.info(
         { agentId: AGENT_ID, replySubject, resultLength: result.length },
         'Reply sent',

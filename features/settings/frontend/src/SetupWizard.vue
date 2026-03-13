@@ -111,41 +111,152 @@
       </button>
     </div>
 
-    <!-- Step 2: Choose what to install -->
-    <div v-if="step === 2" class="wizard-step">
+    <!-- Step 2: Choose what to install (hub catalog) -->
+    <div v-if="step === 2" class="wizard-step wizard-step--wide">
       <h2>Co chceš nainstalovat?</h2>
       <p class="step-desc">
-        Vyber týmy a featury. Vše lze přidat nebo odebrat i později v Settings.
+        Vyber týmy z katalogu. Kliknutím na kartu zobrazíš nastavení.
       </p>
 
-      <div v-if="available.teams.length > 0" class="install-section">
+      <div v-if="catalogLoading" class="catalog-loading">
+        <span class="spinner">⏳</span> Načítám katalog...
+      </div>
+
+      <div v-if="!catalogLoading && catalog.teams.length === 0 && catalog.agents.length === 0" class="empty-available">
+        Katalog je prázdný — přidáš týmy později přes Settings.
+      </div>
+
+      <!-- Teams -->
+      <div v-if="!catalogLoading && catalog.teams.length > 0" class="install-section">
         <h3>Týmy</h3>
-        <label
-          v-for="team in available.teams"
-          :key="team.id"
-          class="install-item"
+        <div
+          v-for="item in catalog.teams"
+          :key="item.id"
+          class="catalog-card"
+          :class="{ 'catalog-card--expanded': expandedItem === item.id }"
+          @click="toggleItem(item.id)"
         >
-          <input type="checkbox" :value="team.id" v-model="selectedInstall" />
-          <span class="install-name">{{ team.name }}</span>
-          <span class="install-id">{{ team.id }}</span>
-        </label>
+          <div class="catalog-card-header">
+            <div class="catalog-card-info">
+              <span class="install-name">{{ item.name }}</span>
+              <span class="install-id">{{ item.id }}</span>
+              <span v-if="installedItems.includes(item.id)" class="badge-installed">✅ Nainstalováno</span>
+            </div>
+            <span class="catalog-card-chevron">{{ expandedItem === item.id ? '▲' : '▼' }}</span>
+          </div>
+          <p v-if="item.description" class="catalog-card-desc">{{ item.description }}</p>
+
+          <!-- Inline requires form -->
+          <div v-if="expandedItem === item.id" class="requires-form" @click.stop>
+            <div v-if="item.requires && item.requires.length > 0">
+              <div
+                v-for="req in item.requires"
+                :key="req.key"
+                class="form-group"
+              >
+                <label>{{ req.label }}</label>
+                <p v-if="req.help" class="field-help">{{ req.help }}</p>
+
+                <!-- generate_ssh type -->
+                <div v-if="req.type === 'generate_ssh'" class="ssh-field">
+                  <button
+                    class="btn-secondary btn-sm"
+                    :disabled="sshGenerating[item.id]"
+                    @click="generateSsh(item.id)"
+                  >
+                    <span v-if="sshGenerating[item.id]">Generuji...</span>
+                    <span v-else>🔑 Vygenerovat klíč</span>
+                  </button>
+                  <div v-if="sshPublicKeys[item.id]" class="ssh-result">
+                    <p class="field-help">Zkopíruj tento public key a přidej ho do <strong>GitHub → Settings → Deploy Keys</strong>:</p>
+                    <div class="code-block">{{ sshPublicKeys[item.id] }}</div>
+                    <button class="btn-copy btn-sm" @click="copyToClipboard(sshPublicKeys[item.id])">
+                      {{ copied ? '✅ Zkopírováno' : '📋 Kopírovat' }}
+                    </button>
+                  </div>
+                </div>
+
+                <!-- boolean type -->
+                <label v-else-if="req.type === 'boolean'" class="checkbox-label">
+                  <input
+                    type="checkbox"
+                    :checked="!!itemConfigs[item.id]?.[req.key]"
+                    @change="setItemConfig(item.id, req.key, ($event.target as HTMLInputElement).checked)"
+                  />
+                  <span>{{ req.label }}</span>
+                </label>
+
+                <!-- text / password / default -->
+                <input
+                  v-else
+                  :type="req.type === 'password' ? 'password' : 'text'"
+                  :placeholder="req.placeholder ?? ''"
+                  :value="itemConfigs[item.id]?.[req.key] ?? ''"
+                  class="form-input"
+                  @input="setItemConfig(item.id, req.key, ($event.target as HTMLInputElement).value)"
+                />
+              </div>
+            </div>
+
+            <div v-if="installErrors[item.id]" class="form-error" style="margin-bottom:8px">{{ installErrors[item.id] }}</div>
+
+            <button
+              class="btn-primary btn-install"
+              :disabled="installingItem === item.id || installedItems.includes(item.id)"
+              @click="installItem(item)"
+            >
+              <span v-if="installingItem === item.id">Instaluji...</span>
+              <span v-else-if="installedItems.includes(item.id)">✅ Nainstalováno</span>
+              <span v-else>Instalovat →</span>
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div v-if="available.features.length > 0" class="install-section">
-        <h3>Featury</h3>
-        <label
-          v-for="feature in available.features"
-          :key="feature.id"
-          class="install-item"
+      <!-- Agents -->
+      <div v-if="!catalogLoading && catalog.agents.length > 0" class="install-section">
+        <h3>Agenti</h3>
+        <div
+          v-for="item in catalog.agents"
+          :key="item.id"
+          class="catalog-card"
+          :class="{ 'catalog-card--expanded': expandedItem === item.id }"
+          @click="toggleItem(item.id)"
         >
-          <input type="checkbox" :value="feature.id" v-model="selectedInstall" />
-          <span class="install-name">{{ feature.name }}</span>
-          <span class="install-id">{{ feature.id }}</span>
-        </label>
-      </div>
+          <div class="catalog-card-header">
+            <div class="catalog-card-info">
+              <span class="install-name">{{ item.name }}</span>
+              <span class="install-id">{{ item.id }}</span>
+              <span v-if="installedItems.includes(item.id)" class="badge-installed">✅ Nainstalováno</span>
+            </div>
+            <span class="catalog-card-chevron">{{ expandedItem === item.id ? '▲' : '▼' }}</span>
+          </div>
+          <p v-if="item.description" class="catalog-card-desc">{{ item.description }}</p>
 
-      <div v-if="available.teams.length === 0 && available.features.length === 0" class="empty-available">
-        Zatím žádné týmy ani featury — přidáš je později přes Settings.
+          <div v-if="expandedItem === item.id" class="requires-form" @click.stop>
+            <div v-if="item.requires && item.requires.length > 0">
+              <div v-for="req in item.requires" :key="req.key" class="form-group">
+                <label>{{ req.label }}</label>
+                <input
+                  :type="req.type === 'password' ? 'password' : 'text'"
+                  :placeholder="req.placeholder ?? ''"
+                  :value="itemConfigs[item.id]?.[req.key] ?? ''"
+                  class="form-input"
+                  @input="setItemConfig(item.id, req.key, ($event.target as HTMLInputElement).value)"
+                />
+              </div>
+            </div>
+            <button
+              class="btn-primary btn-install"
+              :disabled="installingItem === item.id || installedItems.includes(item.id)"
+              @click="installItem(item)"
+            >
+              <span v-if="installingItem === item.id">Instaluji...</span>
+              <span v-else-if="installedItems.includes(item.id)">✅ Nainstalováno</span>
+              <span v-else>Instalovat →</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div class="step-actions">
@@ -195,11 +306,18 @@ watch(providerType, () => {
   apiKeyError.value = ''
 })
 
-const available = ref<{ teams: {id:string;name:string}[]; features: {id:string;name:string}[] }>({
-  teams: [],
-  features: [],
-})
-const selectedInstall = ref<string[]>([])
+// Hub catalog
+type CatalogItem = { id: string; name: string; description: string; requires: Array<{key:string;label:string;type:string;placeholder?:string;help?:string;shared?:boolean}> }
+const catalog = ref<{ teams: CatalogItem[]; agents: CatalogItem[] }>({ teams: [], agents: [] })
+const catalogLoading = ref(false)
+const expandedItem = ref<string | null>(null)
+const itemConfigs = ref<Record<string, Record<string, unknown>>>({})
+const installedItems = ref<string[]>([])
+const installingItem = ref<string | null>(null)
+const installErrors = ref<Record<string, string>>({})
+const sshGenerating = ref<Record<string, boolean>>({})
+const sshPublicKeys = ref<Record<string, string>>({})
+const copied = ref(false)
 
 // SSE — naslouchej na auth-completed event
 let eventSource: EventSource | null = null
@@ -269,7 +387,7 @@ async function connectProvider() {
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
-    await loadAvailable()
+    await loadCatalog()
     step.value = 2
   } catch (err) {
     apiKeyError.value = `Chyba při ukládání: ${String(err)}`
@@ -311,17 +429,80 @@ async function proceedAfterOauth() {
       body: JSON.stringify({ provider: { type: 'claude-code-oauth' } }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    await loadAvailable()
+    await loadCatalog()
     step.value = 2
   } catch (err) {
     apiKeyError.value = `Chyba při ukládání: ${String(err)}`
   }
 }
 
-async function loadAvailable() {
-  const avRes = await fetch('/api/available')
-  if (avRes.ok) {
-    available.value = await avRes.json() as typeof available.value
+async function loadCatalog() {
+  catalogLoading.value = true
+  try {
+    const res = await fetch('/api/hub/catalog')
+    if (res.ok) {
+      catalog.value = await res.json() as typeof catalog.value
+    }
+  } catch { /* ignore */ } finally {
+    catalogLoading.value = false
+  }
+}
+
+function toggleItem(id: string) {
+  expandedItem.value = expandedItem.value === id ? null : id
+}
+
+function setItemConfig(itemId: string, key: string, value: unknown) {
+  if (!itemConfigs.value[itemId]) itemConfigs.value[itemId] = {}
+  itemConfigs.value[itemId][key] = value
+}
+
+async function generateSsh(teamId: string) {
+  sshGenerating.value[teamId] = true
+  try {
+    const res = await fetch('/api/hub/generate-ssh', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ teamId }),
+    })
+    const data = await res.json() as { publicKey?: string; error?: string }
+    if (!res.ok || data.error) throw new Error(data.error ?? `HTTP ${res.status}`)
+    sshPublicKeys.value[teamId] = data.publicKey ?? ''
+    setItemConfig(teamId, 'ssh_key_generated', true)
+  } catch (err) {
+    installErrors.value[teamId] = String(err)
+  } finally {
+    sshGenerating.value[teamId] = false
+  }
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 2000)
+  } catch { /* ignore */ }
+}
+
+async function installItem(item: CatalogItem) {
+  installingItem.value = item.id
+  installErrors.value[item.id] = ''
+  try {
+    const res = await fetch('/api/hub/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [item.id], config: itemConfigs.value[item.id] ?? {} }),
+    })
+    const data = await res.json() as { ok?: boolean; error?: string; errors?: Array<{id:string;error:string}> }
+    if (!res.ok || !data.ok) {
+      const msg = data.errors?.[0]?.error ?? data.error ?? `HTTP ${res.status}`
+      throw new Error(msg)
+    }
+    installedItems.value.push(item.id)
+  } catch (err) {
+    installErrors.value[item.id] = String(err)
+  } finally {
+    installingItem.value = null
   }
 }
 
@@ -332,7 +513,7 @@ async function complete() {
     const res = await fetch('/api/setup/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ install: selectedInstall.value }),
+      body: JSON.stringify({ install: installedItems.value }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
@@ -619,6 +800,117 @@ code {
   color: var(--text-muted, #8b949e);
   font-size: 13px;
   padding: 20px;
+}
+
+/* Wide step for catalog */
+.wizard-step--wide { max-width: 560px; }
+
+/* Catalog loading */
+.catalog-loading {
+  text-align: center;
+  color: var(--text-muted, #8b949e);
+  font-size: 13px;
+  padding: 20px;
+}
+
+/* Catalog cards */
+.catalog-card {
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.catalog-card:hover { border-color: var(--accent, #58a6ff); }
+.catalog-card--expanded { border-color: var(--accent, #58a6ff); }
+
+.catalog-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.catalog-card-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.catalog-card-chevron {
+  font-size: 11px;
+  color: var(--text-muted, #8b949e);
+  flex-shrink: 0;
+}
+
+.catalog-card-desc {
+  font-size: 12px;
+  color: var(--text-muted, #8b949e);
+  margin: 0 14px 10px;
+  line-height: 1.5;
+}
+
+.badge-installed {
+  font-size: 11px;
+  color: var(--accent2, #3fb950);
+  background: rgba(63, 185, 80, 0.1);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+/* Requires form (inside expanded card) */
+.requires-form {
+  border-top: 1px solid var(--border, #30363d);
+  padding: 16px 14px;
+  background: var(--bg, #0d1117);
+}
+
+.field-help {
+  font-size: 12px;
+  color: var(--text-muted, #8b949e);
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.btn-sm {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.btn-install {
+  margin-top: 12px;
+}
+
+/* SSH field */
+.ssh-field { display: flex; flex-direction: column; gap: 12px; }
+
+.ssh-result { display: flex; flex-direction: column; gap: 8px; }
+
+.btn-copy {
+  align-self: flex-start;
+  padding: 5px 10px;
+  background: transparent;
+  color: var(--text-muted, #8b949e);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 5px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.btn-copy:hover { border-color: var(--text-muted, #8b949e); }
+
+/* Checkbox label */
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  cursor: pointer;
 }
 
 .step-actions {
