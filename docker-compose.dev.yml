@@ -11,13 +11,17 @@ services:
     image: nano-agent-team:dev
     container_name: nano-agent-team
     restart: unless-stopped
-    ports:
-      - "3001:3001"
+    # host networking is required for Claude Code OAuth login:
+    # claude auth login opens a local callback server on a random port,
+    # and the Anthropic redirect goes to localhost — must be the same namespace.
+    network_mode: host
     volumes:
       # Persistent data: config, SQLite, sessions, vault, workspaces
       - ./data:/data
       # Docker socket — needed to spawn agent containers
       - /var/run/docker.sock:/var/run/docker.sock
+      # Claude Code credentials — shared with host so OAuth tokens persist
+      - ~/.claude:/root/.claude
     environment:
       DATA_DIR: /data
       LOG_LEVEL: info

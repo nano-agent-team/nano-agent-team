@@ -6,3 +6,5 @@ data/
 *.db-shm
 dashboard/dist/
 dashboard/node_modules/
+features/settings/frontend-dist/
+features/*/node_modules/

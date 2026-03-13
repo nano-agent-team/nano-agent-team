@@ -11,10 +11,30 @@
       <h2>Připoj Claude</h2>
       <p class="step-desc">
         nano-agent-team používá Claude jako AI backend.
-        Zadej svůj Anthropic API klíč nebo Claude Code OAuth token.
+        Vyber způsob přihlášení.
       </p>
-      <div class="form-group">
-        <label>API klíč</label>
+
+      <!-- Provider type toggle -->
+      <div class="provider-toggle">
+        <button
+          class="toggle-btn"
+          :class="{ active: providerType === 'api-key' }"
+          @click="providerType = 'api-key'"
+        >
+          🔑 API klíč
+        </button>
+        <button
+          class="toggle-btn"
+          :class="{ active: providerType === 'claude-code' }"
+          @click="providerType = 'claude-code'"
+        >
+          ⚡ Claude Code subscription
+        </button>
+      </div>
+
+      <!-- API key mode -->
+      <div v-if="providerType === 'api-key'" class="form-group">
+        <label>Anthropic API klíč</label>
         <input
           v-model="apiKey"
           type="password"
@@ -25,7 +45,67 @@
         />
         <span v-if="apiKeyError" class="form-error">{{ apiKeyError }}</span>
       </div>
-      <button class="btn-primary" :disabled="connecting" @click="connectProvider">
+
+      <!-- Claude Code subscription mode -->
+      <div v-if="providerType === 'claude-code'" class="claude-code-info">
+
+        <!-- Stav: idle -->
+        <div v-if="oauthState === 'idle'" class="info-box">
+          <p>
+            Přihlásí se přes tvůj Anthropic účet (Claude Pro / Max subscription).
+            Credentials se uloží do <code>~/.claude/.credentials.json</code>.
+          </p>
+          <p class="info-note">
+            Po kliknutí "Připojit Claude →" se vygeneruje přihlašovací odkaz.
+          </p>
+        </div>
+
+        <!-- Stav: loading URL -->
+        <div v-if="oauthState === 'loading'" class="info-box info-box--loading">
+          <span class="spinner">⏳</span> Generuji přihlašovací odkaz...
+        </div>
+
+        <!-- Stav: URL připravena — čekáme na kód -->
+        <div v-if="oauthState === 'waiting'" class="info-box info-box--url">
+          <p class="url-label">1. Otevři odkaz a přihlas se:</p>
+          <a :href="oauthUrl" target="_blank" class="oauth-link" @click="oauthClicked = true">
+            🔗 Přihlásit se u Anthropic →
+          </a>
+          <template v-if="oauthClicked">
+            <p class="url-label" style="margin-top:16px">
+              2. Na stránce Anthropic uvidíš kód — zkopíruj ho a vlož sem:
+            </p>
+            <div class="form-group" style="margin-bottom:10px">
+              <input
+                v-model="oauthCode"
+                type="text"
+                placeholder="Vlož kód ze stránky Anthropic..."
+                class="form-input"
+                :class="{ error: !!apiKeyError }"
+                @keyup.enter="submitOauthCode"
+              />
+            </div>
+            <button class="btn-done" :disabled="!oauthCode || submittingCode" @click="submitOauthCode">
+              <span v-if="submittingCode">Ověřuji...</span>
+              <span v-else>✅ Potvrdit kód →</span>
+            </button>
+          </template>
+        </div>
+
+        <!-- Stav: already logged in -->
+        <div v-if="oauthState === 'done'" class="info-box info-box--success">
+          ✅ Credentials nalezeny — Claude Code je připraven.
+        </div>
+
+        <span v-if="apiKeyError" class="form-error">{{ apiKeyError }}</span>
+      </div>
+
+      <button
+        v-if="providerType === 'api-key' || oauthState === 'idle'"
+        class="btn-primary"
+        :disabled="connecting"
+        @click="connectProvider"
+      >
         <span v-if="connecting">Připojuji...</span>
         <span v-else>Připojit Claude →</span>
       </button>
@@ -72,7 +152,7 @@
         <button class="btn-secondary" @click="step = 1">← Zpět</button>
         <button class="btn-primary" :disabled="completing" @click="complete">
           <span v-if="completing">Spouštím...</span>
-          <span v-else">Spustit systém →</span>
+          <span v-else>Spustit systém →</span>
         </button>
       </div>
     </div>
@@ -89,14 +169,31 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 
 const step = ref(1)
+const providerType = ref<'api-key' | 'claude-code'>('api-key')
 const apiKey = ref('')
 const apiKeyError = ref('')
 const connecting = ref(false)
 const completing = ref(false)
 const globalError = ref('')
+
+// OAuth state machine: idle → loading → waiting → done
+const oauthState = ref<'idle' | 'loading' | 'waiting' | 'done'>('idle')
+const oauthUrl = ref('')
+const oauthClicked = ref(false)
+const oauthCode = ref('')
+const oauthPort = ref<number | null>(null)
+const submittingCode = ref(false)
+
+// Reset oauth state when switching provider type
+watch(providerType, () => {
+  oauthState.value = 'idle'
+  oauthUrl.value = ''
+  oauthClicked.value = false
+  apiKeyError.value = ''
+})
 
 const available = ref<{ teams: {id:string;name:string}[]; features: {id:string;name:string}[] }>({
   teams: [],
@@ -104,8 +201,9 @@ const available = ref<{ teams: {id:string;name:string}[]; features: {id:string;n
 })
 const selectedInstall = ref<string[]>([])
 
+// SSE — naslouchej na auth-completed event
+let eventSource: EventSource | null = null
 onMounted(async () => {
-  // If already configured, skip to step 2
   try {
     const res = await fetch('/api/config/status')
     const status = await res.json() as { complete: boolean; setupCompleted: boolean }
@@ -113,22 +211,57 @@ onMounted(async () => {
       window.location.href = '/'
       return
     }
-    if (status.setupCompleted) {
-      // Provider set but setup not marked complete (unlikely edge case)
-    }
   } catch { /* ignore */ }
+
+  // Listen for SSE auth-completed
+  eventSource = new EventSource('/api/events')
+  eventSource.addEventListener('auth-completed', () => {
+    oauthState.value = 'done'
+    void proceedAfterOauth()
+  })
 })
 
 async function connectProvider() {
   apiKeyError.value = ''
-  const key = apiKey.value.trim()
-  if (!key) {
-    apiKeyError.value = 'API klíč nesmí být prázdný'
+
+  if (providerType.value === 'claude-code') {
+    // Spustí claude auth login na backendu a čeká na URL
+    oauthState.value = 'loading'
+    try {
+      const res = await fetch('/api/auth/claude-login', { method: 'POST' })
+      const data = await res.json() as { url?: string; alreadyLoggedIn?: boolean; error?: string }
+
+      if (!res.ok || data.error) {
+        apiKeyError.value = data.error ?? `HTTP ${res.status}`
+        oauthState.value = 'idle'
+        return
+      }
+
+      if (data.alreadyLoggedIn) {
+        oauthState.value = 'done'
+        await proceedAfterOauth()
+        return
+      }
+
+      oauthUrl.value = data.url ?? ''
+      oauthPort.value = data.port ?? null
+      oauthState.value = 'waiting'
+    } catch (err) {
+      apiKeyError.value = `Chyba: ${String(err)}`
+      oauthState.value = 'idle'
+    }
     return
   }
 
+  // API key mode
   connecting.value = true
   try {
+    const key = apiKey.value.trim()
+    if (!key) {
+      apiKeyError.value = 'API klíč nesmí být prázdný'
+      return
+    }
+
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -136,17 +269,59 @@ async function connectProvider() {
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
-    // Load available items for step 2
-    const avRes = await fetch('/api/available')
-    if (avRes.ok) {
-      available.value = await avRes.json() as typeof available.value
-    }
-
+    await loadAvailable()
     step.value = 2
   } catch (err) {
     apiKeyError.value = `Chyba při ukládání: ${String(err)}`
   } finally {
     connecting.value = false
+  }
+}
+
+async function submitOauthCode() {
+  if (!oauthCode.value.trim()) return
+  submittingCode.value = true
+  apiKeyError.value = ''
+  try {
+    const res = await fetch('/api/auth/claude-callback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: oauthCode.value.trim() }),
+    })
+    const data = await res.json() as { ok?: boolean; error?: string }
+    if (!res.ok || data.error) {
+      apiKeyError.value = data.error ?? `HTTP ${res.status}`
+      return
+    }
+    oauthState.value = 'done'
+    await proceedAfterOauth()
+  } catch (err) {
+    apiKeyError.value = `Chyba: ${String(err)}`
+  } finally {
+    submittingCode.value = false
+  }
+}
+
+async function proceedAfterOauth() {
+  // Uloží provider type (bez apiKey — klíč se čte z credentials.json)
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: { type: 'claude-code-oauth' } }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    await loadAvailable()
+    step.value = 2
+  } catch (err) {
+    apiKeyError.value = `Chyba při ukládání: ${String(err)}`
+  }
+}
+
+async function loadAvailable() {
+  const avRes = await fetch('/api/available')
+  if (avRes.ok) {
+    available.value = await avRes.json() as typeof available.value
   }
 }
 
@@ -224,6 +399,127 @@ async function complete() {
   font-size: 13px;
   margin: 0 0 24px;
   line-height: 1.5;
+}
+
+/* OAuth flow */
+.info-box--loading {
+  color: var(--text-muted, #8b949e);
+  text-align: center;
+}
+
+.spinner { font-size: 18px; }
+
+.info-box--url { border-color: rgba(88, 166, 255, 0.4); background: rgba(88, 166, 255, 0.05); }
+.info-box--success { border-color: rgba(63, 185, 80, 0.4); background: rgba(63, 185, 80, 0.05); color: var(--accent2, #3fb950); }
+
+.url-label {
+  font-size: 13px;
+  color: var(--text-muted, #8b949e);
+  margin-bottom: 10px;
+}
+
+.oauth-link {
+  display: block;
+  padding: 10px 14px;
+  background: rgba(88, 166, 255, 0.1);
+  border: 1px solid var(--accent, #58a6ff);
+  border-radius: 6px;
+  color: var(--accent, #58a6ff);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  text-align: center;
+  transition: background 0.15s;
+  word-break: break-all;
+}
+
+.oauth-link:hover { background: rgba(88, 166, 255, 0.2); }
+
+.btn-done {
+  width: 100%;
+  margin-top: 12px;
+  padding: 10px 16px;
+  background: rgba(63, 185, 80, 0.15);
+  border: 1px solid var(--accent2, #3fb950);
+  border-radius: 6px;
+  color: var(--accent2, #3fb950);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-done:hover { background: rgba(63, 185, 80, 0.25); }
+
+/* Provider toggle */
+.provider-toggle {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.toggle-btn {
+  flex: 1;
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--text-muted, #8b949e);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+
+.toggle-btn:hover { border-color: var(--accent, #58a6ff); color: var(--text, #e6edf3); }
+.toggle-btn.active {
+  background: rgba(88, 166, 255, 0.1);
+  border-color: var(--accent, #58a6ff);
+  color: var(--accent, #58a6ff);
+}
+
+/* Claude Code info box */
+.claude-code-info { margin-bottom: 20px; }
+
+.info-box {
+  background: rgba(63, 185, 80, 0.05);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+  border-radius: 6px;
+  padding: 16px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text, #e6edf3);
+}
+
+.info-box p { margin: 0 0 10px; }
+.info-box p:last-child { margin-bottom: 0; }
+
+.info-steps { color: var(--text-muted, #8b949e); }
+
+.info-note {
+  color: var(--text-muted, #8b949e);
+  font-size: 12px !important;
+}
+
+.code-block {
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 4px;
+  padding: 8px 12px;
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 13px;
+  color: var(--accent2, #3fb950);
+  margin: 8px 0;
+  overflow-x: auto;
+}
+
+code {
+  font-family: 'SF Mono', Consolas, monospace;
+  font-size: 12px;
+  background: rgba(255,255,255,0.07);
+  padding: 1px 5px;
+  border-radius: 3px;
 }
 
 .form-group {

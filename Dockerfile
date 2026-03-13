@@ -55,6 +55,10 @@ RUN apk add --no-cache \
     docker-cli \
     && rm -rf /var/cache/apk/*
 
+# Install Claude Code CLI (provides `claude auth login` for OAuth setup)
+RUN npm install -g @anthropic-ai/claude-code --ignore-scripts 2>/dev/null || \
+    npm install -g @anthropic-ai/claude-code
+
 # Production Node.js dependencies only
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev

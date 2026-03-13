@@ -11,7 +11,7 @@ export interface NanoConfig {
   version: string;
   setupCompleted: boolean;
   provider?: {
-    type: 'claude-code';
+    type: 'claude-code' | 'claude-code-oauth';
     apiKey?: string;
   };
   installed: {
@@ -109,8 +109,11 @@ export class ConfigService {
   /** What's missing for setup to be considered complete */
   getMissing(config: NanoConfig): string[] {
     const missing: string[] = [];
-    if (!config.provider?.apiKey) missing.push('provider.apiKey');
     if (!config.provider?.type) missing.push('provider.type');
+    // claude-code-oauth uses mounted credentials — no apiKey needed
+    if (config.provider?.type !== 'claude-code-oauth' && !config.provider?.apiKey) {
+      missing.push('provider.apiKey');
+    }
     return missing;
   }
 }
