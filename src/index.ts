@@ -11,6 +11,7 @@
  * 6. Start API server
  */
 
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { DATA_DIR, NATS_URL, AGENTS_DIR } from './config.js';
@@ -71,8 +72,19 @@ async function main(): Promise<void> {
     // ── 5b. Ready mode ─────────────────────────────────────────────────────────
     const appConfig = await configService.load();
 
-    // Load all agents (settings agent is in agents/ so it gets loaded too)
+    // Load all agents (built-in + installed from DATA_DIR)
     const agents = loadAgents(AGENTS_DIR);
+
+    const dataAgentsDir = path.join(DATA_DIR, 'agents');
+    if (fs.existsSync(dataAgentsDir)) {
+      const installedAgents = loadAgents(dataAgentsDir);
+      for (const agent of installedAgents) {
+        if (!agents.find(a => a.manifest.id === agent.manifest.id)) {
+          agents.push(agent);
+        }
+      }
+    }
+
     for (const agent of agents) {
       await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
       logger.info({ id: agent.manifest.id, topics: agent.manifest.subscribe_topics }, 'Agent consumer ready');
