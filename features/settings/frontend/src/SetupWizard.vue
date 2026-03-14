@@ -147,7 +147,7 @@
           <p v-if="item.description" class="catalog-card-desc">{{ item.description }}</p>
 
           <!-- Inline requires form -->
-          <div v-if="expandedItem === item.id" class="requires-form" @click.stop>
+          <div v-if="expandedItem === item.id && !installedItems.includes(item.id)" class="requires-form" @click.stop>
             <div v-if="item.requires && item.requires.length > 0">
               <div
                 v-for="req in item.requires"
@@ -168,11 +168,21 @@
                     <span v-else>🔑 Vygenerovat klíč</span>
                   </button>
                   <div v-if="sshPublicKeys[item.id]" class="ssh-result">
-                    <p class="field-help">Zkopíruj tento public key a přidej ho do <strong>GitHub → Settings → Deploy Keys</strong>:</p>
+                    <p class="field-help">Zkopíruj tento public key a přidej ho do GitHub (Settings → SSH Keys):</p>
                     <div class="code-block">{{ sshPublicKeys[item.id] }}</div>
-                    <button class="btn-copy btn-sm" @click="copyToClipboard(sshPublicKeys[item.id])">
-                      {{ copied ? '✅ Zkopírováno' : '📋 Kopírovat' }}
-                    </button>
+                    <div class="ssh-actions">
+                      <button class="btn-copy btn-sm" @click="copyToClipboard(sshPublicKeys[item.id])">
+                        {{ copied ? '✅ Zkopírováno' : '📋 Kopírovat' }}
+                      </button>
+                      <a
+                        v-if="deployKeyUrl(item.id)"
+                        :href="deployKeyUrl(item.id)"
+                        target="_blank"
+                        class="btn-github btn-sm"
+                      >
+                        🔗 Přidat na GitHub →
+                      </a>
+                    </div>
                   </div>
                 </div>
 
@@ -202,11 +212,10 @@
 
             <button
               class="btn-primary btn-install"
-              :disabled="installingItem === item.id || installedItems.includes(item.id)"
+              :disabled="installingItem === item.id"
               @click="installItem(item)"
             >
               <span v-if="installingItem === item.id">Instaluji...</span>
-              <span v-else-if="installedItems.includes(item.id)">✅ Nainstalováno</span>
               <span v-else>Instalovat →</span>
             </button>
           </div>
@@ -328,6 +337,19 @@ onMounted(async () => {
     if (status.complete) {
       window.location.href = '/'
       return
+    }
+  } catch { /* ignore */ }
+
+  // Restore progress — if provider is already configured, skip to step 2
+  try {
+    const res = await fetch('/api/config')
+    const config = await res.json() as { provider?: { type?: string }; installed?: { teams?: string[]; features?: string[] } }
+    if (config.provider?.type) {
+      await loadCatalog()
+      // Restore already installed items
+      const done = [...(config.installed?.teams ?? []), ...(config.installed?.features ?? [])]
+      if (done.length > 0) installedItems.value = done
+      step.value = 2
     }
   } catch { /* ignore */ }
 
@@ -479,9 +501,26 @@ async function generateSsh(teamId: string) {
 async function copyToClipboard(text: string) {
   try {
     await navigator.clipboard.writeText(text)
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 2000)
-  } catch { /* ignore */ }
+  } catch {
+    // Fallback for non-HTTPS contexts
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    document.body.removeChild(ta)
+  }
+  copied.value = true
+  setTimeout(() => { copied.value = false }, 2000)
+}
+
+function deployKeyUrl(itemId: string): string | null {
+  const key = sshPublicKeys.value[itemId] ?? ''
+  if (!key) return null
+  const params = new URLSearchParams({ title: 'nano-agent-team', key })
+  return `https://github.com/settings/ssh/new?${params}`
 }
 
 async function installItem(item: CatalogItem) {
@@ -530,11 +569,13 @@ async function complete() {
 <style scoped>
 .setup-wizard {
   min-height: 100vh;
+  width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 32px 16px;
+  overflow-y: auto;
   background: var(--bg, #0d1117);
   color: var(--text, #e6edf3);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -542,7 +583,12 @@ async function complete() {
 
 .wizard-header {
   text-align: center;
+  margin-top: auto;
   margin-bottom: 40px;
+}
+
+.wizard-step:last-of-type {
+  margin-bottom: auto;
 }
 
 .wizard-logo { font-size: 48px; display: block; margin-bottom: 12px; }
@@ -903,6 +949,27 @@ code {
 }
 
 .btn-copy:hover { border-color: var(--text-muted, #8b949e); }
+
+.ssh-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.btn-github {
+  display: inline-block;
+  padding: 5px 10px;
+  background: rgba(88, 166, 255, 0.1);
+  color: var(--accent, #58a6ff);
+  border: 1px solid var(--accent, #58a6ff);
+  border-radius: 5px;
+  font-size: 12px;
+  text-decoration: none;
+  transition: background 0.15s;
+}
+
+.btn-github:hover { background: rgba(88, 166, 255, 0.2); text-decoration: none; }
 
 /* Checkbox label */
 .checkbox-label {

@@ -19,4 +19,9 @@ else
   echo "[entrypoint] Open http://localhost:3001 to complete setup"
 fi
 
+# Ensure team plugin-dist dirs have node_modules symlink (ESM resolution)
+for pd in "$DATA_DIR"/teams/*/agents/plugin-dist; do
+  [ -d "$pd" ] && [ ! -e "$pd/node_modules" ] && ln -s /app/node_modules "$pd/node_modules" 2>/dev/null || true
+done
+
 exec node dist/index.js

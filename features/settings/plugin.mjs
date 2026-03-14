@@ -580,17 +580,27 @@ export default {
           const teamDir = path.join(dataDir, 'teams', teamId);
           hubSparseClone(`teams/${teamId}`, teamDir);
 
+          // 1b. Symlink node_modules into plugin-dist so ESM can resolve packages
+          const pluginDistDir = path.join(teamDir, 'agents', 'plugin-dist');
+          const nmLink = path.join(pluginDistDir, 'node_modules');
+          if (fs.existsSync(pluginDistDir) && !fs.existsSync(nmLink)) {
+            try {
+              // /app/node_modules contains better-sqlite3 etc. needed by team plugins
+              fs.symlinkSync('/app/node_modules', nmLink);
+            } catch { /* may already exist */ }
+          }
+
           // 2. Read team.json → get agents + features
           const teamJson = JSON.parse(fs.readFileSync(path.join(teamDir, 'team.json'), 'utf8'));
           const agentIds = teamJson.agents ?? [];
           const featureIds = teamJson.features ?? [];
           const configEnvMap = teamJson.config_env_map ?? {};
 
-          // 3. Clone agents
+          // 3. Clone agents (inside teams/{teamId}/agents/)
           for (const agentId of agentIds) {
             progress('clone-agent', agentId);
             const agentDir = path.join(dataDir, 'agents', agentId);
-            hubSparseClone(`agents/${agentId}`, agentDir);
+            hubSparseClone(`teams/${teamId}/agents/${agentId}`, agentDir);
           }
 
           // 4. Clone + build features

@@ -31,6 +31,14 @@ const codec = StringCodec();
 
 // ─── Plugin / Feature interface ───────────────────────────────────────────────
 
+interface PluginRoute { path: string; component: string; nav?: { label: string; icon: string } }
+interface PluginInfo {
+  id: string;
+  name: string;
+  uiEntry: string | null;
+  routes: PluginRoute[];
+}
+
 export interface TeamPlugin {
   /** Called once at startup to register routes and NATS listeners */
   register(
@@ -43,6 +51,7 @@ export interface TeamPlugin {
       dataDir: string;
       configService: ConfigService;
       reloadFeatures: () => Promise<void>;
+      registerPlugin?: (info: PluginInfo) => void;
     },
   ): Promise<void>;
 }
@@ -117,7 +126,10 @@ export async function loadFeature(
   }
 }
 
-// ─── Legacy team plugin loader (agents/*/plugin.mjs) ─────────────────────────
+// ─── Team plugin loader ──────────────────────────────────────────────────────
+// Scans for plugin.mjs in:
+//   1. AGENTS_DIR/*/plugin.mjs (built-in agents)
+//   2. DATA_DIR/teams/*/agents/plugin.mjs (installed teams)
 
 async function loadTeamPlugins(
   app: express.Application,
@@ -126,16 +138,29 @@ async function loadTeamPlugins(
   configService: ConfigService,
   reloadFeatures: () => Promise<void>,
 ): Promise<void> {
+  const pluginPaths: string[] = [];
+
+  // 1. Built-in agents dir
   const agentsDir = path.resolve(AGENTS_DIR);
-  if (!fs.existsSync(agentsDir)) return;
+  if (fs.existsSync(agentsDir)) {
+    for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+      const p = path.join(agentsDir, entry.name, 'plugin.mjs');
+      if (fs.existsSync(p)) pluginPaths.push(p);
+    }
+  }
 
-  const entries = fs.readdirSync(agentsDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
+  // 2. Installed teams in DATA_DIR/teams/*/agents/
+  const teamsDir = path.join(DATA_DIR, 'teams');
+  if (fs.existsSync(teamsDir)) {
+    for (const team of fs.readdirSync(teamsDir, { withFileTypes: true })) {
+      if (!team.isDirectory()) continue;
+      const p = path.join(teamsDir, team.name, 'agents', 'plugin.mjs');
+      if (fs.existsSync(p)) pluginPaths.push(p);
+    }
+  }
 
-    const pluginPath = path.join(agentsDir, entry.name, 'plugin.mjs');
-    if (!fs.existsSync(pluginPath)) continue;
-
+  for (const pluginPath of pluginPaths) {
     try {
       logger.info({ plugin: pluginPath }, 'Loading team plugin');
       const mod = await import(pluginPath) as { default?: TeamPlugin } | TeamPlugin;
@@ -148,6 +173,11 @@ async function loadTeamPlugins(
           dataDir: DATA_DIR,
           configService,
           reloadFeatures,
+          registerPlugin: (info: PluginInfo) => {
+            if (!externalPlugins.find(p => p.id === info.id)) {
+              externalPlugins.push(info);
+            }
+          },
         });
         logger.info({ plugin: pluginPath }, 'Team plugin registered');
       } else {
@@ -161,15 +191,8 @@ async function loadTeamPlugins(
 
 // ─── Plugin list for dashboard ────────────────────────────────────────────────
 
-interface PluginRoute { path: string; component: string; nav?: { label: string; icon: string } }
-interface PluginInfo {
-  id: string;
-  name: string;
-  uiEntry: string | null;
-  routes: PluginRoute[];
-}
-
 const mountedStatic = new Set<string>();
+const externalPlugins: PluginInfo[] = [];
 
 async function getPluginList(app?: express.Application): Promise<PluginInfo[]> {
   const list: PluginInfo[] = [];
@@ -212,6 +235,13 @@ async function getPluginList(app?: express.Application): Promise<PluginInfo[]> {
 
   scanDir(FEATURES_DIR, '/features');
   scanDir(path.join(DATA_DIR, 'features'), '/features/data');
+
+  // Add plugins registered by team plugins via registerPlugin()
+  for (const p of externalPlugins) {
+    if (!list.find(l => l.id === p.id)) {
+      list.push(p);
+    }
+  }
 
   return list;
 }

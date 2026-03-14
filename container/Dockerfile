@@ -1,3 +1,12 @@
+## Stage 1: Build agent-runner TypeScript
+FROM node:22-slim AS builder
+WORKDIR /app
+COPY agent-runner/package.json agent-runner/package-lock.json* ./
+RUN npm install
+COPY agent-runner/ ./
+RUN npm run build
+
+## Stage 2: Runtime
 FROM node:22-slim
 WORKDIR /app
 
@@ -15,10 +24,10 @@ RUN npm install -g @anthropic-ai/claude-code --ignore-scripts 2>/dev/null || \
 
 # Copy package files and install production dependencies
 COPY agent-runner/package.json agent-runner/package-lock.json* ./
-RUN npm ci --omit=dev
+RUN npm install --omit=dev
 
-# Copy compiled JavaScript
-COPY agent-runner/dist/ ./dist/
+# Copy compiled JavaScript from builder
+COPY --from=builder /app/dist/ ./dist/
 
 # Create workspace mount points for volumes (vault, sessions, agent)
 RUN mkdir -p /workspace/vault /workspace/sessions /workspace/agent
