@@ -19,8 +19,34 @@ function buildTransport(): ReturnType<typeof pino.transport> {
   });
 }
 
+/**
+ * OTel trace correlation mixin — adds traceId/spanId to every log line.
+ * When OTel is not active, returns empty object (zero overhead).
+ */
+function otelMixin(): Record<string, unknown> {
+  try {
+    // @opentelemetry/api is only loaded when tracing is enabled (by init.ts)
+    // Use dynamic require-style check via the module cache
+    const api = (globalThis as Record<string, unknown>).__otelApi as typeof import('@opentelemetry/api') | undefined;
+    if (!api) return {};
+
+    const span = api.trace.getActiveSpan();
+    if (!span) return {};
+
+    const ctx = span.spanContext();
+    if (!ctx || !api.isSpanContextValid(ctx)) return {};
+
+    return { traceId: ctx.traceId, spanId: ctx.spanId };
+  } catch {
+    return {};
+  }
+}
+
 export const logger = pino(
-  { level: LOG_LEVEL },
+  {
+    level: LOG_LEVEL,
+    mixin: otelMixin,
+  },
   buildTransport(),
 );
 

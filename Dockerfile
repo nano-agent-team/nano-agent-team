@@ -58,7 +58,19 @@ COPY features/simple-chat/frontend/ ./
 RUN npm run build
 
 
-# ── Stage 5: Runtime ──────────────────────────────────────────────────────────
+# ── Stage 5: Observability feature frontend builder ──────────────────────────
+FROM node:22-alpine AS observability-builder
+WORKDIR /app/observability-frontend
+
+COPY features/observability/frontend/package.json features/observability/frontend/package-lock.json* ./
+RUN npm ci
+
+COPY features/observability/frontend/ ./
+# Build output goes to ../frontend-dist (relative to frontend/ dir)
+RUN npm run build
+
+
+# ── Stage 6: Runtime ──────────────────────────────────────────────────────────
 FROM node:22-alpine AS runtime
 WORKDIR /app
 
@@ -66,6 +78,7 @@ WORKDIR /app
 RUN apk add --no-cache \
     nats-server \
     docker-cli \
+    docker-cli-compose \
     openssh-keygen \
     git \
     && rm -rf /var/cache/apk/*
@@ -80,6 +93,9 @@ RUN npm ci --omit=dev
 
 # Compiled TypeScript
 COPY --from=ts-builder /app/dist/ ./dist/
+
+# OTel register hook (plain .mjs, not compiled by tsc)
+COPY src/tracing/register.mjs ./dist/tracing/register.mjs
 
 # Static agents (settings agent + blank-agent)
 COPY agents/ ./agents/
@@ -97,6 +113,7 @@ COPY mcp/ ./mcp/
 COPY --from=dashboard-builder /app/dashboard/dist/ ./dashboard/dist/
 COPY --from=settings-builder /app/frontend-dist/ ./features/settings/frontend-dist/
 COPY --from=simple-chat-builder /app/frontend-dist/ ./features/simple-chat/frontend-dist/
+COPY --from=observability-builder /app/frontend-dist/ ./features/observability/frontend-dist/
 
 # Data directory (mounted as volume at runtime)
 VOLUME ["/data"]

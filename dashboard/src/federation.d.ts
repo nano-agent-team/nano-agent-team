@@ -37,3 +37,10 @@ declare module 'issueTrackerPlugin/TicketsView' {
   const TicketsView: DefineComponent<Record<string, never>, Record<string, never>, any>
   export default TicketsView
 }
+
+declare module 'observabilityPlugin/ObservabilityView' {
+  import { DefineComponent } from 'vue'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const ObservabilityView: DefineComponent<Record<string, never>, Record<string, never>, any>
+  export default ObservabilityView
+}

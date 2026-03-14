@@ -12,10 +12,11 @@ export default defineConfig({
     federation({
       name: 'coreDashboard',
       remotes: {
-        devTeamPlugin:      '/plugins/dev-team/assets/remoteEntry.js',
-        settingsPlugin:     '/features/settings/frontend-dist/assets/remoteEntry.js',
-        simpleChatPlugin:   '/features/simple-chat/frontend-dist/assets/remoteEntry.js',
-        issueTrackerPlugin: '/features/data/issue-tracker/frontend/dist/assets/remoteEntry.js',
+        devTeamPlugin:         '/plugins/dev-team/assets/remoteEntry.js',
+        settingsPlugin:        '/features/settings/frontend-dist/assets/remoteEntry.js',
+        simpleChatPlugin:      '/features/simple-chat/frontend-dist/assets/remoteEntry.js',
+        issueTrackerPlugin:    '/features/data/issue-tracker/frontend/dist/assets/remoteEntry.js',
+        observabilityPlugin:   '/features/observability/frontend-dist/assets/remoteEntry.js',
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       shared: {

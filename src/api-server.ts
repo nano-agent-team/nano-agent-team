@@ -22,6 +22,7 @@ import { StringCodec, type NatsConnection } from 'nats';
 import { API_PORT, AGENTS_DIR, DATA_DIR } from './config.js';
 import { logger } from './logger.js';
 import { publish } from './nats-client.js';
+import { isTracingEnabled } from './tracing/init.js';
 import type { AgentManager } from './agent-manager.js';
 import type { ConfigService } from './config-service.js';
 import type { SetupMode } from './setup-detector.js';
@@ -257,6 +258,40 @@ export async function createApiApp(
   const app = express();
   app.use(express.json());
 
+  // OTel span enrichment — give spans meaningful names after Express routing
+  if (isTracingEnabled()) {
+    app.use((req, _res, next) => {
+      try {
+        const otelApi = (globalThis as Record<string, unknown>).__otelApi as typeof import('@opentelemetry/api') | undefined;
+        if (otelApi) {
+          const span = otelApi.trace.getActiveSpan();
+          if (span) {
+            // Will be enriched again in res.on('finish') with matched route
+            span.setAttribute('http.target', req.url);
+          }
+        }
+      } catch { /* noop */ }
+      next();
+    });
+
+    // After response — set final span name from matched Express route
+    app.use((req, res, next) => {
+      res.on('finish', () => {
+        try {
+          const otelApi = (globalThis as Record<string, unknown>).__otelApi as typeof import('@opentelemetry/api') | undefined;
+          if (!otelApi) return;
+          const span = otelApi.trace.getActiveSpan();
+          if (!span) return;
+          const route = req.route?.path ?? req.originalUrl?.split('?')[0];
+          if (route) {
+            span.updateName(`${req.method} ${route}`);
+          }
+        } catch { /* noop */ }
+      });
+      next();
+    });
+  }
+
   // Closure for re-use in /internal/reload
   const reloadFeatures = async (): Promise<void> => {
     const config = await configService.load();
@@ -350,9 +385,9 @@ export async function createApiApp(
     try {
       const sub = nc.subscribe(replySubject, { max: 1, timeout: 30_000 });
 
-      await nc.publish(
-        'agent.settings.inbox',
-        codec.encode(JSON.stringify({ content: message, sessionId: sid, replyTo: replySubject })),
+      // Use JetStream publish (traced) so chat messages appear in observability
+      await publish(nc, 'agent.settings.inbox',
+        JSON.stringify({ content: message, sessionId: sid, replySubject }),
       );
 
       for await (const msg of sub) {
@@ -385,11 +420,13 @@ export async function createApiApp(
   // ── Static files for features (must be before catch-all) ────────────────────
   app.use('/features/settings', express.static(path.join(FEATURES_DIR, 'settings')));
   app.use('/features/simple-chat', express.static(path.join(FEATURES_DIR, 'simple-chat')));
+  app.use('/features/observability', express.static(path.join(FEATURES_DIR, 'observability')));
   app.use('/features/data', express.static(path.join(DATA_DIR, 'features')));
 
   // ── Load features and team plugins (after core API routes) ──────────────────
   await loadFeature('settings', app, nc, manager, configService, reloadFeatures);
   await loadFeature('simple-chat', app, nc, manager, configService, reloadFeatures);
+  await loadFeature('observability', app, nc, manager, configService, reloadFeatures);
 
   if (opts.setupMode === 'ready') {
     await reloadFeatures();

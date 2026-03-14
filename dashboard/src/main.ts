@@ -42,6 +42,8 @@ const componentRegistry: Record<string, LazyLoader> = {
     import('issueTrackerPlugin/TicketsView')
       .catch(() => import('devTeamPlugin/TicketsView'))
       .then((m) => m.default ?? m),
+  ObservabilityView: () =>
+    import('observabilityPlugin/ObservabilityView').then((m) => m.default ?? m),
 }
 
 // ── Data fetching ─────────────────────────────────────────────────────────

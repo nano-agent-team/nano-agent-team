@@ -14,17 +14,17 @@
       <div
         v-for="agent in agents"
         :key="agent.agentId"
-        :class="['agent-card', `status-${agent.status}`]"
+        :class="['agent-card', `status-${agent.status}`, agent.busy ? 'agent-busy' : '']"
       >
         <div class="agent-header">
           <span class="agent-id">{{ agent.agentId }}</span>
-          <span :class="`status-badge status-${agent.status}`">{{ agent.status }}</span>
+          <span v-if="agent.busy" class="status-badge status-busy">pracuje</span>
+          <span v-else :class="`status-badge status-${agent.status}`">{{ agent.status }}</span>
+        </div>
+        <div v-if="agent.busy && agent.task" class="agent-task">
+          {{ agent.task }}
         </div>
         <div class="agent-meta">
-          <div v-if="agent.containerId">
-            <span class="meta-label">Container</span>
-            <span class="meta-value">{{ agent.containerId }}</span>
-          </div>
           <div v-if="agent.startedAt">
             <span class="meta-label">Started</span>
             <span class="meta-value">{{ relTime(agent.startedAt) }}</span>
@@ -69,6 +69,8 @@ interface AgentState {
   startedAt?: string
   lastHeartbeat?: string
   containerId?: string
+  busy?: boolean
+  task?: string
 }
 
 const agents = ref<AgentState[]>([])
@@ -150,6 +152,26 @@ onUnmounted(() => clearInterval(interval))
 .agent-card.status-starting { border-left: 3px solid var(--accent); }
 .agent-card.status-restarting { border-left: 3px solid var(--warning); }
 
+.agent-card.agent-busy {
+  border-left: 3px solid #f0883e;
+  background: rgba(240, 136, 62, 0.06);
+  animation: busy-pulse 2s ease-in-out infinite;
+}
+
+@keyframes busy-pulse {
+  0%, 100% { box-shadow: none; }
+  50% { box-shadow: 0 0 8px rgba(240, 136, 62, 0.2); }
+}
+
+.agent-task {
+  font-size: 12px;
+  color: #f0883e;
+  padding: 4px 0 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .agent-header {
   display: flex;
   align-items: center;
@@ -174,6 +196,7 @@ onUnmounted(() => clearInterval(interval))
 .status-dead { background: rgba(248, 81, 73, 0.15); color: #f85149; }
 .status-starting { background: rgba(88, 166, 255, 0.15); color: #58a6ff; }
 .status-restarting { background: rgba(210, 153, 34, 0.15); color: #d29922; }
+.status-busy { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
 
 .agent-meta { display: flex; flex-direction: column; gap: 4px; }
 .agent-meta > div { display: flex; justify-content: space-between; font-size: 11px; }

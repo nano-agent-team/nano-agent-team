@@ -11,6 +11,7 @@ services:
     image: nano-agent-team:dev
     container_name: nano-agent-team
     restart: unless-stopped
+    stop_grace_period: 60s
     # host networking is required for Claude Code OAuth login:
     # claude auth login opens a local callback server on a random port,
     # and the Anthropic redirect goes to localhost — must be the same namespace.
@@ -24,6 +25,7 @@ services:
       - ~/.claude:/root/.claude
     environment:
       DATA_DIR: /data
+      HOST_DATA_DIR: ${PWD}/data
       LOG_LEVEL: info
       # Embedded NATS (default — no NATS_URL needed)
       # To use external NATS: set NATS_URL=nats://nats:4222 and NATS_EMBEDDED=false

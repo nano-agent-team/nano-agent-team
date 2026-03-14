@@ -1,0 +1,19 @@
+{
+  "id": "observability",
+  "name": "Observability",
+  "version": "1.0.0",
+  "type": "feature",
+  "plugin": "./plugin.mjs",
+  "provides": ["observability"],
+  "requires": [],
+  "frontend": {
+    "remote": "./frontend-dist/assets/remoteEntry.js",
+    "routes": [
+      {
+        "path": "/observability",
+        "component": "ObservabilityView",
+        "nav": { "label": "Observability", "icon": "\ud83d\udcca" }
+      }
+    ]
+  }
+}

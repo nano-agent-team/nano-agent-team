@@ -1,0 +1,68 @@
+{
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "title": "Ticket Lifecycle",
+      "description": "Ticket create → PM → Architect → Developer → Tester → Reviewer pipeline",
+      "type": "table",
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 0 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{span.ticket.id != \"\" || name =~ \"ticket.*\"}",
+          "limit": 50
+        }
+      ]
+    },
+    {
+      "title": "Agent Activity",
+      "description": "All agent processing spans — what each agent did",
+      "type": "table",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "tempo", "uid": "tempo" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "tempo", "uid": "tempo" },
+          "queryType": "traceql",
+          "query": "{resource.service.name =~ \"nano-agent-.*\"}",
+          "limit": 30
+        }
+      ]
+    },
+    {
+      "title": "Agent Logs",
+      "type": "logs",
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 26 },
+      "datasource": { "type": "loki", "uid": "loki" },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "loki", "uid": "loki" },
+          "expr": "{job=\"nano-agent-team\"} | json",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "enableLogDetails": true,
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["nano-agent-team"],
+  "templating": { "list": [] },
+  "time": { "from": "now-3h", "to": "now" },
+  "timezone": "browser",
+  "title": "nano-agent-team",
+  "uid": "nano-agent-team",
+  "version": 1
+}

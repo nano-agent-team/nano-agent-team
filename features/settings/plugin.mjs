@@ -193,6 +193,20 @@ export default {
         // Trigger live reload
         if (reloadFeatures) await reloadFeatures();
 
+        // Start observability stack if builtin provider is configured
+        if (config.observability?.provider === 'builtin' && config.observability?.level !== 'none') {
+          try {
+            const obsRes = await fetch('http://localhost:3001/api/observability/start', { method: 'POST' });
+            if (obsRes.ok) {
+              console.log('[settings] Observability stack started via builtin provider');
+            } else {
+              console.warn('[settings] Failed to start observability stack:', await obsRes.text());
+            }
+          } catch (err) {
+            console.warn('[settings] Could not start observability stack:', err.message);
+          }
+        }
+
         emitSseEvent('setup-completed', { installed: config.installed });
         res.json({ ok: true, installed: config.installed });
       } catch (err) {

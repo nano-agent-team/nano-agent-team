@@ -31,6 +31,12 @@ import type { LoadedAgent } from './agent-registry.js';
 import type { ConfigService } from './config-service.js';
 import { codec } from './nats-client.js';
 
+interface ObservabilityConfig {
+  level?: string;
+  provider?: string;
+  endpoints?: { otlp?: string };
+}
+
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type AgentStatus = 'starting' | 'running' | 'dead' | 'restarting';
@@ -43,11 +49,15 @@ interface AgentState {
   startedAt?: Date;
   restartCount: number;
   lastHeartbeat?: Date;
+  busy?: boolean;
+  task?: string;
 }
 
 interface HeartbeatPayload {
   agentId: string;
   ts: number;
+  busy?: boolean;
+  task?: string;
 }
 
 // ─── AgentManager ────────────────────────────────────────────────────────────
@@ -126,9 +136,40 @@ export class AgentManager {
       // Read CLAUDE.md and pass as env var — agent dir is mounted from inside nano-live
       // but Docker daemon resolves bind paths on the host where /app/ may not exist.
       const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
-      const claudeMdContent = fs.existsSync(claudeMdPath)
+      let claudeMdContent = fs.existsSync(claudeMdPath)
         ? fs.readFileSync(claudeMdPath, 'utf8')
         : '';
+
+      // Resolve team config from config.json (set during team install)
+      let repoUrl = process.env.REPO_URL ?? '';
+      let teamConfigBlock = '';
+      if (this.configService) {
+        try {
+          const config = await this.configService.load();
+          const raw = config as unknown as Record<string, unknown> | null;
+          const teams = raw?.teams as Record<string, { config?: Record<string, unknown> }> | undefined;
+          if (teams) {
+            for (const [teamId, team] of Object.entries(teams)) {
+              const tc = team.config;
+              if (tc) {
+                if (!repoUrl && typeof tc.repo_url === 'string') repoUrl = tc.repo_url;
+                // Build context block with all team config values
+                const lines = Object.entries(tc)
+                  .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+                  .map(([k, v]) => `- ${k}: ${v}`);
+                if (lines.length > 0) {
+                  teamConfigBlock = `\n\n## Konfigurace týmu (${teamId})\n\n${lines.join('\n')}\n`;
+                }
+              }
+            }
+          }
+        } catch { /* ignore */ }
+      }
+
+      // Inject team config into agent's system prompt
+      if (teamConfigBlock && claudeMdContent) {
+        claudeMdContent += teamConfigBlock;
+      }
 
       const env = [
         `NATS_URL=${this.resolveNatsUrl()}`,
@@ -149,8 +190,10 @@ export class AgentManager {
         // Pass GitHub token if available (for gh CLI and git push)
         ...(process.env.GH_TOKEN ? [`GH_TOKEN=${process.env.GH_TOKEN}`] : []),
         ...(process.env.GITHUB_TOKEN ? [`GH_TOKEN=${process.env.GITHUB_TOKEN}`] : []),
-        // Pass repo URL if available (set by team install from config_env_map)
-        ...(process.env.REPO_URL ? [`REPO_URL=${process.env.REPO_URL}`] : []),
+        // Pass repo URL from config (set during team install)
+        ...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
+        // Observability: propagate OTel config to agent containers
+        ...await this.getObservabilityEnvVars(),
       ];
 
       // Volume: agent dir → /workspace/agent (read-only)
@@ -248,7 +291,7 @@ export class AgentManager {
 
     try {
       const container = this.docker.getContainer(state.containerId);
-      await container.stop({ t: 5 }).catch(() => {}); // ignore already-stopped
+      await container.stop({ t: 30 }).catch(() => {}); // 30s for graceful shutdown
       await container.remove({ force: true }).catch(() => {});
       state.status = 'dead';
       logger.info({ agentId }, 'Agent container stopped');
@@ -267,6 +310,8 @@ export class AgentManager {
     startedAt?: string;
     lastHeartbeat?: string;
     containerId?: string;
+    busy?: boolean;
+    task?: string;
   }> {
     return [...this.states.values()].map((s) => ({
       agentId: s.agentId,
@@ -275,6 +320,8 @@ export class AgentManager {
       startedAt: s.startedAt?.toISOString(),
       lastHeartbeat: s.lastHeartbeat?.toISOString(),
       containerId: s.containerId?.slice(0, 12),
+      busy: s.busy,
+      task: s.task,
     }));
   }
 
@@ -396,7 +443,9 @@ export class AgentManager {
           const state = this.states.get(payload.agentId);
           if (state) {
             state.lastHeartbeat = new Date(payload.ts);
-            logger.debug({ agentId: payload.agentId }, 'Heartbeat received');
+            state.busy = payload.busy ?? false;
+            state.task = payload.task ?? '';
+            logger.debug({ agentId: payload.agentId, busy: state.busy }, 'Heartbeat received');
           }
         } catch {
           // ignore malformed heartbeats
@@ -422,7 +471,7 @@ export class AgentManager {
       const info = await container.inspect();
 
       if (info.State.Running) {
-        await container.stop({ t: 3 });
+        await container.stop({ t: 30 });
       }
       await container.remove({ force: true });
       logger.debug({ containerName }, 'Removed stale container');
@@ -432,6 +481,42 @@ export class AgentManager {
       if (!msg.includes('404') && !msg.includes('no such container')) {
         logger.warn({ err, containerName }, 'Unexpected error removing container');
       }
+    }
+  }
+
+  /**
+   * Read observability config and return env vars for agent containers.
+   */
+  private async getObservabilityEnvVars(): Promise<string[]> {
+    if (!this.configService) return [];
+    try {
+      const config = await this.configService.load();
+      const obs = (config as unknown as Record<string, unknown>)?.observability as ObservabilityConfig | undefined;
+      if (!obs || obs.level === 'none') return [];
+
+      const vars: string[] = [`OBSERVABILITY_LEVEL=${obs.level}`];
+
+      if (obs.level === 'full') {
+        let otlpEndpoint = obs.endpoints?.otlp ?? 'http://tempo:4318';
+
+        if (DOCKER_NETWORK === 'host') {
+          // Host network: compose service names don't resolve, use localhost
+          otlpEndpoint = otlpEndpoint
+            .replace('://tempo:', '://localhost:')
+            .replace('://loki:', '://localhost:');
+        } else {
+          // Bridge network: localhost → host.docker.internal
+          otlpEndpoint = otlpEndpoint
+            .replace('localhost', 'host.docker.internal')
+            .replace('127.0.0.1', 'host.docker.internal');
+        }
+
+        vars.push(`OTEL_EXPORTER_OTLP_ENDPOINT=${otlpEndpoint}`);
+      }
+
+      return vars;
+    } catch {
+      return [];
     }
   }
 

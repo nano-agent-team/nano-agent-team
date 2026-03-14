@@ -18,7 +18,7 @@ const codec = StringCodec();
 
 export default {
   async register(app, nc, _manager, opts) {
-    const { } = opts;
+    const { publishNats } = opts;
 
     // ── POST /api/chat/simple-chat ────────────────────────────────────────────
     app.post('/api/chat/simple-chat', async (req, res) => {
@@ -31,9 +31,9 @@ export default {
       try {
         const sub = nc.subscribe(replySubject, { max: 1, timeout: 30_000 });
 
-        await nc.publish(
-          'agent.simple-chat.inbox',
-          codec.encode(JSON.stringify({ text: message, sessionId: sid, replySubject })),
+        // Use publishNats (JetStream + traced) so chat appears in observability
+        await publishNats('agent.simple-chat.inbox',
+          JSON.stringify({ text: message, sessionId: sid, replySubject }),
         );
 
         for await (const msg of sub) {

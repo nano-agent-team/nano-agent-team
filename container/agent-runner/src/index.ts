@@ -11,14 +11,21 @@
  *   ANTHROPIC_API_KEY — Anthropic key (read automatically by the SDK)
  *   MODEL             — Claude model id
  *   SESSION_TYPE      — "stateless" | "persistent" (default: stateless)
+ *   OBSERVABILITY_LEVEL          — "none" | "logging" | "full"
+ *   OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP HTTP endpoint
  */
+
+// OTel SDK must be initialized BEFORE any other imports
+import './tracing/init.js';
 
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { connect, StringCodec } from 'nats';
+import { connect, StringCodec, headers as natsHeaders } from 'nats';
 import pino from 'pino';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { isTracingEnabled } from './tracing/init.js';
+import { extractTraceContext, startSpan, startChildSpan, injectTraceContext } from './tracing/nats-context.js';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -40,8 +47,23 @@ const TICKETS_MCP_PATH = path.join(__dirname, 'tickets-mcp-stdio.js');
 
 // ─── Logger ──────────────────────────────────────────────────────────────────
 
+/** OTel trace correlation mixin — adds traceId/spanId to every log line */
+function otelMixin(): Record<string, unknown> {
+  try {
+    const api = (globalThis as Record<string, unknown>).__otelApi as typeof import('@opentelemetry/api') | undefined;
+    if (!api) return {};
+    const span = api.trace.getActiveSpan();
+    if (!span) return {};
+    const ctx = span.spanContext();
+    if (!ctx || !api.isSpanContextValid(ctx)) return {};
+    return { traceId: ctx.traceId, spanId: ctx.spanId };
+  } catch {
+    return {};
+  }
+}
+
 const log = pino(
-  { level: LOG_LEVEL },
+  { level: LOG_LEVEL, mixin: otelMixin },
   pino.transport({
     target: 'pino-pretty',
     options: { colorize: false, destination: 2 }, // stderr
@@ -69,6 +91,8 @@ interface ReplyPayload {
 interface HeartbeatPayload {
   agentId: string;
   ts: number;
+  busy?: boolean;
+  task?: string;
 }
 
 // ─── Session management ──────────────────────────────────────────────────────
@@ -124,8 +148,16 @@ async function main(): Promise<void> {
   log.info({ url: NATS_URL }, 'Connected to NATS');
 
   // ── Heartbeat (core NATS, not JetStream) ─────────────────────────────────
+  // Track current task for heartbeat reporting
+  let currentTask = '';
+  let isBusy = false;
+
   const heartbeatTimer = setInterval(() => {
-    const payload: HeartbeatPayload = { agentId: AGENT_ID, ts: Date.now() };
+    const payload: HeartbeatPayload = {
+      agentId: AGENT_ID, ts: Date.now(),
+      busy: isBusy,
+      ...(currentTask ? { task: currentTask } : {}),
+    };
     nc.publish(`health.${AGENT_ID}`, codec.encode(JSON.stringify(payload)));
     log.debug({ agentId: AGENT_ID }, 'Heartbeat sent');
   }, HEARTBEAT_INTERVAL_MS);
@@ -148,16 +180,86 @@ async function main(): Promise<void> {
     'Agent runner ready — waiting for messages',
   );
 
-  // Graceful shutdown
-  const shutdown = async (signal: string): Promise<void> => {
-    log.info({ signal }, 'Shutting down agent runner');
+  // Track current session for graceful shutdown
+  let currentSessionId: string | undefined;
+
+  // Graceful shutdown — save session synchronously so it survives SIGKILL
+  let shuttingDown = false;
+  const shutdown = (signal: string): void => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log.info({ signal, hasSession: !!currentSessionId }, 'Shutting down agent runner');
+    if (currentSessionId) {
+      // Always save on shutdown (even for stateless agents) so we can resume after restart
+      try {
+        fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
+        fs.writeFileSync(SESSION_FILE, currentSessionId, 'utf8');
+        log.info({ agentId: AGENT_ID, sessionId: currentSessionId }, 'Session saved for resume after restart');
+      } catch (err) {
+        log.error({ err }, 'Failed to save session on shutdown');
+      }
+    }
     clearInterval(heartbeatTimer);
-    await nc.drain();
-    process.exit(0);
+    // Give NATS a moment to drain, then exit
+    nc.drain().finally(() => process.exit(0));
+    // Force exit after 5s if drain hangs
+    setTimeout(() => process.exit(0), 5000).unref();
   };
 
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  // ── Resume interrupted session on startup ────────────────────────────────
+  {
+    let savedSessionId: string | undefined;
+    try {
+      const saved = fs.readFileSync(SESSION_FILE, 'utf8').trim();
+      if (saved) savedSessionId = saved;
+    } catch { /* no saved session */ }
+
+    if (savedSessionId) {
+      log.info({ agentId: AGENT_ID, sessionId: savedSessionId }, 'Found interrupted session — resuming immediately');
+      fs.unlinkSync(SESSION_FILE);
+      currentSessionId = savedSessionId;
+
+      try {
+        const resumeOptions: Record<string, unknown> = {
+          model: MODEL,
+          cwd: '/workspace',
+          permissionMode: 'acceptEdits',
+          allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'mcp__tickets__*'],
+          maxTurns: 50,
+          mcpServers: {
+            tickets: {
+              command: 'node',
+              args: [TICKETS_MCP_PATH],
+              env: { DB_PATH, AGENT_ID },
+            },
+          },
+          resume: savedSessionId,
+        };
+
+        const q = query({ prompt: '', options: resumeOptions });
+        let result = '';
+        for await (const sdkMsg of q) {
+          if (sdkMsg.type === 'result') {
+            result = sdkMsg.subtype === 'success' ? (sdkMsg.result ?? '') : `[Error: ${sdkMsg.subtype}]`;
+            break;
+          }
+        }
+
+        log.info({ agentId: AGENT_ID, resultLength: result.length }, 'Resumed session completed');
+
+        // Publish reply
+        const replySubject = `agent.${AGENT_ID}.reply`;
+        const reply: ReplyPayload = { agentId: AGENT_ID, result, ts: Date.now() };
+        nc.publish(replySubject, codec.encode(JSON.stringify(reply)));
+      } catch (err) {
+        log.error({ err, agentId: AGENT_ID }, 'Failed to resume interrupted session');
+      }
+      currentSessionId = undefined;
+    }
+  }
 
   // Message processing loop
   for await (const msg of await consumer.consume()) {
@@ -171,6 +273,41 @@ async function main(): Promise<void> {
       msg.ack();
       continue;
     }
+
+    // ── Mark agent as busy ────────────────────────────────────────────────
+    const ticketId = (payload as Record<string, unknown>).ticket_id as string | undefined;
+    const ticketTitle = ((payload as Record<string, unknown>).ticket as Record<string, unknown>)?.title as string | undefined
+      ?? (payload as Record<string, unknown>).title as string | undefined;
+    const chatText = (payload as Record<string, unknown>).text as string | undefined;
+
+    // Build human-readable task description
+    if (ticketId) {
+      currentTask = ticketTitle ? `${ticketId}: ${ticketTitle}` : ticketId;
+    } else if (chatText) {
+      currentTask = chatText.length > 60 ? chatText.slice(0, 57) + '...' : chatText;
+    } else {
+      currentTask = subject.replace('agent.', '').replace('.inbox', '');
+    }
+    isBusy = true;
+
+    // ── Extract trace context from NATS headers ──────────────────────────
+    const headerAdapter = msg.headers ? {
+      get: (key: string) => msg.headers?.get(key),
+      set: (key: string, value: string) => { /* read-only for extraction */ },
+    } : undefined;
+    const traceCtx = headerAdapter ? extractTraceContext(headerAdapter) : null;
+
+    // Build a human-readable span name: "pm: topic.ticket.new TICK-001"
+    const shortSubject = subject.replace('agent.', '').replace('.inbox', '');
+    const spanLabel = ticketId
+      ? `${AGENT_ID}: ${shortSubject} ${ticketId}`
+      : `${AGENT_ID}: ${shortSubject}`;
+
+    const spanAttrs: Record<string, string> = { 'agent.id': AGENT_ID, 'nats.subject': subject };
+    if (ticketId) spanAttrs['ticket.id'] = ticketId;
+    if (ticketTitle) spanAttrs['ticket.title'] = ticketTitle;
+
+    const processSpan = startSpan(spanLabel, traceCtx, spanAttrs);
 
     // Build prompt: prepend agent role context from CLAUDE.md, then the actual message
     // Priority: AGENT_SYSTEM_PROMPT env var > file mount
@@ -211,7 +348,7 @@ async function main(): Promise<void> {
       },
     };
 
-    if (SESSION_TYPE === 'persistent' && existingSessionId) {
+    if (existingSessionId) {
       options.resume = existingSessionId;
     }
 
@@ -220,9 +357,19 @@ async function main(): Promise<void> {
       'Invoking query()',
     );
 
+    // Create child span for Claude query
+    const querySpan = processSpan
+      ? startChildSpan('claude.query', processSpan.context, { 'claude.model': MODEL })
+      : null;
+
     let result = '';
     let sessionId: string | undefined;
     let errorSubtype: string | undefined;
+
+    // Periodically call msg.working() to extend JetStream ack deadline while query() runs
+    const workingTimer = setInterval(() => {
+      try { msg.working(); } catch { /* ignore if msg already acked */ }
+    }, 30_000);
 
     try {
       const q = query({ prompt, options });
@@ -231,16 +378,26 @@ async function main(): Promise<void> {
         // Capture session id from any message that carries it
         if (!sessionId && sdkMsg && typeof sdkMsg === 'object' && 'session_id' in sdkMsg) {
           sessionId = (sdkMsg as { session_id: string }).session_id;
+          currentSessionId = sessionId; // track for graceful shutdown
+        }
+
+        // Record tool calls as span events
+        if ((sdkMsg as { type: string }).type === 'tool_use_summary' && querySpan) {
+          querySpan.span.addEvent('tool_call', {
+            'tool.name': (sdkMsg as { tool_name?: string }).tool_name ?? 'unknown',
+          });
         }
 
         if (sdkMsg.type === 'result') {
           if (sdkMsg.subtype === 'success') {
             result = sdkMsg.result ?? '';
             log.debug({ agentId: AGENT_ID, resultLength: result.length }, 'query() succeeded');
+            if (querySpan) querySpan.span.setAttribute('claude.result_length', result.length);
           } else {
             errorSubtype = sdkMsg.subtype;
             result = `[Error: ${sdkMsg.subtype}]`;
             log.warn({ agentId: AGENT_ID, subtype: sdkMsg.subtype }, 'query() returned error');
+            if (querySpan) querySpan.span.setAttribute('claude.error', sdkMsg.subtype ?? 'unknown');
           }
           break;
         }
@@ -249,12 +406,18 @@ async function main(): Promise<void> {
       log.error({ err, agentId: AGENT_ID }, 'query() threw an exception');
       result = `[Error: ${err instanceof Error ? err.message : String(err)}]`;
       errorSubtype = 'exception';
+      if (querySpan) querySpan.span.setAttribute('claude.error', 'exception');
+    } finally {
+      clearInterval(workingTimer);
     }
+
+    querySpan?.end();
 
     if (sessionId) {
       saveSessionId(sessionId);
       log.debug({ agentId: AGENT_ID, sessionId }, 'Session id saved');
     }
+    currentSessionId = undefined; // clear — task complete
 
     // ── Publish reply ─────────────────────────────────────────────────────
     const replySubject = payload.replySubject ?? `agent.${AGENT_ID}.reply`;
@@ -265,10 +428,25 @@ async function main(): Promise<void> {
       ts: Date.now(),
     };
 
+    // Create span for reply publish
+    const replySpan = processSpan
+      ? startChildSpan('nats.publish', processSpan.context, { 'nats.subject': replySubject })
+      : null;
+
     try {
+      // Inject trace context into reply headers
+      const replyHdrs = natsHeaders();
+      const replyHeaderAdapter = {
+        get: (key: string) => replyHdrs.get(key),
+        set: (key: string, value: string) => replyHdrs.set(key, value),
+      };
+      if (processSpan) {
+        injectTraceContext(replyHeaderAdapter, traceCtx?.sessionId);
+      }
+
       // Use core NATS publish for replies — reply subjects (chat.reply.*)
       // are not in the JetStream stream, so js.publish would timeout.
-      nc.publish(replySubject, codec.encode(JSON.stringify(reply)));
+      nc.publish(replySubject, codec.encode(JSON.stringify(reply)), { headers: replyHdrs });
       log.info(
         { agentId: AGENT_ID, replySubject, resultLength: result.length },
         'Reply sent',
@@ -276,6 +454,13 @@ async function main(): Promise<void> {
     } catch (err) {
       log.error({ err, replySubject }, 'Failed to publish reply');
     }
+
+    replySpan?.end();
+    processSpan?.end();
+
+    // Mark agent as idle
+    isBusy = false;
+    currentTask = '';
 
     msg.ack();
   }

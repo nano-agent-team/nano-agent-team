@@ -152,6 +152,52 @@
         </div>
       </div>
 
+      <!-- Observability config -->
+      <div class="settings-section">
+        <h2>Observability</h2>
+        <div class="obs-config">
+          <div class="status-row">
+            <span class="status-label">Level</span>
+            <div class="obs-toggle">
+              <button v-for="l in ['none','logging','full']" :key="l"
+                :class="['btn-toggle', obsLevel === l ? 'active' : '']"
+                @click="obsLevel = l"
+              >{{ l }}</button>
+            </div>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Provider</span>
+            <div class="obs-toggle">
+              <button v-for="p in ['builtin','custom']" :key="p"
+                :class="['btn-toggle', obsProvider === p ? 'active' : '']"
+                @click="obsProvider = p"
+              >{{ p }}</button>
+            </div>
+          </div>
+          <div v-if="obsProvider === 'custom'" class="obs-endpoints">
+            <div class="field-row">
+              <label class="field-label">OTLP Endpoint</label>
+              <input v-model="obsEndpoints.otlp" class="field-input" placeholder="http://tempo:4318" />
+            </div>
+            <div class="field-row">
+              <label class="field-label">Loki</label>
+              <input v-model="obsEndpoints.loki" class="field-input" placeholder="http://loki:3100" />
+            </div>
+            <div class="field-row">
+              <label class="field-label">Grafana</label>
+              <input v-model="obsEndpoints.grafana" class="field-input" placeholder="http://localhost:3000" />
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
+            <button class="btn-primary" :disabled="obsSaving" @click="saveObsConfig">
+              {{ obsSaving ? 'Ukládám...' : 'Uložit' }}
+            </button>
+            <span v-if="obsSaved" class="obs-saved">✓ Uloženo</span>
+            <span v-if="obsError" class="error-msg" style="margin:0">{{ obsError }}</span>
+          </div>
+        </div>
+      </div>
+
       <div class="settings-section">
         <h2>Asistent</h2>
         <p class="section-desc">Zeptej se na cokoliv ohledně nastavení systému.</p>
@@ -184,7 +230,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, reactive, onMounted, nextTick } from 'vue'
 
 interface Message { role: 'user' | 'assistant'; text: string }
 interface ConfigStatus { complete: boolean; missing: string[]; setupCompleted: boolean }
@@ -221,6 +267,14 @@ const sshGenerating = ref<string | null>(null)
 const sshPublicKeys = ref<Record<string, string>>({})
 const copied = ref<string | null>(null)
 
+// Observability
+const obsLevel = ref('none')
+const obsProvider = ref('builtin')
+const obsEndpoints = reactive({ otlp: 'http://tempo:4318', loki: 'http://loki:3100', grafana: 'http://localhost:3000' })
+const obsSaving = ref(false)
+const obsSaved = ref(false)
+const obsError = ref('')
+
 // Chat
 const messages = ref<Message[]>([])
 const chatInput = ref('')
@@ -229,7 +283,7 @@ const chatEl = ref<HTMLElement | null>(null)
 const sessionId = `settings-${Date.now()}`
 
 onMounted(async () => {
-  await Promise.all([loadConfig(), loadStatus(), loadCatalog()])
+  await Promise.all([loadConfig(), loadStatus(), loadCatalog(), loadObsConfig()])
   messages.value.push({
     role: 'assistant',
     text: 'Ahoj! Jsem tvůj settings asistent. Zeptej se mě na cokoliv ohledně konfigurace nebo instalace.',
@@ -349,6 +403,34 @@ async function installItem(item: CatalogItem) {
     es.close()
     installingItem.value = null
   }
+}
+
+async function loadObsConfig() {
+  try {
+    const res = await fetch('/api/observability/status')
+    if (res.ok) {
+      const data = await res.json() as { level: string; provider: string; endpoints: { otlp: string; loki: string; grafana: string } }
+      obsLevel.value = data.level ?? 'none'
+      obsProvider.value = data.provider ?? 'builtin'
+      if (data.endpoints) Object.assign(obsEndpoints, data.endpoints)
+    }
+  } catch { /* ignore */ }
+}
+
+async function saveObsConfig() {
+  obsSaving.value = true; obsError.value = ''; obsSaved.value = false
+  try {
+    const body: Record<string, unknown> = { level: obsLevel.value, provider: obsProvider.value }
+    if (obsProvider.value === 'custom') body.endpoints = { ...obsEndpoints }
+    const res = await fetch('/api/observability/configure', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) { obsError.value = (await res.json() as { error: string }).error ?? 'Chyba'; return }
+    obsSaved.value = true
+    setTimeout(() => { obsSaved.value = false }, 3000)
+  } catch (e) { obsError.value = String(e) }
+  finally { obsSaving.value = false }
 }
 
 async function sendMessage() {
@@ -611,4 +693,16 @@ async function scrollToBottom() {
   font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .btn-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Observability config */
+.obs-config { display: flex; flex-direction: column; gap: 12px; }
+.obs-toggle { display: flex; gap: 4px; }
+.btn-toggle {
+  padding: 4px 12px; background: none; border: 1px solid var(--border, #30363d);
+  border-radius: 4px; color: var(--text-muted, #8b949e); font-size: 12px; cursor: pointer;
+}
+.btn-toggle.active { background: rgba(88,166,255,0.1); border-color: var(--accent, #58a6ff); color: var(--accent, #58a6ff); }
+.btn-toggle:hover { border-color: var(--text-muted, #8b949e); }
+.obs-endpoints { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg, #0d1117); border-radius: 6px; }
+.obs-saved { font-size: 12px; color: var(--accent2, #3fb950); }
 </style>

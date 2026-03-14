@@ -270,6 +270,74 @@
 
       <div class="step-actions">
         <button class="btn-secondary" @click="step = 1">← Zpět</button>
+        <button class="btn-primary" @click="step = 3">
+          Další →
+        </button>
+      </div>
+    </div>
+
+    <!-- Step 3: Observability -->
+    <div v-if="step === 3" class="wizard-step">
+      <h2>Observability</h2>
+      <p class="step-desc">
+        Distributed tracing a centralizované logování. Volitelné — můžeš přeskočit.
+      </p>
+
+      <div class="obs-cards">
+        <div
+          v-for="opt in obsOptions"
+          :key="opt.value"
+          class="obs-card"
+          :class="{ 'obs-card--active': obsLevel === opt.value }"
+          @click="obsLevel = opt.value"
+        >
+          <div class="obs-card-header">
+            <span class="obs-card-icon">{{ opt.icon }}</span>
+            <span class="obs-card-title">{{ opt.label }}</span>
+            <span v-if="opt.value === 'full'" class="obs-card-badge">doporučeno</span>
+          </div>
+          <p class="obs-card-desc">{{ opt.desc }}</p>
+        </div>
+      </div>
+
+      <!-- Provider toggle for non-none -->
+      <div v-if="obsLevel !== 'none'" class="obs-provider-section">
+        <div class="provider-toggle" style="margin-bottom: 12px">
+          <button
+            class="toggle-btn"
+            :class="{ active: obsProvider === 'builtin' }"
+            @click="obsProvider = 'builtin'"
+          >
+            Builtin (Docker Compose)
+          </button>
+          <button
+            class="toggle-btn"
+            :class="{ active: obsProvider === 'custom' }"
+            @click="obsProvider = 'custom'"
+          >
+            Custom stack
+          </button>
+        </div>
+
+        <!-- Custom endpoints -->
+        <div v-if="obsProvider === 'custom'" class="obs-custom-fields">
+          <div class="form-group">
+            <label>OTLP Endpoint</label>
+            <input v-model="obsEndpoints.otlp" class="form-input" placeholder="http://tempo:4318" />
+          </div>
+          <div class="form-group">
+            <label>Loki Endpoint</label>
+            <input v-model="obsEndpoints.loki" class="form-input" placeholder="http://loki:3100" />
+          </div>
+          <div class="form-group">
+            <label>Grafana URL</label>
+            <input v-model="obsEndpoints.grafana" class="form-input" placeholder="http://grafana:3000" />
+          </div>
+        </div>
+      </div>
+
+      <div class="step-actions">
+        <button class="btn-secondary" @click="step = 2">← Zpět</button>
         <button class="btn-primary" :disabled="completing" @click="complete">
           <span v-if="completing">Spouštím...</span>
           <span v-else>Spustit systém →</span>
@@ -277,8 +345,8 @@
       </div>
     </div>
 
-    <!-- Step 3: Done -->
-    <div v-if="step === 3" class="wizard-step wizard-done">
+    <!-- Step 4: Done -->
+    <div v-if="step === 4" class="wizard-step wizard-done">
       <div class="done-icon">✅</div>
       <h2>Systém je připraven!</h2>
       <p>Přesměrovávám na dashboard...</p>
@@ -289,7 +357,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, reactive, onMounted, watch } from 'vue'
 
 const step = ref(1)
 const providerType = ref<'api-key' | 'claude-code'>('api-key')
@@ -327,6 +395,20 @@ const installErrors = ref<Record<string, string>>({})
 const sshGenerating = ref<Record<string, boolean>>({})
 const sshPublicKeys = ref<Record<string, string>>({})
 const copied = ref(false)
+
+// Observability config (step 3)
+const obsLevel = ref<'none' | 'logging' | 'full'>('full')
+const obsProvider = ref<'builtin' | 'custom'>('builtin')
+const obsEndpoints = reactive({
+  otlp: 'http://tempo:4318',
+  loki: 'http://loki:3100',
+  grafana: 'http://localhost:3000',
+})
+const obsOptions = [
+  { value: 'none' as const, label: 'None', icon: '⏸️', desc: 'Bez observability. Nulový overhead.' },
+  { value: 'logging' as const, label: 'Logging', icon: '📋', desc: 'Centralizované logy (Loki + Grafana). Bez tracingu.' },
+  { value: 'full' as const, label: 'Full', icon: '🔍', desc: 'Distributed tracing + logy (Tempo + Loki + Grafana + Alloy).' },
+]
 
 // SSE — naslouchej na auth-completed event
 let eventSource: EventSource | null = null
@@ -549,6 +631,44 @@ async function complete() {
   completing.value = true
   globalError.value = ''
   try {
+    // Save observability config first
+    if (obsLevel.value !== 'none') {
+      const obsBody: Record<string, unknown> = {
+        level: obsLevel.value,
+        provider: obsProvider.value,
+      }
+      if (obsProvider.value === 'custom') {
+        obsBody.endpoints = { ...obsEndpoints }
+      }
+      const obsRes = await fetch('/api/observability/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(obsBody),
+      })
+      if (!obsRes.ok) {
+        const data = await obsRes.json() as { error?: string }
+        console.warn('Observability config warning:', data.error)
+        // Non-fatal — continue with setup
+      }
+    }
+
+    // Save observability level to main config (for core tracing init)
+    await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        observability: {
+          level: obsLevel.value,
+          provider: obsProvider.value,
+          endpoints: obsProvider.value === 'custom' ? { ...obsEndpoints } : {
+            otlp: 'http://tempo:4318',
+            loki: 'http://loki:3100',
+            grafana: 'http://localhost:3000',
+          },
+        },
+      }),
+    })
+
     const res = await fetch('/api/setup/complete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -556,7 +676,7 @@ async function complete() {
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
-    step.value = 3
+    step.value = 4
     setTimeout(() => { window.location.href = '/' }, 1500)
   } catch (err) {
     globalError.value = `Chyba při spuštění: ${String(err)}`
@@ -994,6 +1114,67 @@ code {
 
 .done-icon { font-size: 48px; margin-bottom: 12px; }
 .wizard-done h2 { color: var(--accent2, #3fb950); }
+
+/* Observability cards */
+.obs-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.obs-card {
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.obs-card:hover { border-color: var(--accent, #58a6ff); }
+
+.obs-card--active {
+  border-color: var(--accent, #58a6ff);
+  background: rgba(88, 166, 255, 0.08);
+}
+
+.obs-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.obs-card-icon { font-size: 16px; }
+.obs-card-title { font-weight: 600; font-size: 14px; }
+
+.obs-card-badge {
+  font-size: 10px;
+  background: rgba(88, 166, 255, 0.15);
+  border: 1px solid var(--accent, #58a6ff);
+  color: var(--accent, #58a6ff);
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.obs-card-desc {
+  font-size: 12px;
+  color: var(--text-muted, #8b949e);
+  margin: 6px 0 0;
+  line-height: 1.4;
+}
+
+.obs-provider-section {
+  margin-bottom: 20px;
+}
+
+.obs-custom-fields {
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: 14px;
+}
 
 .global-error {
   margin-top: 16px;
