@@ -447,12 +447,15 @@ function openConnectModal(teamId: string) {
 }
 
 function submitConnect(setupUrl: string) {
+  // Replace only the trailing /start segment to avoid partial matches
+  const manifestUrl = setupUrl.replace(/\/start$/, '/manifest')
   const form = document.createElement('form')
   form.method = 'POST'
-  form.action = setupUrl.replace('/start', '/manifest')
+  form.action = manifestUrl
   const t = document.createElement('input'); t.type = 'hidden'; t.name = 'target'; t.value = connectTarget.value; form.appendChild(t)
-  if (connectTarget.value === 'org' && connectOrg.value) {
-    const o = document.createElement('input'); o.type = 'hidden'; o.name = 'org'; o.value = connectOrg.value; form.appendChild(o)
+  if (connectTarget.value === 'org' && connectOrg.value.trim()) {
+    const orgName = connectOrg.value.trim().replace(/[^a-zA-Z0-9_.-]/g, '')
+    const o = document.createElement('input'); o.type = 'hidden'; o.name = 'org'; o.value = orgName; form.appendChild(o)
   }
   document.body.appendChild(form)
   form.submit()
@@ -465,7 +468,7 @@ const teamSetupUrls = ref<Record<string, string>>({})
 const teamSetupStatus = ref<Record<string, boolean | undefined>>({})
 
 async function loadTeamSetupStatuses(teams: string[]) {
-  for (const t of teams) {
+  await Promise.all(teams.map(async (t) => {
     try {
       const res = await fetch(`/api/${t}/setup/status`)
       if (res.ok) {
@@ -473,7 +476,7 @@ async function loadTeamSetupStatuses(teams: string[]) {
         if (typeof data.connected === 'boolean') teamSetupStatus.value[t] = data.connected
       }
     } catch { /* team has no setup/status endpoint, ignore */ }
-  }
+  }))
 }
 
 const sshGenerating = ref<string | null>(null)

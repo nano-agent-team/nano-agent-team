@@ -316,12 +316,13 @@ export async function createApiApp(
     }
 
     // Scan /data/agents/ and start any new agents
-    const { loadAgents } = await import('./agent-registry.js');
     const dataAgentsDir = path.join(DATA_DIR, 'agents');
     if (fs.existsSync(dataAgentsDir)) {
+      const { loadAgents } = await import('./agent-registry.js');
       const installedAgents = loadAgents(dataAgentsDir);
       for (const agent of installedAgents) {
         if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
+          await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
           await manager.startAgent(agent);
         }
       }

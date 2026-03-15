@@ -326,7 +326,9 @@ async function main(): Promise<void> {
 
     // Extract short-lived GitHub installation token (if present) and strip from prompt
     const ghToken = (payload as Record<string, unknown>).gh_token as string | undefined;
-    const payloadForPrompt = ghToken ? { ...payload, gh_token: undefined } : payload;
+    const payloadForPrompt = ghToken
+      ? Object.fromEntries(Object.entries(payload as Record<string, unknown>).filter(([k]) => k !== 'gh_token'))
+      : payload;
 
     // For chat agents: use only the text field. For event agents without text: include full payload.
     const eventContext = payloadForPrompt.text
@@ -342,10 +344,6 @@ async function main(): Promise<void> {
 
     // ── Phase 3: Provider invocation ─────────────────────────────
     const existingSessionId = loadSessionId();
-
-    // Inject GitHub token so gh CLI works inside Bash tool calls
-    const prevGhToken = process.env.GH_TOKEN;
-    if (ghToken) process.env.GH_TOKEN = ghToken;
 
     log.debug(
       { agentId: AGENT_ID, provider: PROVIDER_NAME, sessionType: SESSION_TYPE, hasSession: !!existingSessionId },
@@ -374,6 +372,7 @@ async function main(): Promise<void> {
         prompt,
         sessionId: existingSessionId,
         maxTurns: 50,
+        ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
         mcpServers: {
           tickets: {
             command: 'node',
@@ -414,11 +413,6 @@ async function main(): Promise<void> {
       if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.error`, 'exception');
     } finally {
       clearInterval(workingTimer);
-      // Restore GH_TOKEN env var
-      if (ghToken) {
-        if (prevGhToken !== undefined) process.env.GH_TOKEN = prevGhToken;
-        else delete process.env.GH_TOKEN;
-      }
     }
 
     querySpan?.end();

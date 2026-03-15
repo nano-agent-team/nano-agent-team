@@ -19,6 +19,8 @@ export interface ProviderRunOptions {
   sessionId?: string;
   maxTurns?: number;
   mcpServers?: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
+  /** Extra environment variables injected into the provider subprocess (e.g. GH_TOKEN). */
+  extraEnv?: Record<string, string>;
 }
 
 export interface Provider {
