@@ -307,13 +307,14 @@ export class AgentManager {
       }
 
       // Codex CLI credentials → /root/.codex (read-write so Codex CLI can refresh tokens)
-      // HOST_CODEX_DIR must be host-absolute path (same pattern as HOST_DATA_DIR)
+      // HOST_CODEX_DIR = host path (for Docker bind source)
+      // container path /root/.codex = where we check existence
       if (providerName === 'codex') {
-        const codexDir = process.env.HOST_CODEX_DIR
-          ?? path.join(process.env.HOME ?? '/root', '.codex');
-        if (fs.existsSync(codexDir)) {
-          binds.push(`${codexDir}:/root/.codex:rw`);
-          logger.debug({ id, codexDir }, 'Mounting .codex dir (rw)');
+        const containerCodexDir = path.join(process.env.HOME ?? '/root', '.codex');
+        const hostCodexDir = process.env.HOST_CODEX_DIR ?? containerCodexDir;
+        if (fs.existsSync(containerCodexDir)) {
+          binds.push(`${hostCodexDir}:/root/.codex:rw`);
+          logger.debug({ id, hostCodexDir }, 'Mounting .codex dir (rw)');
         }
       }
 
