@@ -581,10 +581,11 @@ export default {
               const m = JSON.parse(fs.readFileSync(mPath, 'utf8'));
               const setupPath = path.join(dir, entry.name, 'setup.json');
               let requires = [];
+              let setup_url = null;
               if (fs.existsSync(setupPath)) {
-                try { requires = JSON.parse(fs.readFileSync(setupPath, 'utf8')).requires ?? []; } catch { /* skip */ }
+                try { const s = JSON.parse(fs.readFileSync(setupPath, 'utf8')); requires = s.requires ?? []; setup_url = s.setup_url ?? null; } catch { /* skip */ }
               }
-              items.push({ id: m.id ?? entry.name, name: m.name ?? entry.name, type: manifestFile === 'team.json' ? 'team' : 'agent', description: m.description ?? '', status: m.status ?? 'stable', requires });
+              items.push({ id: m.id ?? entry.name, name: m.name ?? entry.name, type: manifestFile === 'team.json' ? 'team' : 'agent', description: m.description ?? '', status: m.status ?? 'stable', requires, setup_url });
             } catch { /* skip */ }
           }
           return items;

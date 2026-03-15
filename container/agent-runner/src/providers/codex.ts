@@ -59,7 +59,7 @@ export class CodexProvider implements Provider {
     if (options.modelExplicit && options.model) args.push('--model', options.model);
     args.push(options.prompt);
 
-    const env: NodeJS.ProcessEnv = { ...process.env };
+    const env: NodeJS.ProcessEnv = { ...process.env, ...options.extraEnv };
     if (oauthToken) env.CODEX_OAUTH_TOKEN = oauthToken;
     if (apiKey) env.OPENAI_API_KEY = apiKey;
 

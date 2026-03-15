@@ -324,10 +324,16 @@ async function main(): Promise<void> {
     // Priority: AGENT_SYSTEM_PROMPT env var > file mount
     const claudeMdContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
 
+    // Extract short-lived GitHub installation token (if present) and strip from prompt
+    const ghToken = (payload as Record<string, unknown>).gh_token as string | undefined;
+    const payloadForPrompt = ghToken
+      ? Object.fromEntries(Object.entries(payload as Record<string, unknown>).filter(([k]) => k !== 'gh_token'))
+      : payload;
+
     // For chat agents: use only the text field. For event agents without text: include full payload.
-    const eventContext = payload.text
-      ? String(payload.text)
-      : `Event on topic "${subject}":\n\n${JSON.stringify(payload, null, 2)}`;
+    const eventContext = payloadForPrompt.text
+      ? String(payloadForPrompt.text)
+      : `Event on topic "${subject}":\n\n${JSON.stringify(payloadForPrompt, null, 2)}`;
 
     // Combine: role instructions (system prompt) + user message
     const prompt: string = claudeMdContent
@@ -366,6 +372,7 @@ async function main(): Promise<void> {
         prompt,
         sessionId: existingSessionId,
         maxTurns: 50,
+        ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
         mcpServers: {
           tickets: {
             command: 'node',

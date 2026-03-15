@@ -36,6 +36,11 @@ export class ClaudeProvider implements Provider {
       sdkOptions.resume = options.sessionId;
     }
 
+    // Inject extra env vars (e.g. GH_TOKEN) without mutating process.env
+    if (options.extraEnv && Object.keys(options.extraEnv).length > 0) {
+      sdkOptions.env = { ...process.env, ...options.extraEnv };
+    }
+
     const q = query({ prompt: options.prompt, options: sdkOptions });
 
     let sessionId: string | undefined;
