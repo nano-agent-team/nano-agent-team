@@ -724,7 +724,7 @@ export default {
           hubSparseClone(`teams/${teamId}`, teamDir);
 
           // 1b. Symlink node_modules into plugin-dist so ESM can resolve packages
-          const pluginDistDir = path.join(teamDir, 'agents', 'plugin-dist');
+          const pluginDistDir = path.join(teamDir, 'plugin-dist');
           const nmLink = path.join(pluginDistDir, 'node_modules');
           if (fs.existsSync(pluginDistDir) && !fs.existsSync(nmLink)) {
             try {
@@ -739,11 +739,15 @@ export default {
           const featureIds = teamJson.features ?? [];
           const configEnvMap = teamJson.config_env_map ?? {};
 
-          // 3. Clone agents (inside teams/{teamId}/agents/)
+          // 3. Clone agents — team-specific path first, fall back to top-level agents/
           for (const agentId of agentIds) {
             progress('clone-agent', agentId);
             const agentDir = path.join(dataDir, 'agents', agentId);
-            hubSparseClone(`teams/${teamId}/agents/${agentId}`, agentDir);
+            try {
+              hubSparseClone(`teams/${teamId}/agents/${agentId}`, agentDir);
+            } catch {
+              hubSparseClone(`agents/${agentId}`, agentDir);
+            }
           }
 
           // 4. Clone + build features
