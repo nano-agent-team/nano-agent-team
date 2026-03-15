@@ -148,22 +148,37 @@
 
       <!-- Codex subscription mode -->
       <div v-if="selectedProvider === 'codex' && providerType === 'subscription'" class="codex-subscription-info">
-        <div class="info-box">
+
+        <!-- idle -->
+        <div v-if="codexOauthState === 'idle'" class="info-box">
           <p>
-            Přihlásí se přes tvůj ChatGPT / OpenAI účet (s aktivní Codex subscription).
+            Přihlásí se přes tvůj OpenAI / ChatGPT účet (s aktivní Codex subscription).
             Credentials se uloží do <code>~/.codex/auth.json</code>.
           </p>
           <p class="info-note">
-            Po kliknutí "Připojit Codex →" se spustí Codex CLI autentizace.
+            Po kliknutí "Připojit codex →" se vygeneruje přihlašovací odkaz.
           </p>
         </div>
 
-        <div v-if="codexLoginLoading" class="info-box info-box--loading">
-          <span class="spinner">⏳</span> Inicializuji Codex login...
+        <!-- loading -->
+        <div v-if="codexOauthState === 'loading'" class="info-box info-box--loading">
+          <span class="spinner">⏳</span> Generuji přihlašovací odkaz...
         </div>
 
-        <div v-if="codexLoginStatus" class="info-box info-box--success">
-          ✅ {{ codexLoginStatus }}
+        <!-- URL ready -->
+        <div v-if="codexOauthState === 'waiting'" class="info-box info-box--url">
+          <p class="url-label">Otevři odkaz a přihlas se svým OpenAI účtem:</p>
+          <a :href="codexOauthUrl" target="_blank" class="oauth-link">
+            🔗 Přihlásit se u OpenAI →
+          </a>
+          <p class="info-note" style="margin-top:12px">
+            Po přihlášení se credentials automaticky uloží a setup pokračuje...
+          </p>
+        </div>
+
+        <!-- done -->
+        <div v-if="codexOauthState === 'done'" class="info-box info-box--success">
+          ✅ Codex přihlášen — credentials uloženy.
         </div>
 
         <span v-if="apiKeyError" class="form-error">{{ apiKeyError }}</span>
@@ -224,12 +239,12 @@
       </div>
 
       <button
-        v-if="(providerType === 'api-key') || (selectedProvider === 'claude' && oauthState === 'idle') || (selectedProvider === 'codex' && providerType === 'subscription')"
+        v-if="(providerType === 'api-key') || (selectedProvider === 'claude' && oauthState === 'idle') || (selectedProvider === 'codex' && providerType === 'subscription' && codexOauthState === 'idle')"
         class="btn-primary"
-        :disabled="connecting || codexLoginLoading"
+        :disabled="connecting"
         @click="connectProvider"
       >
-        <span v-if="connecting || codexLoginLoading">Připojuji...</span>
+        <span v-if="connecting">Připojuji...</span>
         <span v-else>Připojit {{ selectedProvider }} →</span>
       </button>
     </div>
@@ -502,6 +517,8 @@ const oauthPort = ref<number | null>(null)
 const submittingCode = ref(false)
 const codexLoginLoading = ref(false)
 const codexLoginStatus = ref('')
+const codexOauthState = ref<'idle' | 'loading' | 'waiting' | 'done'>('idle')
+const codexOauthUrl = ref('')
 
 // Reset oauth state when switching provider type
 watch(providerType, () => {
@@ -565,11 +582,25 @@ onMounted(async () => {
 
   // Listen for SSE auth-completed
   eventSource = new EventSource('/api/events')
-  eventSource.addEventListener('auth-completed', () => {
-    oauthState.value = 'done'
-    void proceedAfterOauth()
+  eventSource.addEventListener('auth-completed', (e: MessageEvent) => {
+    try {
+      const data = JSON.parse(e.data) as { type?: string }
+      if (data.type === 'codex-oauth') {
+        codexOauthState.value = 'done'
+        void proceedAfterCodexLogin()
+      } else {
+        oauthState.value = 'done'
+        void proceedAfterOauth()
+      }
+    } catch {
+      oauthState.value = 'done'
+      void proceedAfterOauth()
+    }
   })
 })
+
+// Codex SSE auth je obsluhován globálním eventSource listenerem výše
+function listenForCodexAuth() { /* SSE listener in onMounted handles auth-completed */ }
 
 function selectProvider(provider: 'claude' | 'codex' | 'gemini') {
   selectedProvider.value = provider
@@ -586,26 +617,34 @@ async function connectProvider() {
 
   // Handle Codex subscription
   if (selectedProvider.value === 'codex' && providerType.value === 'subscription') {
-    codexLoginLoading.value = true
-    codexLoginStatus.value = ''
+    codexOauthState.value = 'loading'
+    apiKeyError.value = ''
     try {
       const res = await fetch('/api/auth/codex-login', { method: 'POST' })
-      const data = await res.json() as { success?: boolean; message?: string; error?: string }
+      const data = await res.json() as { url?: string; alreadyLoggedIn?: boolean; error?: string }
 
-      if (data.success) {
-        codexLoginStatus.value = '✅ ' + (data.message || 'Codex je přihlášen!')
-        // Wait a moment, then proceed
-        await new Promise(r => setTimeout(r, 1500))
+      if (!res.ok || data.error) {
+        apiKeyError.value = data.error ?? `HTTP ${res.status}`
+        codexOauthState.value = 'idle'
+        return
+      }
+
+      if (data.alreadyLoggedIn) {
+        codexOauthState.value = 'done'
+        await new Promise(r => setTimeout(r, 1000))
         await proceedAfterCodexLogin()
         return
       }
 
-      // If not successful, show error/instruction
-      apiKeyError.value = data.error || data.message || 'Chyba při Codex loginu'
+      if (data.url) {
+        codexOauthUrl.value = data.url
+        codexOauthState.value = 'waiting'
+        // Čekej na SSE event auth-completed
+        listenForCodexAuth()
+      }
     } catch (err) {
       apiKeyError.value = `Chyba: ${String(err)}`
-    } finally {
-      codexLoginLoading.value = false
+      codexOauthState.value = 'idle'
     }
     return
   }

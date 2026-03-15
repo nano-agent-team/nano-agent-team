@@ -187,41 +187,78 @@ export default {
     });
 
     // ── POST /api/auth/codex-login ───────────────────────────────────────────
-    // Initiate Codex CLI subscription login flow
+    // Spustí `codex auth login` uvnitř kontejneru, vrátí OAuth URL
     app.post('/api/auth/codex-login', async (req, res) => {
+      // Nejdřív zkontroluj jestli už token existuje
+      const codexAuthPath = path.join(process.env.HOME ?? '/root', '.codex', 'auth.json');
       try {
-        const codexBin = process.env.CODEX_BIN ?? 'codex';
-
-        // Spawn codex auth login (interactive terminal)
-        // In browser context, we can't do interactive auth directly
-        // Instead, provide instructions for user to run: codex auth login
-        const config = loadConfig() ?? { version: '1', installed: { features: [], teams: [] }, meta: { createdAt: new Date().toISOString(), setupCompletedAt: null } };
-
-        // Check if token already exists in ~/.codex/auth.json
-        const codexAuthPath = path.join(process.env.HOME ?? '/root', '.codex', 'auth.json');
-        let token = null;
-        try {
-          const creds = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
-          token = creds?.tokens?.access_token;
-        } catch { /* not present */ }
-
+        const creds = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
+        const token = creds?.tokens?.access_token;
         if (token) {
-          // Token already exists, save to config
-          if (!config.providers) config.providers = {};
-          if (!config.providers.codex) config.providers.codex = {};
-          config.providers.codex.apiKey = token;
-          saveConfig(config);
-          res.json({ success: true, message: 'Codex subscription token loaded from ~/.codex/auth.json' });
-        } else {
-          // Instruct user to run codex auth login manually
-          res.json({
-            success: false,
-            error: 'Run "codex auth login" in terminal to authenticate. Token will be saved to ~/.codex/auth.json and picked up automatically.'
-          });
+          return res.json({ alreadyLoggedIn: true });
         }
-      } catch (err) {
-        res.status(500).json({ error: String(err) });
+      } catch { /* not present, proceed with login */ }
+
+      // Najdi codex binary
+      let codexBin = null;
+      const candidates = ['/usr/local/bin/codex', '/usr/bin/codex', process.env.CODEX_BIN].filter(Boolean);
+      for (const p of candidates) {
+        try { if (fs.existsSync(p)) { codexBin = p; break; } } catch { /* skip */ }
       }
+      if (!codexBin) {
+        try { codexBin = execSync('which codex', { encoding: 'utf8' }).trim(); } catch { /* skip */ }
+      }
+      if (!codexBin) {
+        return res.status(404).json({ error: 'codex CLI not found in container. Rebuild the image.' });
+      }
+
+      let responded = false;
+      let proc;
+      try {
+        proc = spawn(codexBin, ['auth', 'login'], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { ...process.env, TERM: 'xterm' },
+        });
+      } catch (spawnErr) {
+        return res.status(500).json({ error: `Failed to start codex: ${spawnErr.message}` });
+      }
+
+      const urlTimeout = setTimeout(() => {
+        if (!responded) {
+          responded = true;
+          proc.kill();
+          res.status(504).json({ error: 'Timeout — codex auth login did not emit URL within 15s' });
+        }
+      }, 15_000);
+
+      function handleOutput(data) {
+        if (responded) return;
+        const text = data.toString();
+        const urlMatch = text.match(/https:\/\/[^\s]+/);
+        if (urlMatch) {
+          responded = true;
+          clearTimeout(urlTimeout);
+          res.json({ url: urlMatch[0] });
+        }
+      }
+
+      proc.stdout.on('data', handleOutput);
+      proc.stderr.on('data', handleOutput);
+
+      proc.on('exit', (exitCode) => {
+        if (!responded) {
+          responded = true;
+          clearTimeout(urlTimeout);
+          if (exitCode === 0) {
+            res.json({ alreadyLoggedIn: true });
+          } else {
+            res.status(500).json({ error: `codex auth login exited with code ${exitCode}` });
+          }
+        } else {
+          // Login dokončen — emitni SSE event
+          emitSseEvent('auth-completed', { type: 'codex-oauth' });
+        }
+      });
     });
 
     // ── POST /api/setup/complete ────────────────────────────────────────────
