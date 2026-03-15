@@ -20,16 +20,20 @@ Each agent is an independent Docker container running a Claude Code session. The
 **Prerequisites:** Docker (or OrbStack), Claude API key or Claude Code subscription
 
 ```bash
-# 1. Build image
+# 1. Clone
+git clone https://github.com/nano-agent-team/nano-agent-team.git
+cd nano-agent-team
+
+# 2. Build image
 docker build -t nano-agent-team .
 
-# 2. Start
+# 3. Start
 docker compose up -d
 
-# 3. Open dashboard
+# 4. Open dashboard
 open http://localhost:3001
 
-# 4. Complete setup wizard (first run)
+# 5. Complete setup wizard (first run)
 #    → select LLM provider, enter credentials
 ```
 
