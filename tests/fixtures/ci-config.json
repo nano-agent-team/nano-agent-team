@@ -1,0 +1,16 @@
+{
+  "version": "1",
+  "setupCompleted": true,
+  "provider": {
+    "type": "claude",
+    "apiKey": "ci-test-key-not-real"
+  },
+  "installed": {
+    "features": [],
+    "teams": []
+  },
+  "meta": {
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "setupCompletedAt": "2026-01-01T00:00:00.000Z"
+  }
+}
