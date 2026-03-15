@@ -158,6 +158,72 @@ export default {
       res.json({ complete, missing, setupCompleted: config?.setupCompleted ?? false });
     });
 
+    // ── POST /api/config/set-path ────────────────────────────────────────────
+    // Set config value at dot-path (e.g. providers.codex.apiKey)
+    app.post('/api/config/set-path', (req, res) => {
+      try {
+        const { path: keyPath, value } = req.body ?? {};
+        if (!keyPath || typeof keyPath !== 'string') {
+          res.status(400).json({ error: 'Missing path' });
+          return;
+        }
+
+        const config = loadConfig() ?? { version: '1', installed: { features: [], teams: [] }, meta: { createdAt: new Date().toISOString(), setupCompletedAt: null } };
+        const keys = keyPath.split('.');
+        let cur = config;
+        for (let i = 0; i < keys.length - 1; i++) {
+          if (cur[keys[i]] == null || typeof cur[keys[i]] !== 'object') {
+            cur[keys[i]] = {};
+          }
+          cur = cur[keys[i]];
+        }
+        cur[keys[keys.length - 1]] = value;
+        saveConfig(config);
+
+        res.json({ ok: true, path: keyPath });
+      } catch (err) {
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    // ── POST /api/auth/codex-login ───────────────────────────────────────────
+    // Initiate Codex CLI subscription login flow
+    app.post('/api/auth/codex-login', async (req, res) => {
+      try {
+        const codexBin = process.env.CODEX_BIN ?? 'codex';
+
+        // Spawn codex auth login (interactive terminal)
+        // In browser context, we can't do interactive auth directly
+        // Instead, provide instructions for user to run: codex auth login
+        const config = loadConfig() ?? { version: '1', installed: { features: [], teams: [] }, meta: { createdAt: new Date().toISOString(), setupCompletedAt: null } };
+
+        // Check if token already exists in ~/.codex/auth.json
+        const codexAuthPath = path.join(process.env.HOME ?? '/root', '.codex', 'auth.json');
+        let token = null;
+        try {
+          const creds = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
+          token = creds?.tokens?.access_token;
+        } catch { /* not present */ }
+
+        if (token) {
+          // Token already exists, save to config
+          if (!config.providers) config.providers = {};
+          if (!config.providers.codex) config.providers.codex = {};
+          config.providers.codex.apiKey = token;
+          saveConfig(config);
+          res.json({ success: true, message: 'Codex subscription token loaded from ~/.codex/auth.json' });
+        } else {
+          // Instruct user to run codex auth login manually
+          res.json({
+            success: false,
+            error: 'Run "codex auth login" in terminal to authenticate. Token will be saved to ~/.codex/auth.json and picked up automatically.'
+          });
+        }
+      } catch (err) {
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
     // ── POST /api/setup/complete ────────────────────────────────────────────
     app.post('/api/setup/complete', async (req, res) => {
       try {
