@@ -118,8 +118,10 @@ export default {
 
     function getMissing(config) {
       const missing = [];
+      // Multi-provider: primaryProvider set = configured
+      if (config?.primaryProvider) return missing;
+      // Legacy: single provider config
       if (!config?.provider?.type) missing.push('provider.type');
-      // claude-code-oauth uses mounted credentials — no apiKey needed
       if (config?.provider?.type !== 'claude-code-oauth' && !config?.provider?.apiKey) {
         missing.push('provider.apiKey');
       }
