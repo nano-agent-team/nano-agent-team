@@ -12,6 +12,8 @@ export type ProviderEvent =
 
 export interface ProviderRunOptions {
   model: string;
+  /** True if model was explicitly set in manifest (not auto-selected from capabilities) */
+  modelExplicit?: boolean;
   cwd: string;
   prompt: string;
   sessionId?: string;

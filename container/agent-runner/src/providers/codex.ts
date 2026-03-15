@@ -53,7 +53,8 @@ export class CodexProvider implements Provider {
     yield { type: 'session_id', sessionId: `codex-${Date.now()}` };
 
     const args = ['exec', '--skip-git-repo-check'];
-    if (options.model) args.push('--model', options.model);
+    // Only pass --model when explicitly set in manifest; let Codex CLI pick its own default for subscriptions
+    if (options.modelExplicit && options.model) args.push('--model', options.model);
     args.push(options.prompt);
 
     const env: NodeJS.ProcessEnv = { ...process.env };

@@ -36,6 +36,7 @@ const SUBSCRIBE_TOPICS = (process.env.SUBSCRIBE_TOPICS ?? '').split(',').filter(
 const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';
 const PROVIDER_NAME = process.env.PROVIDER ?? 'claude';
 const MODEL = process.env.MODEL ?? 'claude-haiku-4-5-20251001';
+const MODEL_EXPLICIT = process.env.MODEL_EXPLICIT === 'true';
 const SESSION_TYPE = (process.env.SESSION_TYPE ?? 'stateless') as 'stateless' | 'persistent';
 const CLAUDE_MD_PATH = '/workspace/agent/CLAUDE.md';
 const AGENT_SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT ?? '';
@@ -235,6 +236,7 @@ async function main(): Promise<void> {
         let result = '';
         const providerRun = provider.run({
           model: MODEL,
+          modelExplicit: MODEL_EXPLICIT,
           cwd: '/workspace',
           prompt: '',
           sessionId: savedSessionId,
@@ -359,6 +361,7 @@ async function main(): Promise<void> {
     try {
       const providerRun = provider.run({
         model: MODEL,
+        modelExplicit: MODEL_EXPLICIT,
         cwd: '/workspace',
         prompt,
         sessionId: existingSessionId,
