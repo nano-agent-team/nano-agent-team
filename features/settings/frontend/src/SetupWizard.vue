@@ -651,7 +651,7 @@ async function connectProvider() {
     oauthState.value = 'loading'
     try {
       const res = await fetch('/api/auth/claude-login', { method: 'POST' })
-      const data = await res.json() as { url?: string; alreadyLoggedIn?: boolean; error?: string }
+      const data = await res.json() as { url?: string; port?: number; alreadyLoggedIn?: boolean; error?: string }
 
       if (!res.ok || data.error) {
         apiKeyError.value = data.error ?? `HTTP ${res.status}`
@@ -845,9 +845,9 @@ async function copyToClipboard(text: string) {
   setTimeout(() => { copied.value = false }, 2000)
 }
 
-function deployKeyUrl(itemId: string): string | null {
+function deployKeyUrl(itemId: string): string | undefined {
   const key = sshPublicKeys.value[itemId] ?? ''
-  if (!key) return null
+  if (!key) return undefined
   const params = new URLSearchParams({ title: 'nano-agent-team', key })
   return `https://github.com/settings/ssh/new?${params}`
 }
