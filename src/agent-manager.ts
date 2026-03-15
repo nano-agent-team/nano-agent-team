@@ -121,7 +121,7 @@ export class AgentManager {
   }
 
   /** Resolve provider and model for an agent */
-  private resolveAgentProvider(agent: LoadedAgent, config: NanoConfig): { provider: string; model: string } {
+  private resolveAgentProvider(agent: LoadedAgent, config: Partial<NanoConfig>): { provider: string; model: string; modelExplicit: boolean } {
     const primaryProvider = config.primaryProvider ?? 'claude';
     const manifest = agent.manifest;
 
@@ -130,7 +130,7 @@ export class AgentManager {
       const provider = (manifest.provider && manifest.provider !== 'auto')
         ? manifest.provider
         : primaryProvider;
-      return { provider, model: manifest.model };
+      return { provider, model: manifest.model, modelExplicit: true };
     }
 
     // Determine provider
@@ -144,10 +144,15 @@ export class AgentManager {
     const priorityOrder = ['reasoning', 'long-context', 'fast', 'cheap'];
     for (const cap of priorityOrder) {
       if (capabilities.includes(cap) && modelMap[cap]) {
-        return { provider, model: modelMap[cap] };
+        return { provider, model: modelMap[cap], modelExplicit: false };
       }
     }
-    return { provider, model: modelMap['default'] ?? 'claude-haiku-4-5-20251001' };
+    const providerDefaults: Record<string, string> = {
+      claude: 'claude-haiku-4-5-20251001',
+      codex: 'o4-mini',
+      gemini: 'gemini-2.0-flash',
+    };
+    return { provider, model: modelMap['default'] ?? providerDefaults[provider] ?? 'claude-haiku-4-5-20251001', modelExplicit: false };
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -191,7 +196,7 @@ export class AgentManager {
       }
 
       // Resolve provider and model for this agent
-      const { provider: providerName, model } = this.resolveAgentProvider(agent, config ?? {});
+      const { provider: providerName, model, modelExplicit } = this.resolveAgentProvider(agent, config ?? {});
 
       // Resolve auth tokens based on provider
       const apiKey = await this.resolveApiKey();
@@ -243,6 +248,7 @@ export class AgentManager {
         `SUBSCRIBE_TOPICS=${agent.manifest.subscribe_topics.join(',')}`,
         `PROVIDER=${providerName}`,
         `MODEL=${model}`,
+        `MODEL_EXPLICIT=${modelExplicit}`,
         `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
         `LOG_LEVEL=info`,
         // Provider-specific auth tokens
@@ -302,11 +308,14 @@ export class AgentManager {
       }
 
       // Codex CLI credentials → /root/.codex (read-write so Codex CLI can refresh tokens)
+      // HOST_CODEX_DIR = host path (for Docker bind source)
+      // container path /root/.codex = where we check existence
       if (providerName === 'codex') {
-        const codexDir = path.join(process.env.HOME ?? '/root', '.codex');
-        if (fs.existsSync(codexDir)) {
-          binds.push(`${codexDir}:/root/.codex:rw`);
-          logger.debug({ id, codexDir }, 'Mounting .codex dir (rw)');
+        const containerCodexDir = path.join(process.env.HOME ?? '/root', '.codex');
+        const hostCodexDir = process.env.HOST_CODEX_DIR ?? containerCodexDir;
+        if (fs.existsSync(containerCodexDir)) {
+          binds.push(`${hostCodexDir}:/root/.codex:rw`);
+          logger.debug({ id, hostCodexDir }, 'Mounting .codex dir (rw)');
         }
       }
 

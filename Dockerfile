@@ -87,6 +87,10 @@ RUN apk add --no-cache \
 RUN npm install -g @anthropic-ai/claude-code --ignore-scripts 2>/dev/null || \
     npm install -g @anthropic-ai/claude-code
 
+# Install Codex CLI (provides `codex auth login` for ChatGPT subscription auth)
+RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
+    npm install -g @openai/codex
+
 # Production Node.js dependencies only
 COPY package.json package-lock.json* ./
 RUN npm ci --omit=dev

@@ -12,9 +12,8 @@ services:
     container_name: nano-agent-team
     restart: unless-stopped
     stop_grace_period: 60s
-    # host networking is required for Claude Code OAuth login:
-    # claude auth login opens a local callback server on a random port,
-    # and the Anthropic redirect goes to localhost — must be the same namespace.
+    # host networking required for OAuth callbacks (Claude, Codex) to reach localhost
+    # Dev instance on port 3002 via API_PORT env (live instance uses 3001)
     network_mode: host
     volumes:
       # Persistent data: config, SQLite, sessions, vault, workspaces
@@ -23,16 +22,20 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Claude Code credentials — shared with host so OAuth tokens persist
       - ~/.claude:/root/.claude
+      # Codex credentials — shared with host for subscription auth
+      - ~/.codex:/root/.codex
     environment:
       DATA_DIR: /data
       HOST_DATA_DIR: ${PWD}/data
       LOG_LEVEL: info
+      API_PORT: 3002
+      HOST_CODEX_DIR: ${HOME}/.codex
       # Embedded NATS (default — no NATS_URL needed)
       # To use external NATS: set NATS_URL=nats://nats:4222 and NATS_EMBEDDED=false
       # NATS_URL: nats://nats:4222
       # NATS_EMBEDDED: "false"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3

@@ -18,17 +18,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install provider CLIs — required by their respective SDKs
-RUN npm install -g @anthropic-ai/claude-code --ignore-scripts 2>/dev/null || \
-    npm install -g @anthropic-ai/claude-code
+# Install provider CLIs — pinned to known-good versions
+RUN npm install -g @anthropic-ai/claude-code@2.1.76 --ignore-scripts 2>/dev/null || \
+    npm install -g @anthropic-ai/claude-code@2.1.76
 
 # OpenAI Codex CLI (subscription + API key support)
-RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
-    npm install -g @openai/codex
-
-# Google Gemini CLI (placeholder for future implementation)
-RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
-    npm install -g @google/gemini-cli || echo "Note: @google/gemini-cli may not exist on npm yet"
+RUN npm install -g @openai/codex@0.114.0 --ignore-scripts 2>/dev/null || \
+    npm install -g @openai/codex@0.114.0
 
 # Copy package files and install production dependencies
 COPY agent-runner/package.json agent-runner/package-lock.json* ./

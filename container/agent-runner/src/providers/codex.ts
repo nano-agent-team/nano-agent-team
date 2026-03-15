@@ -1,62 +1,84 @@
 /**
- * OpenAI Codex Provider — OpenAI API with Codex CLI integration
+ * OpenAI Codex Provider — runs `codex exec` CLI subprocess
  *
- * Supports both subscription tokens (from `codex auth login`) and direct API keys.
- * Requires CODEX_OAUTH_TOKEN or OPENAI_API_KEY environment variable.
- *
- * This is a minimal implementation using OpenAI SDK directly.
- * Full Codex CLI integration would use @openai/codex SDK when available.
+ * Auth priority:
+ *   1. CODEX_OAUTH_TOKEN (subscription token from ~/.codex/auth.json)
+ *   2. OPENAI_API_KEY (direct API key)
  */
 
 import fs from 'fs';
 import path from 'path';
+import { spawn } from 'child_process';
 import type { Provider, ProviderRunOptions, ProviderEvent } from './types.js';
 
 export class CodexProvider implements Provider {
   readonly name = 'codex';
 
-  writeSystemPrompt(cwd: string, content: string, _agentId: string): void {
-    // Codex convention: AGENTS.md
-    const agentsMdPath = path.join(cwd, 'AGENTS.md');
-    fs.writeFileSync(agentsMdPath, content, 'utf8');
-
-    // Prepare .codex/config.toml for MCP servers if needed
-    // This will be populated by the run() method
-    const codexConfigDir = path.join(cwd, '.codex');
-    fs.mkdirSync(codexConfigDir, { recursive: true });
+  writeSystemPrompt(cwd: string, content: string): void {
+    fs.writeFileSync(path.join(cwd, 'AGENTS.md'), content, 'utf8');
+    fs.mkdirSync(path.join(cwd, '.codex'), { recursive: true });
   }
 
   async *run(options: ProviderRunOptions): AsyncGenerator<ProviderEvent> {
-    // For now, Codex provider is stubbed with an informative message
-    // Full implementation would require @openai/codex-sdk or direct OpenAI API calls
-    // with proper streaming and tool handling.
+    const oauthToken = process.env.CODEX_OAUTH_TOKEN;
+    const apiKey = process.env.OPENAI_API_KEY;
 
-    // Check if API key is configured
-    const hasApiKey = process.env.OPENAI_API_KEY || process.env.CODEX_OAUTH_TOKEN;
-    if (!hasApiKey) {
-      yield {
-        type: 'result',
-        result: '[Error: Codex provider requires OPENAI_API_KEY or CODEX_OAUTH_TOKEN env var]',
-        success: false,
-        errorSubtype: 'no_auth',
-      };
+    if (!oauthToken && !apiKey) {
+      yield { type: 'result', result: '[Error: Codex requires CODEX_OAUTH_TOKEN or OPENAI_API_KEY]', success: false, errorSubtype: 'no_auth' };
       return;
     }
 
-    // TODO: Implement full Codex SDK integration
-    // Steps:
-    // 1. Load @openai/codex-sdk (or use openai SDK)
-    // 2. Create Codex instance with auth
-    // 3. Start thread (or resume with sessionId)
-    // 4. Write .codex/config.toml with MCP server config
-    // 5. Stream prompts and yield ProviderEvents
-    // 6. Handle tool calls (bash, read, write, etc.)
+    const codexBin = '/usr/local/bin/codex';
+    if (!fs.existsSync(codexBin)) {
+      yield { type: 'result', result: '[Error: codex CLI not found]', success: false, errorSubtype: 'no_cli' };
+      return;
+    }
 
-    yield {
-      type: 'result',
-      result: '[Notice: Codex provider implementation in progress. Use Claude provider for now.]',
-      success: false,
-      errorSubtype: 'not_implemented',
-    };
+    // Write .codex/config.toml for MCP servers
+    if (options.mcpServers && Object.keys(options.mcpServers).length > 0) {
+      // Escape a value for TOML basic string (escape backslash and double-quote)
+      const tomlStr = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const lines: string[] = [];
+      for (const [name, srv] of Object.entries(options.mcpServers)) {
+        lines.push(`[mcp_servers.${name}]`);
+        lines.push(`command = "${tomlStr(srv.command)}"`);
+        if (srv.args?.length) lines.push(`args = [${srv.args.map(a => `"${tomlStr(a)}"`).join(', ')}]`);
+        if (srv.env) {
+          lines.push(`[mcp_servers.${name}.env]`);
+          for (const [k, v] of Object.entries(srv.env)) lines.push(`${k} = "${tomlStr(v)}"`);
+        }
+        lines.push('');
+      }
+      fs.writeFileSync(path.join(options.cwd, '.codex', 'config.toml'), lines.join('\n'), 'utf8');
+    }
+
+    yield { type: 'session_id', sessionId: `codex-${Date.now()}` };
+
+    const args = ['exec', '--skip-git-repo-check'];
+    // Only pass --model when explicitly set in manifest; let Codex CLI pick its own default for subscriptions
+    if (options.modelExplicit && options.model) args.push('--model', options.model);
+    args.push(options.prompt);
+
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (oauthToken) env.CODEX_OAUTH_TOKEN = oauthToken;
+    if (apiKey) env.OPENAI_API_KEY = apiKey;
+
+    try {
+      const output = await new Promise<string>((resolve, reject) => {
+        const proc = spawn(codexBin, args, { cwd: options.cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = '';
+        let stderr = '';
+        proc.stdout.on('data', (d: Buffer) => { stdout += d.toString(); });
+        proc.stderr.on('data', (d: Buffer) => { stderr += d.toString(); });
+        proc.on('exit', (code) => {
+          if (code === 0) resolve(stdout.trim() || stderr.trim());
+          else reject(new Error(stderr.trim() || stdout.trim() || `codex exited with code ${code}`));
+        });
+        proc.on('error', reject);
+      });
+      yield { type: 'result', result: output, success: true };
+    } catch (err) {
+      yield { type: 'result', result: `[Codex error: ${String(err)}]`, success: false, errorSubtype: 'execution_error' };
+    }
   }
 }
