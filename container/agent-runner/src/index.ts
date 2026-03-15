@@ -144,7 +144,7 @@ async function main(): Promise<void> {
   const systemPrompt = systemPromptContent || `# ${AGENT_ID}\n\nYou are ${AGENT_ID}, a helpful AI agent.\n`;
 
   try {
-    provider.writeSystemPrompt('/workspace', systemPrompt, AGENT_ID);
+    provider.writeSystemPrompt('/workspace', systemPrompt);
     log.info({ provider: PROVIDER_NAME, source: AGENT_SYSTEM_PROMPT ? 'env' : 'file' }, 'System prompt written via provider');
   } catch (err) {
     log.error({ err, provider: PROVIDER_NAME }, 'Failed to write system prompt');

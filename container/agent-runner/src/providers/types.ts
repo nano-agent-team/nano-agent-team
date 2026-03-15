@@ -25,7 +25,7 @@ export interface Provider {
   readonly name: string;
 
   /** Write system prompt to provider-specific location in cwd */
-  writeSystemPrompt(cwd: string, content: string, agentId: string): void;
+  writeSystemPrompt(cwd: string, content: string): void;
 
   /** Run LLM query and yield events */
   run(options: ProviderRunOptions): AsyncGenerator<ProviderEvent>;

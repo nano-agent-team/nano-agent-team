@@ -34,14 +34,10 @@
           <div class="provider-desc">OpenAI — rychlý, levný</div>
         </div>
 
-        <div
-          class="provider-card"
-          :class="{ selected: selectedProvider === 'gemini' }"
-          @click="selectProvider('gemini')"
-        >
+        <div class="provider-card provider-card--disabled">
           <div class="provider-icon">✨</div>
-          <div class="provider-name">Gemini</div>
-          <div class="provider-desc">Google — multimodální</div>
+          <div class="provider-name">Gemini <span class="provider-badge">brzy</span></div>
+          <div class="provider-desc">Google — zatím nedostupné</div>
         </div>
       </div>
 
@@ -1463,6 +1459,24 @@ code {
   border-color: #007bff;
   background: #e7f0ff;
   font-weight: bold;
+}
+
+.provider-card--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.provider-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 500;
+  background: #e5e7eb;
+  color: #6b7280;
+  border-radius: 4px;
+  padding: 1px 5px;
+  margin-left: 4px;
+  vertical-align: middle;
 }
 
 .provider-icon {

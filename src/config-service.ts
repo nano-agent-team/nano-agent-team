@@ -123,39 +123,11 @@ export class ConfigService {
     return masked;
   }
 
-  /** Resolve provider and model for an agent based on capabilities + config */
-  resolveAgentProvider(manifest: { model?: string; provider?: string; capabilities?: string[] }, config: NanoConfig): { provider: string; model: string } {
-    const primaryProvider = config.primaryProvider ?? 'claude';
-
-    // Explicit model override → use as-is
-    if (manifest.model) {
-      const provider = (manifest.provider && manifest.provider !== 'auto')
-        ? manifest.provider
-        : primaryProvider;
-      return { provider, model: manifest.model };
-    }
-
-    // Determine provider
-    const provider = (manifest.provider && manifest.provider !== 'auto')
-      ? manifest.provider
-      : primaryProvider;
-
-    // Auto-select model from capabilities + modelMap
-    const modelMap = config.providers?.[provider]?.modelMap ?? {};
-    const capabilities = manifest.capabilities ?? [];
-    const priorityOrder = ['reasoning', 'long-context', 'fast', 'cheap'];
-    for (const cap of priorityOrder) {
-      if (capabilities.includes(cap) && modelMap[cap]) {
-        return { provider, model: modelMap[cap] };
-      }
-    }
-    return { provider, model: modelMap['default'] ?? 'claude-haiku-4-5-20251001' };
-  }
-
   /** What's missing for setup to be considered complete */
   getMissing(config: NanoConfig): string[] {
     const missing: string[] = [];
-    // Multi-provider: primaryProvider set = configured
+    // Multi-provider: primaryProvider set means wizard completed (OAuth/subscription
+    // providers store credentials in credential files, not in config)
     if (config.primaryProvider) return missing;
     // Legacy: single Claude provider config
     if (!config.provider?.type) missing.push('provider.type');

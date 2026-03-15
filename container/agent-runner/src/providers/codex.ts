@@ -14,7 +14,7 @@ import type { Provider, ProviderRunOptions, ProviderEvent } from './types.js';
 export class CodexProvider implements Provider {
   readonly name = 'codex';
 
-  writeSystemPrompt(cwd: string, content: string, _agentId: string): void {
+  writeSystemPrompt(cwd: string, content: string): void {
     fs.writeFileSync(path.join(cwd, 'AGENTS.md'), content, 'utf8');
     fs.mkdirSync(path.join(cwd, '.codex'), { recursive: true });
   }
@@ -36,14 +36,16 @@ export class CodexProvider implements Provider {
 
     // Write .codex/config.toml for MCP servers
     if (options.mcpServers && Object.keys(options.mcpServers).length > 0) {
+      // Escape a value for TOML basic string (escape backslash and double-quote)
+      const tomlStr = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       const lines: string[] = [];
       for (const [name, srv] of Object.entries(options.mcpServers)) {
         lines.push(`[mcp_servers.${name}]`);
-        lines.push(`command = "${srv.command}"`);
-        if (srv.args?.length) lines.push(`args = [${srv.args.map(a => `"${a}"`).join(', ')}]`);
+        lines.push(`command = "${tomlStr(srv.command)}"`);
+        if (srv.args?.length) lines.push(`args = [${srv.args.map(a => `"${tomlStr(a)}"`).join(', ')}]`);
         if (srv.env) {
           lines.push(`[mcp_servers.${name}.env]`);
-          for (const [k, v] of Object.entries(srv.env)) lines.push(`${k} = "${v}"`);
+          for (const [k, v] of Object.entries(srv.env)) lines.push(`${k} = "${tomlStr(v)}"`);
         }
         lines.push('');
       }
