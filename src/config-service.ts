@@ -155,8 +155,10 @@ export class ConfigService {
   /** What's missing for setup to be considered complete */
   getMissing(config: NanoConfig): string[] {
     const missing: string[] = [];
+    // Multi-provider: primaryProvider set = configured
+    if (config.primaryProvider) return missing;
+    // Legacy: single Claude provider config
     if (!config.provider?.type) missing.push('provider.type');
-    // claude-code-oauth uses mounted credentials — no apiKey needed
     if (config.provider?.type !== 'claude-code-oauth' && !config.provider?.apiKey) {
       missing.push('provider.apiKey');
     }
