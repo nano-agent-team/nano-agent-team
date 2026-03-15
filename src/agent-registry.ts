@@ -32,6 +32,10 @@ export interface AgentManifest {
   image?: string;
   /** Mount host SSH keys (~/.ssh) into container for git SSH access */
   ssh_mount?: boolean;
+  /** Capability tags for auto model selection: 'fast', 'cheap', 'reasoning', 'long-context', ... */
+  capabilities?: string[];
+  /** LLM provider: provider name or 'auto' (default: 'auto' = use primaryProvider) */
+  provider?: string;
 }
 
 export interface LoadedAgent {

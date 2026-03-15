@@ -1,0 +1,30 @@
+/**
+ * Provider abstraction types
+ *
+ * Defines the interface that all LLM providers must implement.
+ * Providers can be Claude (native SDK), OpenAI Codex, Google Gemini, etc.
+ */
+
+export type ProviderEvent =
+  | { type: 'session_id'; sessionId: string }
+  | { type: 'tool_call'; toolName: string }
+  | { type: 'result'; result: string; success: boolean; errorSubtype?: string };
+
+export interface ProviderRunOptions {
+  model: string;
+  cwd: string;
+  prompt: string;
+  sessionId?: string;
+  maxTurns?: number;
+  mcpServers?: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
+}
+
+export interface Provider {
+  readonly name: string;
+
+  /** Write system prompt to provider-specific location in cwd */
+  writeSystemPrompt(cwd: string, content: string, agentId: string): void;
+
+  /** Run LLM query and yield events */
+  run(options: ProviderRunOptions): AsyncGenerator<ProviderEvent>;
+}
