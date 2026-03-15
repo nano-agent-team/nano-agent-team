@@ -3,6 +3,46 @@
 
 DATA_DIR="${DATA_DIR:-/data}"
 
+# ── Start internal Docker daemon (DinD mode) ──────────────────────────────────
+# Skip if DOCKER_HOST is set (dev mode using host socket) or SKIP_DOCKERD=true
+if [ -z "$DOCKER_HOST" ] && [ -z "$SKIP_DOCKERD" ]; then
+  echo "[entrypoint] Starting internal Docker daemon..."
+  # Clean up stale PID file from previous run (survives container restart)
+  rm -f /var/run/docker.pid
+  dockerd --log-level=warn \
+          --storage-driver=overlay2 \
+          --data-root "$DATA_DIR/docker" \
+          2>/var/log/dockerd.log & \
+  DOCKERD_PID=$!
+
+  # Wait briefly, then check if overlay2 failed and retry with vfs
+  sleep 2
+  if ! kill -0 $DOCKERD_PID 2>/dev/null || ! docker info >/dev/null 2>&1; then
+    grep -q "overlay2" /var/log/dockerd.log 2>/dev/null && {
+      echo "[entrypoint] overlay2 not supported, retrying with vfs..."
+      kill $DOCKERD_PID 2>/dev/null; sleep 1
+      dockerd --log-level=warn \
+              --storage-driver=vfs \
+              --data-root "$DATA_DIR/docker" \
+              2>/var/log/dockerd.log &
+    }
+  fi
+
+  # Wait for socket to be ready (max 30s)
+  timeout 30 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done' \
+    || { echo "[entrypoint] ERROR: dockerd failed to start"; cat /var/log/dockerd.log; exit 1; }
+  echo "[entrypoint] Docker daemon ready"
+
+  # Build nano-agent image if not already present (persists in DATA_DIR/docker volume)
+  if ! docker image inspect nano-agent:latest >/dev/null 2>&1; then
+    echo "[entrypoint] Building nano-agent:latest..."
+    docker build -t nano-agent:latest /app/container/ \
+      && echo "[entrypoint] nano-agent:latest ready" \
+      || { echo "[entrypoint] ERROR: nano-agent build failed"; exit 1; }
+  fi
+fi
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Ensure data directories exist
 mkdir -p \
   "$DATA_DIR/sessions" \

@@ -21,6 +21,13 @@ import { execSync, spawnSync } from 'child_process';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// Simple logger compatible with main app's pino output format
+const log = {
+  info:  (msg, ...args) => console.log(JSON.stringify({ level: 30, time: Date.now(), name: 'settings', msg, ...args[0] })),
+  warn:  (msg, ...args) => console.warn(JSON.stringify({ level: 40, time: Date.now(), name: 'settings', msg, ...args[0] })),
+  error: (msg, ...args) => console.error(JSON.stringify({ level: 50, time: Date.now(), name: 'settings', msg, ...args[0] })),
+};
+
 // Find claude CLI — try common locations
 function findClaudeBin() {
   const candidates = [
@@ -96,16 +103,16 @@ export default {
         }
 
         if (!token) {
-          console.log('[settings] OAuth login completed but token not accessible — will use mounted .claude dir');
+          log.info('OAuth login completed but token not accessible — will use mounted .claude dir');
           return;
         }
 
         const config = loadConfig() ?? {};
         config.provider = { ...(config.provider ?? {}), type: 'claude-code-oauth', apiKey: token };
         saveConfig(config);
-        console.log('[settings] OAuth token saved to config.json');
+        log.info('OAuth token saved to config.json');
       } catch (err) {
-        console.warn('[settings] Could not save OAuth token to config.json:', err);
+        log.warn('Could not save OAuth token to config.json', { err: err?.message });
       }
     }
 
@@ -118,8 +125,11 @@ export default {
 
     function getMissing(config) {
       const missing = [];
+      // Multi-provider: primaryProvider set means wizard completed (OAuth/subscription
+      // providers store credentials in credential files, not in config)
+      if (config?.primaryProvider) return missing;
+      // Legacy: single provider config
       if (!config?.provider?.type) missing.push('provider.type');
-      // claude-code-oauth uses mounted credentials — no apiKey needed
       if (config?.provider?.type !== 'claude-code-oauth' && !config?.provider?.apiKey) {
         missing.push('provider.apiKey');
       }
@@ -187,41 +197,78 @@ export default {
     });
 
     // ── POST /api/auth/codex-login ───────────────────────────────────────────
-    // Initiate Codex CLI subscription login flow
+    // Spustí `codex auth login` uvnitř kontejneru, vrátí OAuth URL
     app.post('/api/auth/codex-login', async (req, res) => {
+      // Nejdřív zkontroluj jestli už token existuje
+      const codexAuthPath = path.join(process.env.HOME ?? '/root', '.codex', 'auth.json');
       try {
-        const codexBin = process.env.CODEX_BIN ?? 'codex';
-
-        // Spawn codex auth login (interactive terminal)
-        // In browser context, we can't do interactive auth directly
-        // Instead, provide instructions for user to run: codex auth login
-        const config = loadConfig() ?? { version: '1', installed: { features: [], teams: [] }, meta: { createdAt: new Date().toISOString(), setupCompletedAt: null } };
-
-        // Check if token already exists in ~/.codex/auth.json
-        const codexAuthPath = path.join(process.env.HOME ?? '/root', '.codex', 'auth.json');
-        let token = null;
-        try {
-          const creds = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
-          token = creds?.tokens?.access_token;
-        } catch { /* not present */ }
-
+        const creds = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8'));
+        const token = creds?.tokens?.access_token;
         if (token) {
-          // Token already exists, save to config
-          if (!config.providers) config.providers = {};
-          if (!config.providers.codex) config.providers.codex = {};
-          config.providers.codex.apiKey = token;
-          saveConfig(config);
-          res.json({ success: true, message: 'Codex subscription token loaded from ~/.codex/auth.json' });
-        } else {
-          // Instruct user to run codex auth login manually
-          res.json({
-            success: false,
-            error: 'Run "codex auth login" in terminal to authenticate. Token will be saved to ~/.codex/auth.json and picked up automatically.'
-          });
+          return res.json({ alreadyLoggedIn: true });
         }
-      } catch (err) {
-        res.status(500).json({ error: String(err) });
+      } catch { /* not present, proceed with login */ }
+
+      // Najdi codex binary
+      let codexBin = null;
+      const candidates = ['/usr/local/bin/codex', '/usr/bin/codex', process.env.CODEX_BIN].filter(Boolean);
+      for (const p of candidates) {
+        try { if (fs.existsSync(p)) { codexBin = p; break; } } catch { /* skip */ }
       }
+      if (!codexBin) {
+        try { codexBin = execSync('which codex', { encoding: 'utf8' }).trim(); } catch { /* skip */ }
+      }
+      if (!codexBin) {
+        return res.status(404).json({ error: 'codex CLI not found in container. Rebuild the image.' });
+      }
+
+      let responded = false;
+      let proc;
+      try {
+        proc = spawn(codexBin, ['auth', 'login'], {
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: { PATH: process.env.PATH, HOME: process.env.HOME, TERM: 'xterm' },
+        });
+      } catch (spawnErr) {
+        return res.status(500).json({ error: `Failed to start codex: ${spawnErr.message}` });
+      }
+
+      const urlTimeout = setTimeout(() => {
+        if (!responded) {
+          responded = true;
+          proc.kill();
+          res.status(504).json({ error: 'Timeout — codex auth login did not emit URL within 15s' });
+        }
+      }, 15_000);
+
+      function handleOutput(data) {
+        if (responded) return;
+        const text = data.toString();
+        const urlMatch = text.match(/https:\/\/[^\s]+/);
+        if (urlMatch) {
+          responded = true;
+          clearTimeout(urlTimeout);
+          res.json({ url: urlMatch[0] });
+        }
+      }
+
+      proc.stdout.on('data', handleOutput);
+      proc.stderr.on('data', handleOutput);
+
+      proc.on('exit', (exitCode) => {
+        if (!responded) {
+          responded = true;
+          clearTimeout(urlTimeout);
+          if (exitCode === 0) {
+            res.json({ alreadyLoggedIn: true });
+          } else {
+            res.status(500).json({ error: `codex auth login exited with code ${exitCode}` });
+          }
+        } else {
+          // Login dokončen — emitni SSE event
+          emitSseEvent('auth-completed', { type: 'codex-oauth' });
+        }
+      });
     });
 
     // ── POST /api/setup/complete ────────────────────────────────────────────
@@ -264,12 +311,12 @@ export default {
           try {
             const obsRes = await fetch('http://localhost:3001/api/observability/start', { method: 'POST' });
             if (obsRes.ok) {
-              console.log('[settings] Observability stack started via builtin provider');
+              log.info('Observability stack started via builtin provider');
             } else {
-              console.warn('[settings] Failed to start observability stack:', await obsRes.text());
+              log.warn('Failed to start observability stack', { status: obsRes.status });
             }
           } catch (err) {
-            console.warn('[settings] Could not start observability stack:', err.message);
+            log.warn('Could not start observability stack', { err: err?.message });
           }
         }
 
@@ -336,7 +383,7 @@ export default {
       try {
         proc = spawn(claudeBin, ['auth', 'login'], {
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, TERM: 'xterm' },
+          env: { PATH: process.env.PATH, HOME: process.env.HOME, TERM: 'xterm' },
         });
       } catch (spawnErr) {
         return res.status(500).json({ error: `Failed to start claude: ${spawnErr.message}` });
@@ -386,16 +433,21 @@ export default {
                 } catch { /* fd může zmizet */ }
               }
 
-              // 2. Mapujeme inode → port z /proc/net/tcp
-              const netTcp = fs.readFileSync(`/proc/${pid}/net/tcp`, 'utf8');
-              for (const line of netTcp.split('\n').slice(1)) {
-                const parts = line.trim().split(/\s+/);
-                if (parts.length < 10) continue;
-                if (parts[3] !== '0A') continue; // jen LISTEN
-                if (!inodes.has(parts[9])) continue; // jen sockety tohoto procesu
-                const portHex = parts[1].split(':')[1];
-                port = parseInt(portHex, 16);
-                break;
+              // 2. Mapujeme inode → port z /proc/net/tcp + tcp6
+              for (const tcpFile of ['tcp', 'tcp6']) {
+                try {
+                  const netTcp = fs.readFileSync(`/proc/${pid}/net/${tcpFile}`, 'utf8');
+                  for (const line of netTcp.split('\n').slice(1)) {
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length < 10) continue;
+                    if (parts[3] !== '0A') continue; // jen LISTEN
+                    if (!inodes.has(parts[9])) continue; // jen sockety tohoto procesu
+                    const portHex = parts[1].split(':')[1];
+                    port = parseInt(portHex, 16);
+                    break;
+                  }
+                } catch { /* tcp6 nemusí existovat */ }
+                if (port) break;
               }
             } catch { /* ignore */ }
 
@@ -444,8 +496,16 @@ export default {
       }
 
       try {
-        const callbackUrl = `http://127.0.0.1:${port}/callback?code=${encodeURIComponent(code.trim())}&state=${encodeURIComponent(state)}`;
-        const resp = await fetch(callbackUrl);
+        const query = `code=${encodeURIComponent(code.trim())}&state=${encodeURIComponent(state)}`;
+        // Try IPv4 first, fall back to IPv6 (Claude may listen on ::1)
+        let resp;
+        for (const host of [`127.0.0.1`, `[::1]`]) {
+          try {
+            resp = await fetch(`http://${host}:${port}/callback?${query}`);
+            break;
+          } catch { /* try next */ }
+        }
+        if (!resp) throw new Error(`Could not reach claude callback on port ${port}`);
         if (resp.ok || resp.status === 302) {
           // Claude zpracoval kód — počkáme na exit procesu (max 10s)
           await new Promise((resolve) => {
@@ -538,7 +598,7 @@ export default {
         const catalog = fetchHubCatalogViaGit();
         return res.json(catalog);
       } catch (hubErr) {
-        console.warn('[settings] Hub git fetch failed, falling back to local scan:', hubErr.message);
+        log.warn('Hub git fetch failed, falling back to local scan', { err: hubErr?.message });
       }
 
       // Fallback: local scan
@@ -641,7 +701,7 @@ export default {
         const compDir = path.join(featureDir, component.path);
         if (!fs.existsSync(compDir)) return;
         const buildCmd = component.build ?? 'npm ci && npm run build';
-        console.log(`[hub/install] Building ${component.type} in ${compDir}: ${buildCmd}`);
+        log.info('Building component', { type: component.type, dir: compDir, cmd: buildCmd });
         const result = spawnSync('sh', ['-c', buildCmd], { cwd: compDir, encoding: 'utf8', timeout: 120_000 });
         if (result.status !== 0) {
           throw new Error(`Build failed in ${compDir}: ${result.stderr || result.stdout}`);
@@ -727,7 +787,7 @@ export default {
       try {
         if (reloadFeatures) await reloadFeatures();
       } catch (err) {
-        console.warn('[hub/install] reloadFeatures error:', err.message);
+        log.warn('reloadFeatures error', { err: err?.message });
       }
       progress('done', installed.join(', '));
 
@@ -743,11 +803,11 @@ export default {
     if (fs.existsSync(frontendDist)) {
       const { default: express } = await import('express');
       app.use('/features/settings', express.static(frontendDist));
-      console.log('[settings feature] Serving frontend from', frontendDist);
+      log.info('Serving frontend', { from: frontendDist });
     } else {
-      console.log('[settings feature] Frontend not built — run: cd features/settings/frontend && npm run build');
+      log.warn('Frontend not built — run: cd features/settings/frontend && npm run build');
     }
 
-    console.log('[settings feature] Config API registered (/api/config)');
+    log.info('Config API registered (/api/config)');
   },
 };

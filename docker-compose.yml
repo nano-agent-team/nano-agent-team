@@ -1,12 +1,28 @@
+# docker-compose.yml — single-container DinD deployment
+#
+# Spuštění:  docker compose up -d
+# Více instancí:
+#   PORT=3002 docker compose -p nano2 up -d
+
 services:
-  nats:
-    image: nats:latest
-    command: ["-js", "-sd", "/data"]
+  nano-agent-team:
+    image: nano-agent-team:latest
+    container_name: ${COMPOSE_PROJECT_NAME:-nate}
+    privileged: true          # nutné pro interní dockerd
+    restart: unless-stopped
+    stop_grace_period: 60s
     ports:
-      - "4222:4222"
-      - "8222:8222"   # monitoring
+      - "${PORT:-3001}:3001"
     volumes:
-      - nats-data:/data
+      - data:/data            # persistentní data (sessions, vault, workspaces, DB)
+      - ~/.claude:/root/.claude  # Claude Code credentials
+      - ~/.codex:/root/.codex    # Codex credentials
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 volumes:
-  nats-data:
+  data:

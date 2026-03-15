@@ -77,7 +77,7 @@ WORKDIR /app
 # Install nats-server for embedded NATS + Docker CLI for agent containers + openssh for hub install
 RUN apk add --no-cache \
     nats-server \
-    docker-cli \
+    docker \
     docker-cli-compose \
     openssh-keygen \
     git \
@@ -86,6 +86,10 @@ RUN apk add --no-cache \
 # Install Claude Code CLI (provides `claude auth login` for OAuth setup)
 RUN npm install -g @anthropic-ai/claude-code --ignore-scripts 2>/dev/null || \
     npm install -g @anthropic-ai/claude-code
+
+# Install Codex CLI (provides `codex auth login` for ChatGPT subscription auth)
+RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
+    npm install -g @openai/codex
 
 # Production Node.js dependencies only
 COPY package.json package-lock.json* ./
@@ -108,6 +112,9 @@ COPY teams/ ./teams/
 
 # MCP config
 COPY mcp/ ./mcp/
+
+# Agent container build context (used by internal dockerd to build nano-agent:latest)
+COPY container/ ./container/
 
 # Built frontends
 COPY --from=dashboard-builder /app/dashboard/dist/ ./dashboard/dist/

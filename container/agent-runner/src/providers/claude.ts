@@ -12,7 +12,7 @@ import type { Provider, ProviderRunOptions, ProviderEvent } from './types.js';
 export class ClaudeProvider implements Provider {
   readonly name = 'claude';
 
-  writeSystemPrompt(cwd: string, content: string, _agentId: string): void {
+  writeSystemPrompt(cwd: string, content: string): void {
     const claudeMdPath = path.join(cwd, 'CLAUDE.md');
     fs.writeFileSync(claudeMdPath, content, 'utf8');
   }
@@ -44,25 +44,28 @@ export class ClaudeProvider implements Provider {
 
     try {
       for await (const sdkMsg of q) {
+        if (!sdkMsg || typeof sdkMsg !== 'object') continue;
+        const msg = sdkMsg as Record<string, unknown>;
+
         // Capture session id
-        if (!sessionId && sdkMsg && typeof sdkMsg === 'object' && 'session_id' in sdkMsg) {
-          sessionId = (sdkMsg as { session_id: string }).session_id;
+        if (!sessionId && typeof msg['session_id'] === 'string') {
+          sessionId = msg['session_id'];
           yield { type: 'session_id', sessionId };
         }
 
         // Record tool calls
-        if ((sdkMsg as { type: string }).type === 'tool_use_summary') {
-          const toolName = (sdkMsg as { tool_name?: string }).tool_name ?? 'unknown';
+        if (msg['type'] === 'tool_use_summary') {
+          const toolName = typeof msg['tool_name'] === 'string' ? msg['tool_name'] : 'unknown';
           yield { type: 'tool_call', toolName };
         }
 
         // Check for result
-        if (sdkMsg.type === 'result') {
-          if (sdkMsg.subtype === 'success') {
-            result = sdkMsg.result ?? '';
+        if (msg['type'] === 'result') {
+          if (msg['subtype'] === 'success') {
+            result = typeof msg['result'] === 'string' ? msg['result'] : '';
           } else {
-            errorSubtype = sdkMsg.subtype;
-            result = `[Error: ${sdkMsg.subtype}]`;
+            errorSubtype = typeof msg['subtype'] === 'string' ? msg['subtype'] : 'unknown';
+            result = `[Error: ${errorSubtype}]`;
           }
           break;
         }

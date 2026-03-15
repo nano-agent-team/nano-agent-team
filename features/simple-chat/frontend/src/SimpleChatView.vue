@@ -47,18 +47,33 @@
 </template>
 
 <script setup lang="ts">
-import { ref, nextTick } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 
 interface Message {
   role: 'user' | 'agent'
   text: string
 }
 
-const messages = ref<Message[]>([])
+const STORAGE_KEY = 'simple-chat-session'
+
+function loadSession(): { messages: Message[]; sessionId: string } {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY)
+    if (raw) return JSON.parse(raw)
+  } catch { /* ignore */ }
+  return { messages: [], sessionId: `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}` }
+}
+
+const saved = loadSession()
+const messages = ref<Message[]>(saved.messages)
+const sessionId = saved.sessionId
 const inputText = ref('')
 const loading = ref(false)
 const messagesEl = ref<HTMLElement | null>(null)
-const sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+
+watch(messages, (val) => {
+  sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ messages: val, sessionId }))
+}, { deep: true })
 
 async function scrollToBottom() {
   await nextTick()
