@@ -7,6 +7,13 @@
 import fs from 'fs';
 import path from 'path';
 
+export interface ProviderConfig {
+  apiKey?: string;
+  /** Capability tag → model name mapping. Key 'default' is fallback. */
+  modelMap?: Record<string, string>;
+  [key: string]: unknown;
+}
+
 export interface NanoConfig {
   version: string;
   setupCompleted: boolean;
@@ -14,6 +21,10 @@ export interface NanoConfig {
     type: 'claude-code' | 'claude-code-oauth';
     apiKey?: string;
   };
+  /** Primary LLM provider used for 'auto' agents (default: 'claude') */
+  primaryProvider?: string;
+  /** Per-provider credentials and model maps */
+  providers?: Record<string, ProviderConfig>;
   installed: {
     features: string[];
     teams: string[];
@@ -103,7 +114,42 @@ export class ConfigService {
     if (masked.provider?.apiKey) {
       masked.provider.apiKey = '***';
     }
+    // Mask per-provider API keys
+    if (masked.providers) {
+      for (const p of Object.values(masked.providers)) {
+        if (p.apiKey) p.apiKey = '***';
+      }
+    }
     return masked;
+  }
+
+  /** Resolve provider and model for an agent based on capabilities + config */
+  resolveAgentProvider(manifest: { model?: string; provider?: string; capabilities?: string[] }, config: NanoConfig): { provider: string; model: string } {
+    const primaryProvider = config.primaryProvider ?? 'claude';
+
+    // Explicit model override → use as-is
+    if (manifest.model) {
+      const provider = (manifest.provider && manifest.provider !== 'auto')
+        ? manifest.provider
+        : primaryProvider;
+      return { provider, model: manifest.model };
+    }
+
+    // Determine provider
+    const provider = (manifest.provider && manifest.provider !== 'auto')
+      ? manifest.provider
+      : primaryProvider;
+
+    // Auto-select model from capabilities + modelMap
+    const modelMap = config.providers?.[provider]?.modelMap ?? {};
+    const capabilities = manifest.capabilities ?? [];
+    const priorityOrder = ['reasoning', 'long-context', 'fast', 'cheap'];
+    for (const cap of priorityOrder) {
+      if (capabilities.includes(cap) && modelMap[cap]) {
+        return { provider, model: modelMap[cap] };
+      }
+    }
+    return { provider, model: modelMap['default'] ?? 'claude-haiku-4-5-20251001' };
   }
 
   /** What's missing for setup to be considered complete */

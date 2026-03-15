@@ -28,7 +28,7 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import type { LoadedAgent } from './agent-registry.js';
-import type { ConfigService } from './config-service.js';
+import type { ConfigService, NanoConfig } from './config-service.js';
 import { codec } from './nats-client.js';
 
 interface ObservabilityConfig {
@@ -98,6 +98,58 @@ export class AgentManager {
     return ANTHROPIC_API_KEY;
   }
 
+  /** Resolve Codex OAuth token from credentials or config */
+  private async resolveCodexToken(config: NanoConfig): Promise<string | undefined> {
+    // 1. Check config (set during settings wizard)
+    if (config.providers?.codex?.apiKey) return config.providers.codex.apiKey;
+
+    // 2. Read fresh from ~/.codex/auth.json (subscription token auto-refreshed by Codex CLI)
+    const homeDir = process.env.HOME ?? '/root';
+    const codexAuthPath = path.join(homeDir, '.codex', 'auth.json');
+    if (fs.existsSync(codexAuthPath)) {
+      try {
+        const creds = JSON.parse(fs.readFileSync(codexAuthPath, 'utf8')) as {
+          tokens?: { access_token?: string };
+        };
+        const token = creds.tokens?.access_token;
+        if (token) return token;
+      } catch { /* ignore */ }
+    }
+
+    // 3. Fallback: OpenAI API key from env
+    return process.env.OPENAI_API_KEY;
+  }
+
+  /** Resolve provider and model for an agent */
+  private resolveAgentProvider(agent: LoadedAgent, config: NanoConfig): { provider: string; model: string } {
+    const primaryProvider = config.primaryProvider ?? 'claude';
+    const manifest = agent.manifest;
+
+    // Explicit model override → use as-is
+    if (manifest.model) {
+      const provider = (manifest.provider && manifest.provider !== 'auto')
+        ? manifest.provider
+        : primaryProvider;
+      return { provider, model: manifest.model };
+    }
+
+    // Determine provider
+    const provider = (manifest.provider && manifest.provider !== 'auto')
+      ? manifest.provider
+      : primaryProvider;
+
+    // Auto-select model from capabilities + modelMap
+    const modelMap = config.providers?.[provider]?.modelMap ?? {};
+    const capabilities = manifest.capabilities ?? [];
+    const priorityOrder = ['reasoning', 'long-context', 'fast', 'cheap'];
+    for (const cap of priorityOrder) {
+      if (capabilities.includes(cap) && modelMap[cap]) {
+        return { provider, model: modelMap[cap] };
+      }
+    }
+    return { provider, model: modelMap['default'] ?? 'claude-haiku-4-5-20251001' };
+  }
+
   // ── Public API ─────────────────────────────────────────────────────────────
 
   async startAll(agents: LoadedAgent[]): Promise<void> {
@@ -133,7 +185,17 @@ export class AgentManager {
       const dbDir = hostDataDir;
 
       // Build env vars for the container
+      let config: NanoConfig | null = null;
+      if (this.configService) {
+        config = await this.configService.load();
+      }
+
+      // Resolve provider and model for this agent
+      const { provider: providerName, model } = this.resolveAgentProvider(agent, config ?? {});
+
+      // Resolve auth tokens based on provider
       const apiKey = await this.resolveApiKey();
+      const codexToken = config ? await this.resolveCodexToken(config) : undefined;
 
       // Read CLAUDE.md and pass as env var — agent dir is mounted from inside nano-live
       // but Docker daemon resolves bind paths on the host where /app/ may not exist.
@@ -146,10 +208,9 @@ export class AgentManager {
       let repoUrl = process.env.REPO_URL ?? '';
       let githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? '';
       let teamConfigBlock = '';
-      if (this.configService) {
+      if (config) {
         try {
-          const config = await this.configService.load();
-          const raw = config as unknown as Record<string, unknown> | null;
+          const raw = config as unknown as Record<string, unknown>;
           const teams = raw?.teams as Record<string, { config?: Record<string, unknown> }> | undefined;
           if (teams) {
             for (const [teamId, team] of Object.entries(teams)) {
@@ -180,14 +241,28 @@ export class AgentManager {
         `NATS_URL=${this.resolveNatsUrl()}`,
         `AGENT_ID=${id}`,
         `SUBSCRIBE_TOPICS=${agent.manifest.subscribe_topics.join(',')}`,
-        // OAuth tokens (sk-ant-oat*) must NOT be set as ANTHROPIC_API_KEY — Claude Code CLI
-        // validates API key format and rejects OAuth tokens. Use CLAUDE_CODE_OAUTH_TOKEN instead.
-        ...(apiKey && !apiKey.startsWith('sk-ant-oat') ? [`ANTHROPIC_API_KEY=${apiKey}`] : []),
-        ...(apiKey && apiKey.startsWith('sk-ant-oat') ? [`CLAUDE_CODE_OAUTH_TOKEN=${apiKey}`] : []),
-        ...(ANTHROPIC_BASE_URL ? [`ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}`] : []),
-        `MODEL=${agent.manifest.model ?? 'claude-haiku-4-5-20251001'}`,
+        `PROVIDER=${providerName}`,
+        `MODEL=${model}`,
         `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
         `LOG_LEVEL=info`,
+        // Provider-specific auth tokens
+        ...(providerName === 'claude' ? [
+          // OAuth tokens (sk-ant-oat*) must NOT be set as ANTHROPIC_API_KEY
+          ...(apiKey && !apiKey.startsWith('sk-ant-oat') ? [`ANTHROPIC_API_KEY=${apiKey}`] : []),
+          ...(apiKey && apiKey.startsWith('sk-ant-oat') ? [`CLAUDE_CODE_OAUTH_TOKEN=${apiKey}`] : []),
+          ...(ANTHROPIC_BASE_URL ? [`ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}`] : []),
+        ] : []),
+        ...(providerName === 'codex' && codexToken ? [
+          // Subscription token or API key
+          ...(codexToken.startsWith('sk-proj-') || codexToken.startsWith('sk-')
+            ? [`OPENAI_API_KEY=${codexToken}`]
+            : [`CODEX_OAUTH_TOKEN=${codexToken}`]
+          ),
+        ] : []),
+        ...(providerName === 'gemini' ? [
+          ...(config?.providers?.gemini?.apiKey ? [`GEMINI_API_KEY=${config.providers.gemini.apiKey}`] : []),
+          ...(process.env.GEMINI_API_KEY ? [`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`] : []),
+        ] : []),
         // Tickets MCP server DB path inside container
         `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
         // Pass CLAUDE.md content as env var (avoids Docker bind mount path resolution issues)
@@ -216,12 +291,23 @@ export class AgentManager {
       fs.mkdirSync(sessionDir, { recursive: true });
       binds.push(`${sessionDir}:/workspace/sessions:rw`);
 
-      // Volume: Claude Code credentials → /root/.claude (read-write so Claude Code can write session cache)
-      // Auth token is passed via CLAUDE_CODE_OAUTH_TOKEN env var — no need to mount .claude.json
-      const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
-      if (fs.existsSync(claudeDir)) {
-        binds.push(`${claudeDir}:/root/.claude:rw`);
-        logger.debug({ id, claudeDir }, 'Mounting .claude dir (rw)');
+      // Volume: Provider-specific credentials
+      // Claude Code credentials → /root/.claude (read-write for session cache)
+      if (providerName === 'claude' || providerName === 'auto' || !providerName) {
+        const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
+        if (fs.existsSync(claudeDir)) {
+          binds.push(`${claudeDir}:/root/.claude:rw`);
+          logger.debug({ id, claudeDir }, 'Mounting .claude dir (rw)');
+        }
+      }
+
+      // Codex CLI credentials → /root/.codex (read-write so Codex CLI can refresh tokens)
+      if (providerName === 'codex') {
+        const codexDir = path.join(process.env.HOME ?? '/root', '.codex');
+        if (fs.existsSync(codexDir)) {
+          binds.push(`${codexDir}:/root/.codex:rw`);
+          logger.debug({ id, codexDir }, 'Mounting .codex dir (rw)');
+        }
       }
 
       // Volume: SSH keys → /root/.ssh (optional, for agents needing git SSH push)

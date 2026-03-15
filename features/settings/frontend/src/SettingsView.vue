@@ -136,6 +136,126 @@
         </div>
       </div>
 
+      <!-- Multi-Provider Configuration -->
+      <div class="settings-section">
+        <h2>🔄 LLM Providery</h2>
+        <p class="section-desc">Nakonfiguruj více LLM providerů a vyber primární. Agenti si mohou volit provider na základě svých schopností.</p>
+
+        <!-- Primary Provider Selection -->
+        <div class="field-row">
+          <label class="field-label">Primární Provider</label>
+          <div class="provider-selector">
+            <button
+              v-for="p in ['claude', 'codex', 'gemini']"
+              :key="p"
+              :class="['btn-provider', primaryProvider === p ? 'active' : '']"
+              @click="primaryProvider = p"
+            >
+              {{ { claude: '🔴 Claude', codex: '🟠 Codex', gemini: '🔵 Gemini' }[p] }}
+            </button>
+          </div>
+        </div>
+
+        <!-- Claude Configuration -->
+        <div class="provider-config">
+          <h3>🔴 Claude</h3>
+          <div class="field-row">
+            <label class="field-label">Typ autentizace</label>
+            <div class="auth-toggle">
+              <button
+                :class="['btn-toggle', claudeAuthType === 'oauth' ? 'active' : '']"
+                @click="claudeAuthType = 'oauth'"
+              >OAuth (Subscription)</button>
+              <button
+                :class="['btn-toggle', claudeAuthType === 'key' ? 'active' : '']"
+                @click="claudeAuthType = 'key'"
+              >API Key</button>
+            </div>
+          </div>
+          <div v-if="claudeAuthType === 'key'" class="field-row">
+            <label class="field-label">Anthropic API Key</label>
+            <input
+              v-model="claudeApiKey"
+              type="password"
+              placeholder="sk-ant-..."
+              class="field-input"
+              @blur="saveProviderConfig('claude')"
+            />
+            <p class="field-help">Přímý API klíč pro Anthropic. OAuth (subscription) se automaticky čte z ~/.claude/.credentials.json.</p>
+          </div>
+          <div v-else class="field-row">
+            <p class="field-help">✓ Přihlášen přes Claude OAuth. Token se automaticky čte z ~/.claude/.credentials.json.</p>
+          </div>
+        </div>
+
+        <!-- Codex Configuration -->
+        <div class="provider-config">
+          <h3>🟠 OpenAI Codex</h3>
+          <div class="field-row">
+            <label class="field-label">Typ autentizace</label>
+            <div class="auth-toggle">
+              <button
+                :class="['btn-toggle', codexAuthType === 'subscription' ? 'active' : '']"
+                @click="codexAuthType = 'subscription'"
+              >ChatGPT Subscription</button>
+              <button
+                :class="['btn-toggle', codexAuthType === 'key' ? 'active' : '']"
+                @click="codexAuthType = 'key'"
+              >API Key</button>
+            </div>
+          </div>
+          <div v-if="codexAuthType === 'key'" class="field-row">
+            <label class="field-label">OpenAI API Key</label>
+            <input
+              v-model="codexApiKey"
+              type="password"
+              placeholder="sk-proj-..."
+              class="field-input"
+              @blur="saveProviderConfig('codex')"
+            />
+            <p class="field-help">Přímý API klíč z OpenAI. Subscription token se automaticky čte z ~/.codex/auth.json.</p>
+          </div>
+          <div v-else class="field-row">
+            <button class="btn-secondary" @click="loginCodexSubscription" :disabled="codexLoginLoading">
+              {{ codexLoginLoading ? '⏳ Přihlašuji...' : '🔐 Přihlásit se ChatGPT' }}
+            </button>
+            <p class="field-help" v-if="codexLoginStatus">{{ codexLoginStatus }}</p>
+          </div>
+        </div>
+
+        <!-- Gemini Configuration -->
+        <div class="provider-config">
+          <h3>🔵 Google Gemini</h3>
+          <div class="field-row">
+            <label class="field-label">Google API Key</label>
+            <input
+              v-model="geminiApiKey"
+              type="password"
+              placeholder="AIza..."
+              class="field-input"
+              @blur="saveProviderConfig('gemini')"
+            />
+            <p class="field-help">API klíč z Google Cloud Console pro Gemini API.</p>
+          </div>
+        </div>
+
+        <!-- Model Maps (Advanced) -->
+        <details class="advanced-config">
+          <summary>⚙️ Pokročilé: Model Mapping</summary>
+          <div class="model-map-info">
+            <p>Nastavte, který model se má použít pro každou schopnost (capability) a každého providera:</p>
+            <ul>
+              <li><strong>reasoning</strong> — komplexní analýza, dlouhé uvažování</li>
+              <li><strong>long-context</strong> — práce s velkými texty</li>
+              <li><strong>fast</strong> — rychlé jednoduchénní úkoly</li>
+              <li><strong>cheap</strong> — cost-optimized operace</li>
+              <li><strong>default</strong> — fallback model</li>
+            </ul>
+            <p class="field-help">Úpravy jsou dostupné v config.json na cestě <code>providers.{provider}.modelMap</code>.</p>
+          </div>
+        </details>
+      </div>
+
       <div class="settings-section">
         <h2>Nainstalováno</h2>
         <div v-if="config?.installed?.teams?.length" class="installed-group">
@@ -267,6 +387,16 @@ const sshGenerating = ref<string | null>(null)
 const sshPublicKeys = ref<Record<string, string>>({})
 const copied = ref<string | null>(null)
 
+// Multi-Provider Configuration
+const primaryProvider = ref('claude')
+const claudeAuthType = ref('oauth')
+const claudeApiKey = ref('')
+const codexAuthType = ref('subscription')
+const codexApiKey = ref('')
+const codexLoginLoading = ref(false)
+const codexLoginStatus = ref('')
+const geminiApiKey = ref('')
+
 // Observability
 const obsLevel = ref('none')
 const obsProvider = ref('builtin')
@@ -293,7 +423,15 @@ onMounted(async () => {
 async function loadConfig() {
   try {
     const res = await fetch('/api/config')
-    if (res.ok) config.value = await res.json() as Record<string, unknown>
+    if (res.ok) {
+      config.value = await res.json() as Record<string, unknown>
+      // Load provider configs
+      const cfg = config.value as any
+      primaryProvider.value = cfg.primaryProvider ?? 'claude'
+      claudeApiKey.value = cfg.providers?.claude?.apiKey ?? ''
+      codexApiKey.value = cfg.providers?.codex?.apiKey ?? ''
+      geminiApiKey.value = cfg.providers?.gemini?.apiKey ?? ''
+    }
   } catch { /* ignore */ }
 }
 
@@ -466,6 +604,53 @@ async function sendMessage() {
 async function scrollToBottom() {
   await nextTick()
   if (chatEl.value) chatEl.value.scrollTop = chatEl.value.scrollHeight
+}
+
+// Multi-Provider Functions
+async function saveProviderConfig(provider: string) {
+  try {
+    const key = {
+      claude: claudeApiKey.value,
+      codex: codexApiKey.value,
+      gemini: geminiApiKey.value,
+    }[provider]
+
+    if (key) {
+      await fetch('/api/config/set-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: `providers.${provider}.apiKey`,
+          value: key,
+        }),
+      })
+    }
+  } catch (e) {
+    console.error(`Failed to save ${provider} config:`, e)
+  }
+}
+
+async function loginCodexSubscription() {
+  codexLoginLoading.value = true
+  codexLoginStatus.value = 'Otevírám ChatGPT přihlášení...'
+  try {
+    // Call backend to initiate Codex auth flow
+    const res = await fetch('/api/auth/codex-login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    })
+    const data = await res.json() as { success?: boolean; message?: string; error?: string }
+    if (data.success) {
+      codexLoginStatus.value = '✓ Přihlášen! Token uložen do ~/.codex/auth.json'
+      codexAuthType.value = 'subscription'
+    } else {
+      codexLoginStatus.value = `Chyba: ${data.error ?? data.message ?? 'Přihlášení selhalo'}`
+    }
+  } catch (e) {
+    codexLoginStatus.value = `Chyba: ${String(e)}`
+  } finally {
+    codexLoginLoading.value = false
+  }
 }
 </script>
 
@@ -705,4 +890,88 @@ async function scrollToBottom() {
 .btn-toggle:hover { border-color: var(--text-muted, #8b949e); }
 .obs-endpoints { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg, #0d1117); border-radius: 6px; }
 .obs-saved { font-size: 12px; color: var(--accent2, #3fb950); }
+
+/* Multi-Provider Configuration */
+.provider-selector { display: flex; gap: 8px; margin: 12px 0; }
+.btn-provider {
+  flex: 1; padding: 10px 12px;
+  background: var(--surface2, #1c2128);
+  border: 2px solid var(--border, #30363d);
+  border-radius: 6px;
+  color: var(--text, #e6edf3);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.btn-provider.active {
+  background: rgba(88,166,255,0.15);
+  border-color: var(--accent, #58a6ff);
+  color: var(--accent, #58a6ff);
+}
+.btn-provider:hover { border-color: var(--text-muted, #8b949e); }
+
+.provider-config {
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  padding: 12px;
+  margin: 12px 0;
+}
+.provider-config h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #e6edf3);
+  margin: 0 0 12px;
+}
+
+.auth-toggle { display: flex; gap: 8px; }
+.field-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.field-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text, #e6edf3);
+}
+.field-input {
+  padding: 6px 12px;
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 4px;
+  color: var(--text, #e6edf3);
+  font-size: 13px;
+  outline: none;
+}
+.field-input:focus { border-color: var(--accent, #58a6ff); }
+.field-help {
+  font-size: 12px;
+  color: var(--text-muted, #8b949e);
+  margin: 4px 0 0;
+}
+
+.advanced-config {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg, #0d1117);
+  border: 1px solid var(--border, #30363d);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.advanced-config summary {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted, #8b949e);
+  cursor: pointer;
+  user-select: none;
+}
+.advanced-config summary:hover { color: var(--text, #e6edf3); }
+.model-map-info {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--text-muted, #8b949e);
+}
+.model-map-info ul {
+  margin: 8px 0;
+  padding-left: 20px;
+}
+.model-map-info li { margin: 4px 0; }
 </style>

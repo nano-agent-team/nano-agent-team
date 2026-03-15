@@ -1,16 +1,17 @@
 /**
  * nano-agent-runner — runs inside the Docker container per agent
  *
- * Phase 3: Invokes Claude Agent SDK via query() for real LLM responses.
+ * Phase 3: Invokes LLM via configurable provider (Claude, Codex, Gemini, etc).
  * Supports stateless (new session per message) and persistent (remembered history) modes.
  *
  * Env vars (injected by AgentManager):
  *   NATS_URL          — NATS server URL
  *   AGENT_ID          — unique agent id (e.g. "blank-agent")
  *   SUBSCRIBE_TOPICS  — comma-separated NATS subjects
- *   ANTHROPIC_API_KEY — Anthropic key (read automatically by the SDK)
- *   MODEL             — Claude model id
+ *   PROVIDER          — LLM provider name (default: "claude")
+ *   MODEL             — Model id for the provider
  *   SESSION_TYPE      — "stateless" | "persistent" (default: stateless)
+ *   ANTHROPIC_API_KEY / CODEX_OAUTH_TOKEN / GEMINI_API_KEY — provider-specific auth
  *   OBSERVABILITY_LEVEL          — "none" | "logging" | "full"
  *   OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP HTTP endpoint
  */
@@ -23,9 +24,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { connect, StringCodec, headers as natsHeaders } from 'nats';
 import pino from 'pino';
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import { isTracingEnabled } from './tracing/init.js';
 import { extractTraceContext, startSpan, startChildSpan, injectTraceContext } from './tracing/nats-context.js';
+import { createProvider } from './providers/index.js';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ const NATS_URL = process.env.NATS_URL ?? 'nats://localhost:4222';
 const AGENT_ID = process.env.AGENT_ID ?? 'unknown';
 const SUBSCRIBE_TOPICS = (process.env.SUBSCRIBE_TOPICS ?? '').split(',').filter(Boolean);
 const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';
+const PROVIDER_NAME = process.env.PROVIDER ?? 'claude';
 const MODEL = process.env.MODEL ?? 'claude-haiku-4-5-20251001';
 const SESSION_TYPE = (process.env.SESSION_TYPE ?? 'stateless') as 'stateless' | 'persistent';
 const CLAUDE_MD_PATH = '/workspace/agent/CLAUDE.md';
@@ -117,7 +119,7 @@ function saveSessionId(id: string): void {
 
 async function main(): Promise<void> {
   log.info(
-    { agentId: AGENT_ID, natsUrl: NATS_URL, sessionType: SESSION_TYPE, model: MODEL },
+    { agentId: AGENT_ID, provider: PROVIDER_NAME, model: MODEL, natsUrl: NATS_URL, sessionType: SESSION_TYPE },
     'Agent runner starting',
   );
 
@@ -125,20 +127,27 @@ async function main(): Promise<void> {
     log.warn('SUBSCRIBE_TOPICS is empty — agent will not receive any messages');
   }
 
-  // Write CLAUDE.md to /workspace/CLAUDE.md so Claude Code reads it automatically as cwd context.
+  // Create provider instance
+  let provider;
+  try {
+    provider = createProvider(PROVIDER_NAME);
+    log.info({ provider: PROVIDER_NAME }, 'Provider created');
+  } catch (err) {
+    log.error({ err, provider: PROVIDER_NAME }, 'Failed to create provider');
+    process.exit(1);
+  }
+
+  // Write system prompt via provider
   // Priority: AGENT_SYSTEM_PROMPT env var (injected by AgentManager) > file mount > fallback.
-  const WORKSPACE_CLAUDE_MD = '/workspace/CLAUDE.md';
   const systemPromptContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
-  if (systemPromptContent) {
-    fs.writeFileSync(WORKSPACE_CLAUDE_MD, systemPromptContent, 'utf8');
-    log.info({ agentId: AGENT_ID, source: AGENT_SYSTEM_PROMPT ? 'env' : 'file' }, 'CLAUDE.md written to workspace cwd');
-  } else {
-    fs.writeFileSync(
-      WORKSPACE_CLAUDE_MD,
-      `# ${AGENT_ID}\n\nYou are ${AGENT_ID}, a helpful AI agent.\n`,
-      'utf8',
-    );
-    log.warn({ agentId: AGENT_ID }, 'No CLAUDE.md found — wrote minimal fallback');
+  const systemPrompt = systemPromptContent || `# ${AGENT_ID}\n\nYou are ${AGENT_ID}, a helpful AI agent.\n`;
+
+  try {
+    provider.writeSystemPrompt('/workspace', systemPrompt, AGENT_ID);
+    log.info({ provider: PROVIDER_NAME, source: AGENT_SYSTEM_PROMPT ? 'env' : 'file' }, 'System prompt written via provider');
+  } catch (err) {
+    log.error({ err, provider: PROVIDER_NAME }, 'Failed to write system prompt');
+    process.exit(1);
   }
 
   // Connect to NATS
@@ -223,11 +232,12 @@ async function main(): Promise<void> {
       currentSessionId = savedSessionId;
 
       try {
-        const resumeOptions: Record<string, unknown> = {
+        let result = '';
+        const providerRun = provider.run({
           model: MODEL,
           cwd: '/workspace',
-          permissionMode: 'acceptEdits',
-          allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'mcp__tickets__*'],
+          prompt: '',
+          sessionId: savedSessionId,
           maxTurns: 50,
           mcpServers: {
             tickets: {
@@ -236,14 +246,13 @@ async function main(): Promise<void> {
               env: { DB_PATH, AGENT_ID },
             },
           },
-          resume: savedSessionId,
-        };
+        });
 
-        const q = query({ prompt: '', options: resumeOptions });
-        let result = '';
-        for await (const sdkMsg of q) {
-          if (sdkMsg.type === 'result') {
-            result = sdkMsg.subtype === 'success' ? (sdkMsg.result ?? '') : `[Error: ${sdkMsg.subtype}]`;
+        for await (const event of providerRun) {
+          if (event.type === 'session_id') {
+            currentSessionId = event.sessionId;
+          } else if (event.type === 'result') {
+            result = event.result;
             break;
           }
         }
@@ -325,88 +334,73 @@ async function main(): Promise<void> {
 
     log.info({ agentId: AGENT_ID, subject, promptLen: prompt.length }, 'Message received');
 
-    // ── Phase 3: Claude Agent SDK invocation ─────────────────────────────
+    // ── Phase 3: Provider invocation ─────────────────────────────
     const existingSessionId = loadSessionId();
 
-    const options: Record<string, unknown> = {
-      model: MODEL,
-      cwd: '/workspace',  // CLAUDE.md is read from here automatically by Claude Code
-      permissionMode: 'acceptEdits',
-      // Built-in tools + MCP ticket tools
-      allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'mcp__tickets__*'],
-      maxTurns: 50,
-      // Tickets MCP server — provides ticket CRUD tools natively
-      mcpServers: {
-        tickets: {
-          command: 'node',
-          args: [TICKETS_MCP_PATH],
-          env: {
-            DB_PATH,
-            AGENT_ID,
-          },
-        },
-      },
-    };
-
-    if (existingSessionId) {
-      options.resume = existingSessionId;
-    }
-
     log.debug(
-      { agentId: AGENT_ID, sessionType: SESSION_TYPE, hasSession: !!existingSessionId },
-      'Invoking query()',
+      { agentId: AGENT_ID, provider: PROVIDER_NAME, sessionType: SESSION_TYPE, hasSession: !!existingSessionId },
+      'Invoking provider.run()',
     );
 
-    // Create child span for Claude query
+    // Create child span for provider query
     const querySpan = processSpan
-      ? startChildSpan('claude.query', processSpan.context, { 'claude.model': MODEL })
+      ? startChildSpan(`${PROVIDER_NAME}.query`, processSpan.context, { 'provider.model': MODEL })
       : null;
 
     let result = '';
     let sessionId: string | undefined;
     let errorSubtype: string | undefined;
 
-    // Periodically call msg.working() to extend JetStream ack deadline while query() runs
+    // Periodically call msg.working() to extend JetStream ack deadline while provider runs
     const workingTimer = setInterval(() => {
       try { msg.working(); } catch { /* ignore if msg already acked */ }
     }, 30_000);
 
     try {
-      const q = query({ prompt, options });
+      const providerRun = provider.run({
+        model: MODEL,
+        cwd: '/workspace',
+        prompt,
+        sessionId: existingSessionId,
+        maxTurns: 50,
+        mcpServers: {
+          tickets: {
+            command: 'node',
+            args: [TICKETS_MCP_PATH],
+            env: {
+              DB_PATH,
+              AGENT_ID,
+            },
+          },
+        },
+      });
 
-      for await (const sdkMsg of q) {
-        // Capture session id from any message that carries it
-        if (!sessionId && sdkMsg && typeof sdkMsg === 'object' && 'session_id' in sdkMsg) {
-          sessionId = (sdkMsg as { session_id: string }).session_id;
+      for await (const event of providerRun) {
+        if (event.type === 'session_id') {
+          sessionId = event.sessionId;
           currentSessionId = sessionId; // track for graceful shutdown
-        }
-
-        // Record tool calls as span events
-        if ((sdkMsg as { type: string }).type === 'tool_use_summary' && querySpan) {
-          querySpan.span.addEvent('tool_call', {
-            'tool.name': (sdkMsg as { tool_name?: string }).tool_name ?? 'unknown',
-          });
-        }
-
-        if (sdkMsg.type === 'result') {
-          if (sdkMsg.subtype === 'success') {
-            result = sdkMsg.result ?? '';
-            log.debug({ agentId: AGENT_ID, resultLength: result.length }, 'query() succeeded');
-            if (querySpan) querySpan.span.setAttribute('claude.result_length', result.length);
-          } else {
-            errorSubtype = sdkMsg.subtype;
-            result = `[Error: ${sdkMsg.subtype}]`;
-            log.warn({ agentId: AGENT_ID, subtype: sdkMsg.subtype }, 'query() returned error');
-            if (querySpan) querySpan.span.setAttribute('claude.error', sdkMsg.subtype ?? 'unknown');
+        } else if (event.type === 'tool_call') {
+          // Record tool calls as span events
+          if (querySpan) {
+            querySpan.span.addEvent('tool_call', { 'tool.name': event.toolName });
           }
-          break;
+        } else if (event.type === 'result') {
+          result = event.result;
+          errorSubtype = event.errorSubtype;
+          if (!event.success) {
+            log.warn({ agentId: AGENT_ID, provider: PROVIDER_NAME, subtype: errorSubtype }, 'Provider returned error');
+            if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.error`, errorSubtype ?? 'unknown');
+          } else {
+            log.debug({ agentId: AGENT_ID, provider: PROVIDER_NAME, resultLength: result.length }, 'Provider succeeded');
+            if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.result_length`, result.length);
+          }
         }
       }
     } catch (err) {
-      log.error({ err, agentId: AGENT_ID }, 'query() threw an exception');
+      log.error({ err, agentId: AGENT_ID, provider: PROVIDER_NAME }, 'Provider threw an exception');
       result = `[Error: ${err instanceof Error ? err.message : String(err)}]`;
       errorSubtype = 'exception';
-      if (querySpan) querySpan.span.setAttribute('claude.error', 'exception');
+      if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.error`, 'exception');
     } finally {
       clearInterval(workingTimer);
     }
