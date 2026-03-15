@@ -124,11 +124,13 @@ export class AgentManager {
       // Remove stale container if it exists
       await this.removeContainerIfExists(containerName);
 
-      // DB dir for MCP server mount
       // HOST_DATA_DIR lets Docker daemon (on host) resolve the correct bind path
-      // when nano-live's /data volume differs from the host's /data directory.
-      const dbDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
+      // when nano-agent-team's /data volume differs from the host's /data directory.
+      const hostDataDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
       fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+
+      // DB dir for MCP server mount
+      const dbDir = hostDataDir;
 
       // Build env vars for the container
       const apiKey = await this.resolveApiKey();
@@ -142,6 +144,7 @@ export class AgentManager {
 
       // Resolve team config from config.json (set during team install)
       let repoUrl = process.env.REPO_URL ?? '';
+      let githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? '';
       let teamConfigBlock = '';
       if (this.configService) {
         try {
@@ -153,9 +156,11 @@ export class AgentManager {
               const tc = team.config;
               if (tc) {
                 if (!repoUrl && typeof tc.repo_url === 'string') repoUrl = tc.repo_url;
+                if (!githubToken && typeof tc.github_token === 'string') githubToken = tc.github_token;
                 // Build context block with all team config values
                 const lines = Object.entries(tc)
-                  .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+                  .filter(([k, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+                  .filter(([k]) => k !== 'github_token') // Don't expose token in CLAUDE.md
                   .map(([k, v]) => `- ${k}: ${v}`);
                 if (lines.length > 0) {
                   teamConfigBlock = `\n\n## Konfigurace týmu (${teamId})\n\n${lines.join('\n')}\n`;
@@ -187,9 +192,8 @@ export class AgentManager {
         `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
         // Pass CLAUDE.md content as env var (avoids Docker bind mount path resolution issues)
         ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
-        // Pass GitHub token if available (for gh CLI and git push)
-        ...(process.env.GH_TOKEN ? [`GH_TOKEN=${process.env.GH_TOKEN}`] : []),
-        ...(process.env.GITHUB_TOKEN ? [`GH_TOKEN=${process.env.GITHUB_TOKEN}`] : []),
+        // Pass GitHub token if available (from team config or env vars, for gh CLI and git push)
+        ...(githubToken ? [`GH_TOKEN=${githubToken}`] : []),
         // Pass repo URL from config (set during team install)
         ...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
         // Observability: propagate OTel config to agent containers
@@ -203,12 +207,12 @@ export class AgentManager {
       binds.push(`${dbDir}:/workspace/db:rw`);
 
       // Volume: shared vault → /workspace/vault (read-write, all agents)
-      const vaultDir = path.join(DATA_DIR, 'vault');
+      const vaultDir = path.join(hostDataDir, 'vault');
       fs.mkdirSync(vaultDir, { recursive: true });
       binds.push(`${vaultDir}:/workspace/vault:rw`);
 
       // Volume: per-agent sessions → /workspace/sessions (read-write, Claude SDK storage)
-      const sessionDir = path.join(DATA_DIR, 'sessions', id);
+      const sessionDir = path.join(hostDataDir, 'sessions', id);
       fs.mkdirSync(sessionDir, { recursive: true });
       binds.push(`${sessionDir}:/workspace/sessions:rw`);
 
@@ -233,7 +237,7 @@ export class AgentManager {
 
       // Volume: personal workspace → /workspace/personal (optional, for developer-type agents)
       if (agent.manifest.workspace) {
-        const wsDir = path.join(DATA_DIR, 'workspaces', id);
+        const wsDir = path.join(hostDataDir, 'workspaces', id);
         fs.mkdirSync(wsDir, { recursive: true });
         binds.push(`${wsDir}:/workspace/personal:rw`);
         logger.debug({ id, wsDir }, 'Mounting personal workspace');

@@ -146,10 +146,12 @@ server.tool(
   },
 );
 
-// ticket_update
+// ticket_update — delegates to HTTP API so NATS pipeline events are auto-published
+const API_URL = process.env.API_URL ?? 'http://localhost:3001';
+
 server.tool(
   'ticket_update',
-  'Update a ticket. Can change status, assigned_to, body (tech spec), priority, etc. Status changes are logged in history.',
+  'Update a ticket. Can change status, assigned_to, body (tech spec), priority, etc. Status changes are logged in history and trigger pipeline events.',
   {
     ticket_id: z.string().describe('Ticket ID to update'),
     status: z.string().optional().describe('New status: idea|approved|spec_ready|in_progress|review|done|rejected|verified|pending_input'),
@@ -159,36 +161,27 @@ server.tool(
     title: z.string().optional().describe('New title'),
   },
   async ({ ticket_id, status, priority, assigned_to, body, title }) => {
-    const db = openDb();
-    const existing = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticket_id) as Record<string, unknown> | undefined;
-    if (!existing) {
-      return { content: [{ type: 'text' as const, text: `Ticket ${ticket_id} not found` }], isError: true };
+    const patchBody: Record<string, unknown> = { changed_by: AGENT_ID };
+    if (status !== undefined) patchBody['status'] = status;
+    if (priority !== undefined) patchBody['priority'] = priority;
+    if (assigned_to !== undefined) patchBody['assigned_to'] = assigned_to;
+    if (body !== undefined) patchBody['body'] = body;
+    if (title !== undefined) patchBody['title'] = title;
+
+    try {
+      const res = await fetch(`${API_URL}/api/tickets/${encodeURIComponent(ticket_id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patchBody),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        return { content: [{ type: 'text' as const, text: `Error: ${JSON.stringify(data)}` }], isError: true };
+      }
+      return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+    } catch (err) {
+      return { content: [{ type: 'text' as const, text: `HTTP error: ${err}` }], isError: true };
     }
-
-    const now = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
-    const updates: string[] = ['updated_at = @updated_at'];
-    const params: Record<string, unknown> = { id: ticket_id, updated_at: now };
-
-    if (status !== undefined) { updates.push('status = @status'); params['status'] = status; }
-    if (priority !== undefined) { updates.push('priority = @priority'); params['priority'] = priority; }
-    if (assigned_to !== undefined) { updates.push('assigned_to = @assigned_to'); params['assigned_to'] = assigned_to; }
-    if (body !== undefined) { updates.push('body = @body'); params['body'] = body; }
-    if (title !== undefined) { updates.push('title = @title'); params['title'] = title; }
-
-    db.prepare(`UPDATE tickets SET ${updates.join(', ')} WHERE id = @id`).run(params);
-
-    // Log status change in history
-    if (status && status !== existing['status']) {
-      db.prepare(`
-        INSERT INTO ticket_history (ticket_id, from_status, to_status, changed_by, created_at)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(ticket_id, existing['status'], status, AGENT_ID, now);
-    }
-
-    const updated = db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticket_id);
-    return {
-      content: [{ type: 'text' as const, text: JSON.stringify(updated, null, 2) }],
-    };
   },
 );
 
