@@ -433,16 +433,21 @@ export default {
                 } catch { /* fd může zmizet */ }
               }
 
-              // 2. Mapujeme inode → port z /proc/net/tcp
-              const netTcp = fs.readFileSync(`/proc/${pid}/net/tcp`, 'utf8');
-              for (const line of netTcp.split('\n').slice(1)) {
-                const parts = line.trim().split(/\s+/);
-                if (parts.length < 10) continue;
-                if (parts[3] !== '0A') continue; // jen LISTEN
-                if (!inodes.has(parts[9])) continue; // jen sockety tohoto procesu
-                const portHex = parts[1].split(':')[1];
-                port = parseInt(portHex, 16);
-                break;
+              // 2. Mapujeme inode → port z /proc/net/tcp + tcp6
+              for (const tcpFile of ['tcp', 'tcp6']) {
+                try {
+                  const netTcp = fs.readFileSync(`/proc/${pid}/net/${tcpFile}`, 'utf8');
+                  for (const line of netTcp.split('\n').slice(1)) {
+                    const parts = line.trim().split(/\s+/);
+                    if (parts.length < 10) continue;
+                    if (parts[3] !== '0A') continue; // jen LISTEN
+                    if (!inodes.has(parts[9])) continue; // jen sockety tohoto procesu
+                    const portHex = parts[1].split(':')[1];
+                    port = parseInt(portHex, 16);
+                    break;
+                  }
+                } catch { /* tcp6 nemusí existovat */ }
+                if (port) break;
               }
             } catch { /* ignore */ }
 
@@ -491,8 +496,16 @@ export default {
       }
 
       try {
-        const callbackUrl = `http://127.0.0.1:${port}/callback?code=${encodeURIComponent(code.trim())}&state=${encodeURIComponent(state)}`;
-        const resp = await fetch(callbackUrl);
+        const query = `code=${encodeURIComponent(code.trim())}&state=${encodeURIComponent(state)}`;
+        // Try IPv4 first, fall back to IPv6 (Claude may listen on ::1)
+        let resp;
+        for (const host of [`127.0.0.1`, `[::1]`]) {
+          try {
+            resp = await fetch(`http://${host}:${port}/callback?${query}`);
+            break;
+          } catch { /* try next */ }
+        }
+        if (!resp) throw new Error(`Could not reach claude callback on port ${port}`);
         if (resp.ok || resp.status === 302) {
           // Claude zpracoval kód — počkáme na exit procesu (max 10s)
           await new Promise((resolve) => {

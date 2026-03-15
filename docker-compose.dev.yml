@@ -30,6 +30,7 @@ services:
       LOG_LEVEL: info
       API_PORT: 3002
       HOST_CODEX_DIR: ${HOME}/.codex
+      SKIP_DOCKERD: "true"   # dev mode: use host Docker socket instead of internal dockerd
       # Embedded NATS (default — no NATS_URL needed)
       # To use external NATS: set NATS_URL=nats://nats:4222 and NATS_EMBEDDED=false
       # NATS_URL: nats://nats:4222

@@ -77,7 +77,7 @@ WORKDIR /app
 # Install nats-server for embedded NATS + Docker CLI for agent containers + openssh for hub install
 RUN apk add --no-cache \
     nats-server \
-    docker-cli \
+    docker \
     docker-cli-compose \
     openssh-keygen \
     git \
@@ -112,6 +112,9 @@ COPY teams/ ./teams/
 
 # MCP config
 COPY mcp/ ./mcp/
+
+# Agent container build context (used by internal dockerd to build nano-agent:latest)
+COPY container/ ./container/
 
 # Built frontends
 COPY --from=dashboard-builder /app/dashboard/dist/ ./dashboard/dist/
