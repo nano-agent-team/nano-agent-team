@@ -52,7 +52,7 @@ export class CodexProvider implements Provider {
 
     yield { type: 'session_id', sessionId: `codex-${Date.now()}` };
 
-    const args = ['exec'];
+    const args = ['exec', '--skip-git-repo-check'];
     if (options.model) args.push('--model', options.model);
     args.push(options.prompt);
 
