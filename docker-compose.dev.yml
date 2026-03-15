@@ -12,10 +12,9 @@ services:
     container_name: nano-agent-team
     restart: unless-stopped
     stop_grace_period: 60s
-    # host networking is required for Claude Code OAuth login:
-    # claude auth login opens a local callback server on a random port,
-    # and the Anthropic redirect goes to localhost — must be the same namespace.
-    network_mode: host
+    # Dev instance on port 3002 (live instance uses 3001)
+    ports:
+      - "3002:3001"
     volumes:
       # Persistent data: config, SQLite, sessions, vault, workspaces
       - ./data:/data

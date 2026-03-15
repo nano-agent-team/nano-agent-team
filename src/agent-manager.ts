@@ -121,7 +121,7 @@ export class AgentManager {
   }
 
   /** Resolve provider and model for an agent */
-  private resolveAgentProvider(agent: LoadedAgent, config: NanoConfig): { provider: string; model: string } {
+  private resolveAgentProvider(agent: LoadedAgent, config: Partial<NanoConfig>): { provider: string; model: string } {
     const primaryProvider = config.primaryProvider ?? 'claude';
     const manifest = agent.manifest;
 
