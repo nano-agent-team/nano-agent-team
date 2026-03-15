@@ -146,6 +146,29 @@
         <span v-if="apiKeyError" class="form-error">{{ apiKeyError }}</span>
       </div>
 
+      <!-- Codex subscription mode -->
+      <div v-if="selectedProvider === 'codex' && providerType === 'subscription'" class="codex-subscription-info">
+        <div class="info-box">
+          <p>
+            Přihlásí se přes tvůj ChatGPT / OpenAI účet (s aktivní Codex subscription).
+            Credentials se uloží do <code>~/.codex/auth.json</code>.
+          </p>
+          <p class="info-note">
+            Po kliknutí "Připojit Codex →" se spustí Codex CLI autentizace.
+          </p>
+        </div>
+
+        <div v-if="codexLoginLoading" class="info-box info-box--loading">
+          <span class="spinner">⏳</span> Inicializuji Codex login...
+        </div>
+
+        <div v-if="codexLoginStatus" class="info-box info-box--success">
+          ✅ {{ codexLoginStatus }}
+        </div>
+
+        <span v-if="apiKeyError" class="form-error">{{ apiKeyError }}</span>
+      </div>
+
       <!-- Claude Code subscription mode -->
       <div v-if="selectedProvider === 'claude' && providerType === 'claude-code'" class="claude-code-info">
 
@@ -201,12 +224,12 @@
       </div>
 
       <button
-        v-if="(providerType === 'api-key' && selectedProvider !== 'claude') || (selectedProvider === 'claude' && (providerType === 'api-key' || oauthState === 'idle'))"
+        v-if="(providerType === 'api-key') || (selectedProvider === 'claude' && oauthState === 'idle') || (selectedProvider === 'codex' && providerType === 'subscription')"
         class="btn-primary"
-        :disabled="connecting"
+        :disabled="connecting || codexLoginLoading"
         @click="connectProvider"
       >
-        <span v-if="connecting">Připojuji...</span>
+        <span v-if="connecting || codexLoginLoading">Připojuji...</span>
         <span v-else>Připojit {{ selectedProvider }} →</span>
       </button>
     </div>
@@ -477,6 +500,8 @@ const oauthClicked = ref(false)
 const oauthCode = ref('')
 const oauthPort = ref<number | null>(null)
 const submittingCode = ref(false)
+const codexLoginLoading = ref(false)
+const codexLoginStatus = ref('')
 
 // Reset oauth state when switching provider type
 watch(providerType, () => {
@@ -558,6 +583,32 @@ function selectProvider(provider: 'claude' | 'codex' | 'gemini') {
 
 async function connectProvider() {
   apiKeyError.value = ''
+
+  // Handle Codex subscription
+  if (selectedProvider.value === 'codex' && providerType.value === 'subscription') {
+    codexLoginLoading.value = true
+    codexLoginStatus.value = ''
+    try {
+      const res = await fetch('/api/auth/codex-login', { method: 'POST' })
+      const data = await res.json() as { success?: boolean; message?: string; error?: string }
+
+      if (data.success) {
+        codexLoginStatus.value = '✅ ' + (data.message || 'Codex je přihlášen!')
+        // Wait a moment, then proceed
+        await new Promise(r => setTimeout(r, 1500))
+        await proceedAfterCodexLogin()
+        return
+      }
+
+      // If not successful, show error/instruction
+      apiKeyError.value = data.error || data.message || 'Chyba při Codex loginu'
+    } catch (err) {
+      apiKeyError.value = `Chyba: ${String(err)}`
+    } finally {
+      codexLoginLoading.value = false
+    }
+    return
+  }
 
   // Handle Claude
   if (selectedProvider.value === 'claude' && providerType.value === 'claude-code') {
@@ -670,6 +721,27 @@ async function proceedAfterOauth() {
       body: JSON.stringify({
         primaryProvider: 'claude',
         provider: { type: 'claude-code-oauth' }
+      }),
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    await loadCatalog()
+    step.value = 2
+  } catch (err) {
+    apiKeyError.value = `Chyba při ukládání: ${String(err)}`
+  }
+}
+
+async function proceedAfterCodexLogin() {
+  // Uloží primaryProvider: codex (bez apiKey — klíč se čte z ~/.codex/auth.json)
+  try {
+    const res = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        primaryProvider: 'codex',
+        providers: {
+          codex: { /* auth managed by ~/.codex/auth.json */ }
+        }
       }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
