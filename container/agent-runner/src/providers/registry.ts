@@ -39,7 +39,9 @@ export function getAvailableProviders(): string[] {
 }
 
 // Register built-in providers
+import { CodexProvider } from './codex.js';
+import { GeminiProvider } from './gemini.js';
+
 registerProvider('claude', () => new ClaudeProvider());
-// codex and gemini providers can be added here when implemented
-// registerProvider('codex', () => new CodexProvider());
-// registerProvider('gemini', () => new GeminiProvider());
+registerProvider('codex', () => new CodexProvider());
+registerProvider('gemini', () => new GeminiProvider());

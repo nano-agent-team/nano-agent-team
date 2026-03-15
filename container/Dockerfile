@@ -22,11 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g @anthropic-ai/claude-code --ignore-scripts 2>/dev/null || \
     npm install -g @anthropic-ai/claude-code
 
-# Note: OpenAI Codex and Google Gemini CLIs can be added here when implemented
-# RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
-#     npm install -g @openai/codex
-# RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
-#     npm install -g @google/gemini-cli
+# OpenAI Codex CLI (subscription + API key support)
+RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
+    npm install -g @openai/codex
+
+# Google Gemini CLI (placeholder for future implementation)
+RUN npm install -g @google/gemini-cli --ignore-scripts 2>/dev/null || \
+    npm install -g @google/gemini-cli || echo "Note: @google/gemini-cli may not exist on npm yet"
 
 # Copy package files and install production dependencies
 COPY agent-runner/package.json agent-runner/package-lock.json* ./

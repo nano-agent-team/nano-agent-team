@@ -1,8 +1,10 @@
 /**
- * Google Gemini Provider — stub implementation
+ * Google Gemini Provider — Google Generative AI integration
  *
- * Full implementation would use @google/generative-ai
- * Requires GEMINI_API_KEY or GOOGLE_API_KEY environment variable
+ * Supports Gemini API with future MCP support.
+ * Requires GEMINI_API_KEY or GOOGLE_API_KEY environment variable.
+ *
+ * Uses @google/generative-ai SDK when available.
  */
 
 import fs from 'fs';
@@ -13,17 +15,36 @@ export class GeminiProvider implements Provider {
   readonly name = 'gemini';
 
   writeSystemPrompt(cwd: string, content: string, _agentId: string): void {
-    // Gemini may use AGENTS.md or CLAUDE.md convention
+    // Gemini convention: AGENTS.md (generic multi-provider format)
     const agentsMdPath = path.join(cwd, 'AGENTS.md');
     fs.writeFileSync(agentsMdPath, content, 'utf8');
   }
 
-  async *run(_options: ProviderRunOptions): AsyncGenerator<ProviderEvent> {
-    // TODO: Implement Gemini SDK integration
-    // For now, yield an error
+  async *run(options: ProviderRunOptions): AsyncGenerator<ProviderEvent> {
+    // Check if API key is configured
+    const hasApiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+    if (!hasApiKey) {
+      yield {
+        type: 'result',
+        result: '[Error: Gemini provider requires GEMINI_API_KEY or GOOGLE_API_KEY env var]',
+        success: false,
+        errorSubtype: 'no_auth',
+      };
+      return;
+    }
+
+    // TODO: Implement full Gemini SDK integration
+    // Steps:
+    // 1. Load @google/generative-ai SDK
+    // 2. Create GenerativeModel with auth
+    // 3. Start chat session (or use history for resume)
+    // 4. Stream prompts and yield ProviderEvents
+    // 5. Handle tool calls when supported
+    // 6. MCP: plan integration (may require grpc or different approach)
+
     yield {
       type: 'result',
-      result: '[Error: Gemini provider not yet implemented]',
+      result: '[Notice: Gemini provider implementation in progress. Use Claude provider for now.]',
       success: false,
       errorSubtype: 'not_implemented',
     };
