@@ -584,7 +584,7 @@ export default {
               if (fs.existsSync(setupPath)) {
                 try { requires = JSON.parse(fs.readFileSync(setupPath, 'utf8')).requires ?? []; } catch { /* skip */ }
               }
-              items.push({ id: m.id ?? entry.name, name: m.name ?? entry.name, type: manifestFile === 'team.json' ? 'team' : 'agent', description: m.description ?? '', requires });
+              items.push({ id: m.id ?? entry.name, name: m.name ?? entry.name, type: manifestFile === 'team.json' ? 'team' : 'agent', description: m.description ?? '', status: m.status ?? 'stable', requires });
             } catch { /* skip */ }
           }
           return items;
@@ -619,7 +619,7 @@ export default {
             if (fs.existsSync(setupPath)) {
               try { requires = JSON.parse(fs.readFileSync(setupPath, 'utf8')).requires ?? []; } catch { /* skip */ }
             }
-            result.teams.push({ id: m.id ?? entry.name, name: m.name, description: m.description ?? '', requires });
+            result.teams.push({ id: m.id ?? entry.name, name: m.name, description: m.description ?? '', status: m.status ?? 'stable', requires });
           } catch { /* skip */ }
         }
       }
