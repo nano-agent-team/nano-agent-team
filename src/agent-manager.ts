@@ -147,7 +147,12 @@ export class AgentManager {
         return { provider, model: modelMap[cap] };
       }
     }
-    return { provider, model: modelMap['default'] ?? 'claude-haiku-4-5-20251001' };
+    const providerDefaults: Record<string, string> = {
+      claude: 'claude-haiku-4-5-20251001',
+      codex: 'o4-mini',
+      gemini: 'gemini-2.0-flash',
+    };
+    return { provider, model: modelMap['default'] ?? providerDefaults[provider] ?? 'claude-haiku-4-5-20251001' };
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
@@ -302,8 +307,10 @@ export class AgentManager {
       }
 
       // Codex CLI credentials → /root/.codex (read-write so Codex CLI can refresh tokens)
+      // HOST_CODEX_DIR must be host-absolute path (same pattern as HOST_DATA_DIR)
       if (providerName === 'codex') {
-        const codexDir = path.join(process.env.HOME ?? '/root', '.codex');
+        const codexDir = process.env.HOST_CODEX_DIR
+          ?? path.join(process.env.HOME ?? '/root', '.codex');
         if (fs.existsSync(codexDir)) {
           binds.push(`${codexDir}:/root/.codex:rw`);
           logger.debug({ id, codexDir }, 'Mounting .codex dir (rw)');
