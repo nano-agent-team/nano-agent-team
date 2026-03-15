@@ -363,6 +363,16 @@ interface CatalogItem {
   description?: string; requires: CatalogField[]
 }
 interface Catalog { teams: CatalogItem[]; agents: CatalogItem[] }
+interface NanoConfig {
+  provider?: { type?: string }
+  installed?: { teams?: string[]; features?: string[] }
+  primaryProvider?: string
+  providers?: {
+    claude?: { apiKey?: string }
+    codex?: { apiKey?: string }
+    gemini?: { apiKey?: string }
+  }
+}
 
 const tabs = [
   { id: 'hub', label: '🛒 Hub' },
@@ -370,7 +380,7 @@ const tabs = [
 ]
 const activeTab = ref(window.location.pathname === '/settings' ? 'system' : 'hub')
 
-const config = ref<Record<string, unknown> | null>(null)
+const config = ref<NanoConfig | null>(null)
 const status = ref<ConfigStatus>({ complete: false, missing: [], setupCompleted: false })
 
 // Hub catalog
@@ -424,13 +434,11 @@ async function loadConfig() {
   try {
     const res = await fetch('/api/config')
     if (res.ok) {
-      config.value = await res.json() as Record<string, unknown>
-      // Load provider configs
-      const cfg = config.value as any
-      primaryProvider.value = cfg.primaryProvider ?? 'claude'
-      claudeApiKey.value = cfg.providers?.claude?.apiKey ?? ''
-      codexApiKey.value = cfg.providers?.codex?.apiKey ?? ''
-      geminiApiKey.value = cfg.providers?.gemini?.apiKey ?? ''
+      config.value = await res.json() as NanoConfig
+      primaryProvider.value = config.value.primaryProvider ?? 'claude'
+      claudeApiKey.value = config.value.providers?.claude?.apiKey ?? ''
+      codexApiKey.value = config.value.providers?.codex?.apiKey ?? ''
+      geminiApiKey.value = config.value.providers?.gemini?.apiKey ?? ''
     }
   } catch { /* ignore */ }
 }
@@ -450,10 +458,9 @@ async function loadCatalog() {
     if (!res.ok) { catalogError.value = `Chyba ${res.status}: ${res.statusText}`; return }
     catalog.value = await res.json() as Catalog
     // Mark already installed
-    const cfg = config.value as { installed?: { teams?: string[]; agents?: string[] } } | null
     installedItems.value = [
-      ...(cfg?.installed?.teams ?? []),
-      ...(cfg?.installed?.agents ?? []),
+      ...(config.value?.installed?.teams ?? []),
+      ...(config.value?.installed?.features ?? []),
     ]
   } catch (e) {
     catalogError.value = String(e)
