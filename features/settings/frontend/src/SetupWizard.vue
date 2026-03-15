@@ -6,16 +6,59 @@
       <p class="wizard-subtitle">Nastavení zabere asi 2 minuty.</p>
     </div>
 
-    <!-- Step 1: Provider -->
-    <div v-if="step === 1" class="wizard-step">
-      <h2>Připoj Claude</h2>
+    <!-- Step 0: Choose primary LLM provider -->
+    <div v-if="step === 0" class="wizard-step">
+      <h2>Vyber LLM poskytovatele</h2>
       <p class="step-desc">
-        nano-agent-team používá Claude jako AI backend.
-        Vyber způsob přihlášení.
+        Kterého poskytovatele chceš použít jako primárního?
       </p>
 
-      <!-- Provider type toggle -->
-      <div class="provider-toggle">
+      <div class="provider-cards">
+        <div
+          class="provider-card"
+          :class="{ selected: selectedProvider === 'claude' }"
+          @click="selectProvider('claude')"
+        >
+          <div class="provider-icon">🧠</div>
+          <div class="provider-name">Claude</div>
+          <div class="provider-desc">Anthropic — nejlepší reasoning</div>
+        </div>
+
+        <div
+          class="provider-card"
+          :class="{ selected: selectedProvider === 'codex' }"
+          @click="selectProvider('codex')"
+        >
+          <div class="provider-icon">⚡</div>
+          <div class="provider-name">Codex</div>
+          <div class="provider-desc">OpenAI — rychlý, levný</div>
+        </div>
+
+        <div
+          class="provider-card"
+          :class="{ selected: selectedProvider === 'gemini' }"
+          @click="selectProvider('gemini')"
+        >
+          <div class="provider-icon">✨</div>
+          <div class="provider-name">Gemini</div>
+          <div class="provider-desc">Google — multimodální</div>
+        </div>
+      </div>
+
+      <button class="btn-primary" @click="step = 1">
+        Pokračovat s {{ selectedProvider }} →
+      </button>
+    </div>
+
+    <!-- Step 1: Configure selected provider -->
+    <div v-if="step === 1" class="wizard-step">
+      <h2>Nakonfiguruj {{ selectedProvider }}</h2>
+      <p class="step-desc">
+        Vyber způsob přihlášení pro {{ selectedProvider }}.
+      </p>
+
+      <!-- Provider type toggle - CLAUDE -->
+      <div v-if="selectedProvider === 'claude'" class="provider-toggle">
         <button
           class="toggle-btn"
           :class="{ active: providerType === 'api-key' }"
@@ -32,8 +75,37 @@
         </button>
       </div>
 
-      <!-- API key mode -->
-      <div v-if="providerType === 'api-key'" class="form-group">
+      <!-- Provider type toggle - CODEX -->
+      <div v-if="selectedProvider === 'codex'" class="provider-toggle">
+        <button
+          class="toggle-btn"
+          :class="{ active: providerType === 'api-key' }"
+          @click="providerType = 'api-key'"
+        >
+          🔑 API klíč
+        </button>
+        <button
+          class="toggle-btn"
+          :class="{ active: providerType === 'subscription' }"
+          @click="providerType = 'subscription'"
+        >
+          🔐 ChatGPT subscription
+        </button>
+      </div>
+
+      <!-- Provider type toggle - GEMINI -->
+      <div v-if="selectedProvider === 'gemini'" class="provider-toggle">
+        <button
+          class="toggle-btn"
+          :class="{ active: providerType === 'api-key' }"
+          @click="providerType = 'api-key'"
+        >
+          🔑 API klíč
+        </button>
+      </div>
+
+      <!-- API key mode - CLAUDE -->
+      <div v-if="selectedProvider === 'claude' && providerType === 'api-key'" class="form-group">
         <label>Anthropic API klíč</label>
         <input
           v-model="apiKey"
@@ -46,8 +118,36 @@
         <span v-if="apiKeyError" class="form-error">{{ apiKeyError }}</span>
       </div>
 
+      <!-- API key mode - CODEX -->
+      <div v-if="selectedProvider === 'codex' && providerType === 'api-key'" class="form-group">
+        <label>OpenAI API klíč</label>
+        <input
+          v-model="codexApiKey"
+          type="password"
+          placeholder="sk-proj-..."
+          class="form-input"
+          :class="{ error: apiKeyError }"
+          @keyup.enter="connectProvider"
+        />
+        <span v-if="apiKeyError" class="form-error">{{ apiKeyError }}</span>
+      </div>
+
+      <!-- API key mode - GEMINI -->
+      <div v-if="selectedProvider === 'gemini' && providerType === 'api-key'" class="form-group">
+        <label>Google Gemini API klíč</label>
+        <input
+          v-model="geminiApiKey"
+          type="password"
+          placeholder="AIza..."
+          class="form-input"
+          :class="{ error: apiKeyError }"
+          @keyup.enter="connectProvider"
+        />
+        <span v-if="apiKeyError" class="form-error">{{ apiKeyError }}</span>
+      </div>
+
       <!-- Claude Code subscription mode -->
-      <div v-if="providerType === 'claude-code'" class="claude-code-info">
+      <div v-if="selectedProvider === 'claude' && providerType === 'claude-code'" class="claude-code-info">
 
         <!-- Stav: idle -->
         <div v-if="oauthState === 'idle'" class="info-box">
@@ -101,13 +201,13 @@
       </div>
 
       <button
-        v-if="providerType === 'api-key' || oauthState === 'idle'"
+        v-if="(providerType === 'api-key' && selectedProvider !== 'claude') || (selectedProvider === 'claude' && (providerType === 'api-key' || oauthState === 'idle'))"
         class="btn-primary"
         :disabled="connecting"
         @click="connectProvider"
       >
         <span v-if="connecting">Připojuji...</span>
-        <span v-else>Připojit Claude →</span>
+        <span v-else>Připojit {{ selectedProvider }} →</span>
       </button>
     </div>
 
@@ -359,9 +459,12 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch } from 'vue'
 
-const step = ref(1)
-const providerType = ref<'api-key' | 'claude-code'>('api-key')
+const step = ref(0)
+const selectedProvider = ref<'claude' | 'codex' | 'gemini'>('claude')
+const providerType = ref<'api-key' | 'claude-code' | 'subscription' | 'codex-api'>('api-key')
 const apiKey = ref('')
+const codexApiKey = ref('')
+const geminiApiKey = ref('')
 const apiKeyError = ref('')
 const connecting = ref(false)
 const completing = ref(false)
@@ -443,10 +546,21 @@ onMounted(async () => {
   })
 })
 
+function selectProvider(provider: 'claude' | 'codex' | 'gemini') {
+  selectedProvider.value = provider
+  providerType.value = 'api-key'
+  apiKey.value = ''
+  codexApiKey.value = ''
+  geminiApiKey.value = ''
+  apiKeyError.value = ''
+  oauthState.value = 'idle'
+}
+
 async function connectProvider() {
   apiKeyError.value = ''
 
-  if (providerType.value === 'claude-code') {
+  // Handle Claude
+  if (selectedProvider.value === 'claude' && providerType.value === 'claude-code') {
     // Spustí claude auth login na backendu a čeká na URL
     oauthState.value = 'loading'
     try {
@@ -478,16 +592,39 @@ async function connectProvider() {
   // API key mode
   connecting.value = true
   try {
-    const key = apiKey.value.trim()
+    let configPayload: any = {
+      primaryProvider: selectedProvider.value,
+      providers: {}
+    }
+
+    // Determine which key to use based on selected provider
+    let key: string | undefined
+    if (selectedProvider.value === 'claude') {
+      key = apiKey.value.trim()
+      if (key) {
+        configPayload.providers.claude = { apiKey: key }
+      }
+    } else if (selectedProvider.value === 'codex') {
+      key = codexApiKey.value.trim()
+      if (key) {
+        configPayload.providers.codex = { apiKey: key }
+      }
+    } else if (selectedProvider.value === 'gemini') {
+      key = geminiApiKey.value.trim()
+      if (key) {
+        configPayload.providers.gemini = { apiKey: key }
+      }
+    }
+
     if (!key) {
-      apiKeyError.value = 'API klíč nesmí být prázdný'
+      apiKeyError.value = `API klíč pro ${selectedProvider.value} nesmí být prázdný`
       return
     }
 
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: { type: 'claude-code', apiKey: key } }),
+      body: JSON.stringify(configPayload),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
@@ -525,12 +662,15 @@ async function submitOauthCode() {
 }
 
 async function proceedAfterOauth() {
-  // Uloží provider type (bez apiKey — klíč se čte z credentials.json)
+  // Uloží primaryProvider + provider type (bez apiKey — klíč se čte z credentials.json)
   try {
     const res = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ provider: { type: 'claude-code-oauth' } }),
+      body: JSON.stringify({
+        primaryProvider: 'claude',
+        provider: { type: 'claude-code-oauth' }
+      }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     await loadCatalog()
@@ -1186,5 +1326,46 @@ code {
   font-size: 13px;
   max-width: 480px;
   width: 100%;
+}
+.provider-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin: 20px 0;
+}
+
+.provider-card {
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.provider-card:hover {
+  border-color: #007bff;
+  background: #f8f9ff;
+}
+
+.provider-card.selected {
+  border-color: #007bff;
+  background: #e7f0ff;
+  font-weight: bold;
+}
+
+.provider-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+.provider-name {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.provider-desc {
+  font-size: 12px;
+  color: #666;
 }
 </style>
