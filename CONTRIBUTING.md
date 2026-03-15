@@ -64,9 +64,12 @@ agents/                 # Definice vestavěných agentů
 ### Type check
 
 ```bash
-npm run build                                    # core
-cd container/agent-runner && npm run build       # agent-runner
-cd dashboard && npm run build                    # dashboard + features
+npm run build                                                # core
+cd container/agent-runner && npm run build               # agent-runner
+cd dashboard && npm run build                            # dashboard
+cd features/settings/frontend && npm run build           # feature: settings
+cd features/simple-chat/frontend && npm run build        # feature: simple-chat
+cd features/observability/frontend && npm run build      # feature: observability
 ```
 
 ### Commit konvence
