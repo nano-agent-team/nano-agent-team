@@ -499,13 +499,16 @@ export default {
         const query = `code=${encodeURIComponent(code.trim())}&state=${encodeURIComponent(state)}`;
         // Try IPv4 first, fall back to IPv6 (Claude may listen on ::1)
         let resp;
+        let successHost;
         for (const host of [`127.0.0.1`, `[::1]`]) {
           try {
             resp = await fetch(`http://${host}:${port}/callback?${query}`);
+            successHost = host;
             break;
           } catch { /* try next */ }
         }
-        if (!resp) throw new Error(`Could not reach claude callback on port ${port}`);
+        if (!resp) throw new Error(`Could not reach claude callback on port ${port} (tried IPv4 and IPv6)`);
+        console.log(`[auth] claude callback forwarded via http://${successHost}:${port}`);
         if (resp.ok || resp.status === 302) {
           // Claude zpracoval kód — počkáme na exit procesu (max 10s)
           await new Promise((resolve) => {

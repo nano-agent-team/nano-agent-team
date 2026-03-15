@@ -17,15 +17,19 @@ if [ -z "$DOCKER_HOST" ] && [ -z "$SKIP_DOCKERD" ]; then
 
   # Wait briefly, then check if overlay2 failed and retry with vfs
   sleep 2
-  if ! kill -0 $DOCKERD_PID 2>/dev/null || ! docker info >/dev/null 2>&1; then
-    grep -q "overlay2" /var/log/dockerd.log 2>/dev/null && {
+  if ! kill -0 $DOCKERD_PID 2>/dev/null; then
+    # dockerd exited — check if it's an overlay2 issue
+    if grep -q "overlay2" /var/log/dockerd.log 2>/dev/null; then
       echo "[entrypoint] overlay2 not supported, retrying with vfs..."
-      kill $DOCKERD_PID 2>/dev/null; sleep 1
       dockerd --log-level=warn \
               --storage-driver=vfs \
               --data-root "$DATA_DIR/docker" \
               2>/var/log/dockerd.log &
-    }
+    else
+      echo "[entrypoint] ERROR: dockerd failed to start"
+      cat /var/log/dockerd.log
+      exit 1
+    fi
   fi
 
   # Wait for socket to be ready (max 30s)

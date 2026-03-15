@@ -8,15 +8,15 @@ services:
   nano-agent-team:
     image: nano-agent-team:latest
     container_name: ${COMPOSE_PROJECT_NAME:-nate}
-    privileged: true          # nutné pro interní dockerd
+    privileged: true          # required: internal dockerd needs /proc, cgroups, kernel namespaces (DinD)
     restart: unless-stopped
     stop_grace_period: 60s
     ports:
       - "${PORT:-3001}:3001"
     volumes:
       - data:/data            # persistentní data (sessions, vault, workspaces, DB)
-      - ~/.claude:/root/.claude  # Claude Code credentials
-      - ~/.codex:/root/.codex    # Codex credentials
+      - ~/.claude:/root/.claude  # Claude Code credentials (dir auto-created by Docker if missing — run claude auth login to populate)
+      - ~/.codex:/root/.codex    # Codex credentials (dir auto-created by Docker if missing — run codex auth to populate)
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
       interval: 30s
