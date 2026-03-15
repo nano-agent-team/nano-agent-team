@@ -324,10 +324,14 @@ async function main(): Promise<void> {
     // Priority: AGENT_SYSTEM_PROMPT env var > file mount
     const claudeMdContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
 
+    // Extract short-lived GitHub installation token (if present) and strip from prompt
+    const ghToken = (payload as Record<string, unknown>).gh_token as string | undefined;
+    const payloadForPrompt = ghToken ? { ...payload, gh_token: undefined } : payload;
+
     // For chat agents: use only the text field. For event agents without text: include full payload.
-    const eventContext = payload.text
-      ? String(payload.text)
-      : `Event on topic "${subject}":\n\n${JSON.stringify(payload, null, 2)}`;
+    const eventContext = payloadForPrompt.text
+      ? String(payloadForPrompt.text)
+      : `Event on topic "${subject}":\n\n${JSON.stringify(payloadForPrompt, null, 2)}`;
 
     // Combine: role instructions (system prompt) + user message
     const prompt: string = claudeMdContent
@@ -338,6 +342,10 @@ async function main(): Promise<void> {
 
     // ── Phase 3: Provider invocation ─────────────────────────────
     const existingSessionId = loadSessionId();
+
+    // Inject GitHub token so gh CLI works inside Bash tool calls
+    const prevGhToken = process.env.GH_TOKEN;
+    if (ghToken) process.env.GH_TOKEN = ghToken;
 
     log.debug(
       { agentId: AGENT_ID, provider: PROVIDER_NAME, sessionType: SESSION_TYPE, hasSession: !!existingSessionId },
@@ -406,6 +414,11 @@ async function main(): Promise<void> {
       if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.error`, 'exception');
     } finally {
       clearInterval(workingTimer);
+      // Restore GH_TOKEN env var
+      if (ghToken) {
+        if (prevGhToken !== undefined) process.env.GH_TOKEN = prevGhToken;
+        else delete process.env.GH_TOKEN;
+      }
     }
 
     querySpan?.end();

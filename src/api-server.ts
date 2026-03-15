@@ -21,7 +21,7 @@ import { StringCodec, type NatsConnection } from 'nats';
 
 import { API_PORT, AGENTS_DIR, DATA_DIR } from './config.js';
 import { logger } from './logger.js';
-import { publish } from './nats-client.js';
+import { publish, ensureConsumer } from './nats-client.js';
 import { isTracingEnabled } from './tracing/init.js';
 import type { AgentManager } from './agent-manager.js';
 import type { ConfigService } from './config-service.js';
@@ -151,13 +151,16 @@ async function loadTeamPlugins(
     }
   }
 
-  // 2. Installed teams in DATA_DIR/teams/*/agents/
+  // 2. Installed teams in DATA_DIR/teams/*/
+  // Check both plugin.mjs (top-level, e.g. from plugin-dist) and agents/plugin.mjs (legacy)
   const teamsDir = path.join(DATA_DIR, 'teams');
   if (fs.existsSync(teamsDir)) {
     for (const team of fs.readdirSync(teamsDir, { withFileTypes: true })) {
       if (!team.isDirectory()) continue;
-      const p = path.join(teamsDir, team.name, 'agents', 'plugin.mjs');
-      if (fs.existsSync(p)) pluginPaths.push(p);
+      const topLevel = path.join(teamsDir, team.name, 'plugin.mjs');
+      const agentsLevel = path.join(teamsDir, team.name, 'agents', 'plugin.mjs');
+      if (fs.existsSync(topLevel)) pluginPaths.push(topLevel);
+      else if (fs.existsSync(agentsLevel)) pluginPaths.push(agentsLevel);
     }
   }
 
@@ -257,6 +260,7 @@ export async function createApiApp(
 ): Promise<express.Application> {
   const app = express();
   app.use(express.json());
+  app.use(express.urlencoded({ extended: false }));
 
   // OTel span enrichment — give spans meaningful names after Express routing
   if (isTracingEnabled()) {
@@ -312,13 +316,30 @@ export async function createApiApp(
     }
 
     // Scan /data/agents/ and start any new agents
+    const { loadAgents } = await import('./agent-registry.js');
     const dataAgentsDir = path.join(DATA_DIR, 'agents');
     if (fs.existsSync(dataAgentsDir)) {
-      const { loadAgents } = await import('./agent-registry.js');
       const installedAgents = loadAgents(dataAgentsDir);
       for (const agent of installedAgents) {
         if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
           await manager.startAgent(agent);
+        }
+      }
+    }
+
+    // Also scan /data/teams/*/agents/ and start team agents
+    const dataTeamsDir = path.join(DATA_DIR, 'teams');
+    if (fs.existsSync(dataTeamsDir)) {
+      for (const teamEntry of fs.readdirSync(dataTeamsDir, { withFileTypes: true })) {
+        if (!teamEntry.isDirectory()) continue;
+        const teamAgentsDir = path.join(dataTeamsDir, teamEntry.name, 'agents');
+        if (!fs.existsSync(teamAgentsDir)) continue;
+        const teamAgents = loadAgents(teamAgentsDir);
+        for (const agent of teamAgents) {
+          if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
+            await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
+            await manager.startAgent(agent);
+          }
         }
       }
     }

@@ -37,7 +37,7 @@
               <p v-if="item.description" class="item-desc">{{ item.description }}</p>
 
               <div v-for="field in item.requires" :key="field.key" class="field-row">
-                <label class="field-label">{{ field.label }}</label>
+                <label v-if="field.type !== 'link'" class="field-label">{{ field.label }}</label>
 
                 <!-- SSH generate -->
                 <div v-if="field.type === 'generate_ssh'" class="ssh-field">
@@ -56,6 +56,13 @@
                     <p class="ssh-hint">Přidej tento public key do GitHub Deploy Keys repozitáře.</p>
                   </div>
                 </div>
+
+                <!-- Link / action button — opens in new tab via window.open to bypass SPA router -->
+                <button
+                  v-else-if="field.type === 'link'"
+                  class="btn-secondary"
+                  @click="openInNewTab(field.url!)"
+                >{{ field.label }}</button>
 
                 <!-- Boolean -->
                 <input
@@ -260,7 +267,40 @@
         <h2>Nainstalováno</h2>
         <div v-if="config?.installed?.teams?.length" class="installed-group">
           <span class="installed-label">Týmy:</span>
-          <code v-for="t in config.installed.teams" :key="t" class="installed-item">{{ t }}</code>
+          <div v-for="t in config.installed.teams" :key="t" class="installed-team-row">
+            <code class="installed-item">{{ t }}</code>
+            <span v-if="teamSetupStatus[t] === true" class="setup-badge setup-ok">✓ Připojeno</span>
+            <span v-else-if="teamSetupUrls[t]" class="setup-badge">
+              ⚠ Nepropojeno
+              <button class="btn-link" @click="openConnectModal(t)">Propojit</button>
+            </span>
+            <!-- Inline connect modal -->
+            <div v-if="connectModal === t" class="connect-modal">
+              <div class="connect-modal-inner">
+                <h3>Propojit GitHub</h3>
+                <p>Vyber typ účtu</p>
+                <label class="connect-option" :class="{ active: connectTarget === 'personal' }">
+                  <input type="radio" v-model="connectTarget" value="personal">
+                  <div>
+                    <strong>Osobní účet</strong>
+                    <span>github.com/váš-username</span>
+                  </div>
+                </label>
+                <label class="connect-option" :class="{ active: connectTarget === 'org' }">
+                  <input type="radio" v-model="connectTarget" value="org">
+                  <div>
+                    <strong>Organizace</strong>
+                    <span>github.com/název-organizace</span>
+                  </div>
+                </label>
+                <input v-if="connectTarget === 'org'" v-model="connectOrg" class="connect-org-input" type="text" placeholder="Název organizace (např. my-company)" autofocus>
+                <div class="connect-modal-actions">
+                  <button class="btn-secondary" @click="connectModal = null">Zrušit</button>
+                  <button class="btn-primary" :disabled="connectTarget === 'org' && !connectOrg.trim()" @click="submitConnect(teamSetupUrls[t])">Pokračovat na GitHub →</button>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div v-if="config?.installed?.features?.length" class="installed-group">
           <span class="installed-label">Featury:</span>
@@ -356,11 +396,11 @@ interface Message { role: 'user' | 'assistant'; text: string }
 interface ConfigStatus { complete: boolean; missing: string[]; setupCompleted: boolean }
 interface CatalogField {
   key: string; label: string; type: string;
-  placeholder?: string; help?: string; shared?: boolean
+  placeholder?: string; help?: string; shared?: boolean; url?: string
 }
 interface CatalogItem {
   id: string; name: string; type: 'team' | 'agent';
-  description?: string; requires: CatalogField[]
+  description?: string; requires: CatalogField[]; setup_url?: string
 }
 interface Catalog { teams: CatalogItem[]; agents: CatalogItem[] }
 interface NanoConfig {
@@ -393,6 +433,49 @@ const installedItems = ref<string[]>([])
 const installingItem = ref<string | null>(null)
 const installErrors = ref<Record<string, string>>({})
 const installLog = ref<string[]>([])
+function openInNewTab(url: string) { window.open(url, '_blank', 'noopener') }
+
+// Connect modal state
+const connectModal = ref<string | null>(null)   // teamId currently showing modal
+const connectTarget = ref<'personal' | 'org'>('personal')
+const connectOrg = ref('')
+
+function openConnectModal(teamId: string) {
+  connectModal.value = teamId
+  connectTarget.value = 'personal'
+  connectOrg.value = ''
+}
+
+function submitConnect(setupUrl: string) {
+  const form = document.createElement('form')
+  form.method = 'POST'
+  form.action = setupUrl.replace('/start', '/manifest')
+  const t = document.createElement('input'); t.type = 'hidden'; t.name = 'target'; t.value = connectTarget.value; form.appendChild(t)
+  if (connectTarget.value === 'org' && connectOrg.value) {
+    const o = document.createElement('input'); o.type = 'hidden'; o.name = 'org'; o.value = connectOrg.value; form.appendChild(o)
+  }
+  document.body.appendChild(form)
+  form.submit()
+}
+
+// Indexed after catalog loads for reliable reactivity
+const teamSetupUrls = ref<Record<string, string>>({})
+
+// Post-install setup status per team (true = connected, false = not connected, undefined = no status endpoint)
+const teamSetupStatus = ref<Record<string, boolean | undefined>>({})
+
+async function loadTeamSetupStatuses(teams: string[]) {
+  for (const t of teams) {
+    try {
+      const res = await fetch(`/api/${t}/setup/status`)
+      if (res.ok) {
+        const data = await res.json() as { connected?: boolean }
+        if (typeof data.connected === 'boolean') teamSetupStatus.value[t] = data.connected
+      }
+    } catch { /* team has no setup/status endpoint, ignore */ }
+  }
+}
+
 const sshGenerating = ref<string | null>(null)
 const sshPublicKeys = ref<Record<string, string>>({})
 const copied = ref<string | null>(null)
@@ -439,6 +522,7 @@ async function loadConfig() {
       claudeApiKey.value = config.value.providers?.claude?.apiKey ?? ''
       codexApiKey.value = config.value.providers?.codex?.apiKey ?? ''
       geminiApiKey.value = config.value.providers?.gemini?.apiKey ?? ''
+      void loadTeamSetupStatuses(config.value.installed?.teams ?? [])
     }
   } catch { /* ignore */ }
 }
@@ -457,6 +541,9 @@ async function loadCatalog() {
     const res = await fetch('/api/hub/catalog')
     if (!res.ok) { catalogError.value = `Chyba ${res.status}: ${res.statusText}`; return }
     catalog.value = await res.json() as Catalog
+    const urls: Record<string, string> = {}
+    for (const t of catalog.value.teams) { if (t.setup_url) urls[t.id] = t.setup_url }
+    teamSetupUrls.value = urls
     // Mark already installed
     installedItems.value = [
       ...(config.value?.installed?.teams ?? []),
@@ -538,6 +625,7 @@ async function installItem(item: CatalogItem) {
       installedItems.value.push(item.id)
       expandedItem.value = null
       installLog.value = []
+      if (item.setup_url) openInNewTab(item.setup_url)
     } else {
       const errMsg = data.error ?? data.errors?.[0]?.error ?? 'Instalace selhala'
       installErrors.value[item.id] = errMsg
@@ -849,9 +937,30 @@ async function loginCodexSubscription() {
 .missing-list { margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
 .missing-label { color: var(--danger, #f85149); }
 .missing-item { background: rgba(248, 81, 73, 0.1); color: var(--danger, #f85149); padding: 2px 6px; border-radius: 4px; }
-.installed-group { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; font-size: 13px; }
-.installed-label { color: var(--text-muted, #8b949e); min-width: 60px; }
+.installed-group { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; font-size: 13px; }
+.installed-label { color: var(--text-muted, #8b949e); min-width: 60px; padding-top: 2px; }
 .installed-item { background: var(--surface2, #1c2128); padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+.installed-team-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.setup-badge { font-size: 12px; color: #f0883e; display: flex; align-items: center; gap: 6px; }
+.setup-badge.setup-ok { color: #3fb950; }
+.btn-link { background: none; border: none; color: #58a6ff; cursor: pointer; font-size: 12px; padding: 0; text-decoration: underline; }
+.connect-modal { width: 100%; margin-top: 12px; }
+.connect-modal-inner { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; max-width: 420px; }
+.connect-modal-inner h3 { margin: 0 0 4px; font-size: 15px; }
+.connect-modal-inner p { margin: 0 0 14px; font-size: 13px; color: #8b949e; }
+.connect-option { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid #30363d; border-radius: 8px; cursor: pointer; margin-bottom: 8px; }
+.connect-option.active { border-color: #388bfd; background: #1c2433; }
+.connect-option input[type=radio] { accent-color: #388bfd; }
+.connect-option strong { display: block; font-size: 13px; }
+.connect-option span { font-size: 12px; color: #8b949e; }
+.connect-org-input { width: 100%; box-sizing: border-box; padding: 8px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #e6edf3; font-size: 13px; margin-bottom: 12px; }
+.connect-org-input:focus { outline: none; border-color: #388bfd; }
+.connect-modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.btn-secondary { padding: 7px 14px; background: none; border: 1px solid #30363d; border-radius: 6px; color: #8b949e; cursor: pointer; font-size: 13px; }
+.btn-secondary:hover { border-color: #8b949e; }
+.btn-primary { padding: 7px 14px; background: #238636; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-size: 13px; }
+.btn-primary:hover:not(:disabled) { background: #2ea043; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 .empty-installed { font-size: 13px; color: var(--text-muted, #8b949e); }
 
 .chat-messages {
