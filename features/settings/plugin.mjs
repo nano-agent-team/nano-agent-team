@@ -660,7 +660,7 @@ export default {
 
     // ── POST /api/hub/install ─────────────────────────────────────────────────
     app.post('/api/hub/install', async (req, res) => {
-      const { items = [], config: installConfig = {} } = req.body ?? {};
+      const { items = [], config: installConfig = {}, force = false } = req.body ?? {};
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: '"items" array required' });
       }
@@ -678,7 +678,10 @@ export default {
 
       /** Sparse-clone a single path from hub into destDir */
       function hubSparseClone(sparsePath, destDir) {
-        if (fs.existsSync(destDir)) return; // already installed
+        if (fs.existsSync(destDir)) {
+          if (!force) return; // already installed, skip
+          fs.rmSync(destDir, { recursive: true, force: true });
+        }
         const tmpDir = `/tmp/hub-${sparsePath.replace(/\//g, '-')}-${Date.now()}`;
         try {
           const clone = spawnSync('git', [
@@ -719,10 +722,26 @@ export default {
         }
 
         try {
-          // 1. Clone team manifest
+          // 1. Clone team manifest (preserve config files across force reinstall)
           progress('clone-team', teamId);
           const teamDir = path.join(dataDir, 'teams', teamId);
+          const configDir = path.join(teamDir, 'config');
+          // Back up user config files before cloning so a force-reinstall doesn't wipe
+          // credentials and team-specific settings stored in config/ (e.g. gh-token, team.json).
+          // The backed-up buffers are written back immediately after the clone.
+          const configBackup = {};
+          if (force && fs.existsSync(configDir)) {
+            for (const f of fs.readdirSync(configDir)) {
+              try { configBackup[f] = fs.readFileSync(path.join(configDir, f)); } catch { /* skip */ }
+            }
+          }
           hubSparseClone(`teams/${teamId}`, teamDir);
+          if (force && Object.keys(configBackup).length > 0) {
+            fs.mkdirSync(configDir, { recursive: true });
+            for (const [f, buf] of Object.entries(configBackup)) {
+              fs.writeFileSync(path.join(configDir, f), buf);
+            }
+          }
 
           // 1b. Symlink node_modules into plugin-dist so ESM can resolve packages
           const pluginDistDir = path.join(teamDir, 'plugin-dist');

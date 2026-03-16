@@ -2,11 +2,11 @@ const currentImports = {};
       const exportSet = new Set(['Module', '__esModule', 'default', '_export_sfc']);
       let moduleMap = {
 "./SetupWizard":()=>{
-      dynamicLoadingCss(["__federation_expose_SetupWizard-Cef3ZibG.css"], false, './SetupWizard');
-      return __federation_import('./__federation_expose_SetupWizard-5XyOAPA1.js').then(module =>Object.keys(module).every(item => exportSet.has(item)) ? () => module.default : () => module)},
+      dynamicLoadingCss(["__federation_expose_SetupWizard-BWnxQfw-.css"], false, './SetupWizard');
+      return __federation_import('./__federation_expose_SetupWizard-VO2elJj3.js').then(module =>Object.keys(module).every(item => exportSet.has(item)) ? () => module.default : () => module)},
 "./SettingsView":()=>{
-      dynamicLoadingCss(["__federation_expose_SettingsView-LqDfBAs5.css"], false, './SettingsView');
-      return __federation_import('./__federation_expose_SettingsView-DiLCUoPd.js').then(module =>Object.keys(module).every(item => exportSet.has(item)) ? () => module.default : () => module)},};
+      dynamicLoadingCss(["__federation_expose_SettingsView-DMn4QJgK.css"], false, './SettingsView');
+      return __federation_import('./__federation_expose_SettingsView-DyzZVJ5-.js').then(module =>Object.keys(module).every(item => exportSet.has(item)) ? () => module.default : () => module)},};
       const seen = {};
       const dynamicLoadingCss = (cssFilePaths, dontAppendStylesToHead, exposeItemName) => {
         const metaUrl = import.meta.url;

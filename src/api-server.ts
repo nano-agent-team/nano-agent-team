@@ -107,7 +107,10 @@ export async function loadFeature(
 
   try {
     logger.info({ featureId, pluginPath }, 'Loading feature');
-    const mod = await import(pluginPath) as { default?: TeamPlugin } | TeamPlugin;
+    // ?v= cache-buster forces Node to re-evaluate the module on each reload call.
+    // Node's ESM loader caches by full specifier, so without this a hot-reload
+    // would silently serve the old module instance.
+    const mod = await import(`${pluginPath}?v=${Date.now()}`) as { default?: TeamPlugin } | TeamPlugin;
     const plugin = ('default' in mod ? mod.default : mod) as TeamPlugin | undefined;
 
     if (plugin && typeof plugin.register === 'function') {
@@ -168,7 +171,8 @@ async function loadTeamPlugins(
   for (const pluginPath of pluginPaths) {
     try {
       logger.info({ plugin: pluginPath }, 'Loading team plugin');
-      const mod = await import(pluginPath) as { default?: TeamPlugin } | TeamPlugin;
+      // ?v= cache-buster — same rationale as in loadFeaturePlugin above.
+      const mod = await import(`${pluginPath}?v=${Date.now()}`) as { default?: TeamPlugin } | TeamPlugin;
       const plugin = ('default' in mod ? mod.default : mod) as TeamPlugin | undefined;
 
       if (plugin && typeof plugin.register === 'function') {
