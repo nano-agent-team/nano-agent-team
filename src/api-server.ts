@@ -383,9 +383,17 @@ export async function createApiApp(
 
   // ── Agent config endpoints ────────────────────────────────────────────────
 
+  /** Validate agentId to prevent path traversal — only lowercase alphanumeric + hyphens allowed */
+  function isValidAgentId(id: string): boolean {
+    return /^[a-z0-9-]+$/.test(id);
+  }
+
   app.get('/api/agents/:agentId/config', async (req: Request, res: Response) => {
     try {
-      const agent = manager.getAgent(req.params.agentId);
+      const agentId = req.params.agentId;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+
+      const agent = manager.getAgent(agentId);
       if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
       const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
@@ -393,12 +401,12 @@ export async function createApiApp(
         ? fs.readFileSync(claudeMdPath, 'utf8')
         : '';
 
-      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${req.params.agentId}.md`);
+      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${agentId}.md`);
       const customInstructions = fs.existsSync(customInstructionsPath)
         ? fs.readFileSync(customInstructionsPath, 'utf8')
         : null;
 
-      const customConfigPath = path.join(DATA_DIR, 'vault', 'agents', `${req.params.agentId}.json`);
+      const customConfigPath = path.join(DATA_DIR, 'vault', 'agents', `${agentId}.json`);
       let customConfig: { model?: string } = {};
       if (fs.existsSync(customConfigPath)) {
         try { customConfig = JSON.parse(fs.readFileSync(customConfigPath, 'utf8')); } catch { /* ignore */ }
@@ -413,7 +421,10 @@ export async function createApiApp(
 
   app.put('/api/agents/:agentId/config', (req: Request, res: Response) => {
     try {
-      const agent = manager.getAgent(req.params.agentId);
+      const agentId = req.params.agentId;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+
+      const agent = manager.getAgent(agentId);
       if (!agent) return res.status(404).json({ error: 'Agent not found' });
 
       const { customInstructions, customConfig } = req.body as {
@@ -421,14 +432,25 @@ export async function createApiApp(
         customConfig?: { model?: string };
       };
 
+      // Validate model name format if provided (prevent invalid values from crashing the agent)
+      if (customConfig?.model !== undefined && customConfig.model !== '') {
+        if (typeof customConfig.model !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(customConfig.model)) {
+          return res.status(400).json({ error: 'Invalid model name format' });
+        }
+      }
+
+      if (customInstructions !== undefined && typeof customInstructions !== 'string') {
+        return res.status(400).json({ error: 'customInstructions must be a string' });
+      }
+
       const vaultAgentsDir = path.join(DATA_DIR, 'vault', 'agents');
       fs.mkdirSync(vaultAgentsDir, { recursive: true });
 
       if (customInstructions !== undefined) {
-        fs.writeFileSync(path.join(vaultAgentsDir, `${req.params.agentId}.md`), customInstructions, 'utf8');
+        fs.writeFileSync(path.join(vaultAgentsDir, `${agentId}.md`), customInstructions, 'utf8');
       }
       if (customConfig !== undefined) {
-        fs.writeFileSync(path.join(vaultAgentsDir, `${req.params.agentId}.json`), JSON.stringify(customConfig, null, 2), 'utf8');
+        fs.writeFileSync(path.join(vaultAgentsDir, `${agentId}.json`), JSON.stringify(customConfig, null, 2), 'utf8');
       }
 
       res.json({ ok: true });
@@ -440,9 +462,12 @@ export async function createApiApp(
 
   app.post('/api/agents/:agentId/restart', async (req: Request, res: Response) => {
     try {
-      const agent = manager.getAgent(req.params.agentId);
+      const agentId = req.params.agentId;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+
+      const agent = manager.getAgent(agentId);
       if (!agent) return res.status(404).json({ error: 'Agent not found' });
-      await manager.restartAgent(req.params.agentId);
+      await manager.restartAgent(agentId);
       res.json({ ok: true });
     } catch (err) {
       logger.error({ err }, 'POST /api/agents/:agentId/restart error');
