@@ -9,6 +9,9 @@ docker build -t nano-agent-team . 2>&1 | tail -5
 
 echo "==> Starting container..."
 docker rm -f "$CONTAINER" 2>/dev/null || true
+# Kill any other container blocking the port
+BLOCKING=$(docker ps -q --filter "publish=$PORT" 2>/dev/null)
+[ -n "$BLOCKING" ] && docker rm -f $BLOCKING 2>/dev/null || true
 docker compose up -d
 
 echo -n "==> Waiting for NATE to start"
