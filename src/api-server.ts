@@ -320,10 +320,20 @@ export async function createApiApp(
       }
     }
 
+    // Start any built-in agents (AGENTS_DIR) not yet running — these are skipped
+    // at startup when setup mode is active and must be started on first reload.
+    const { loadAgents } = await import('./agent-registry.js');
+    const builtinAgents = loadAgents(AGENTS_DIR);
+    for (const agent of builtinAgents) {
+      if (agent.manifest.id === 'settings') continue; // already running
+      if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
+        await manager.startAgent(agent);
+      }
+    }
+
     // Scan /data/agents/ and start any new agents
     const dataAgentsDir = path.join(DATA_DIR, 'agents');
     if (fs.existsSync(dataAgentsDir)) {
-      const { loadAgents } = await import('./agent-registry.js');
       const installedAgents = loadAgents(dataAgentsDir);
       for (const agent of installedAgents) {
         if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
