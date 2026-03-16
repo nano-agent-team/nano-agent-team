@@ -219,10 +219,39 @@
               class="field-input"
               @blur="saveProviderConfig('claude')"
             />
-            <p class="field-help">Přímý API klíč pro Anthropic. OAuth (subscription) se automaticky čte z ~/.claude/.credentials.json.</p>
+            <p class="field-help">Přímý API klíč pro Anthropic.</p>
           </div>
           <div v-else class="field-row">
-            <p class="field-help">✓ Přihlášen přes Claude OAuth. Token se automaticky čte z ~/.claude/.credentials.json.</p>
+            <div v-if="claudeOauthState === 'idle'">
+              <p v-if="claudeLoggedIn" class="field-help">✓ Přihlášen přes Claude OAuth.</p>
+              <p v-else class="field-help" style="color:#ef4444">✗ Nepřihlášen. Klikni pro přihlášení.</p>
+              <button class="btn-secondary" @click="loginClaude" style="margin-top:0.5rem">
+                {{ claudeLoggedIn ? '🔄 Znovu přihlásit' : '🔐 Přihlásit se Claude' }}
+              </button>
+            </div>
+            <div v-else-if="claudeOauthState === 'loading'" class="field-help">⏳ Spouštím přihlášení...</div>
+            <div v-else-if="claudeOauthState === 'waiting'">
+              <p class="field-help">1. Otevři odkaz a přihlas se:</p>
+              <a :href="claudeOauthUrl" target="_blank" class="oauth-link" @click="claudeOauthClicked = true">
+                Otevřít přihlášení Claude →
+              </a>
+              <template v-if="claudeOauthClicked">
+                <p class="field-help" style="margin-top:0.75rem">2. Zkopíruj kód z prohlížeče a vlož ho sem:</p>
+                <input
+                  v-model="claudeOauthCode"
+                  type="text"
+                  placeholder="Vlož kód zde..."
+                  class="field-input"
+                  @keyup.enter="submitClaudeOauthCode"
+                />
+                <button class="btn-secondary" :disabled="!claudeOauthCode || claudeOauthSubmitting" @click="submitClaudeOauthCode" style="margin-top:0.5rem">
+                  {{ claudeOauthSubmitting ? '⏳ Přihlašuji...' : 'Potvrdit kód' }}
+                </button>
+              </template>
+              <p v-else class="field-help" style="margin-top:0.5rem;color:#f59e0b">Po otevření odkazu se zde zobrazí pole pro kód.</p>
+              <p v-if="claudeOauthError" class="field-help" style="color:#ef4444">{{ claudeOauthError }}</p>
+            </div>
+            <div v-else-if="claudeOauthState === 'done'" class="field-help" style="color:#22c55e">✓ Přihlášení úspěšné! Agenti se restartují.</div>
           </div>
         </div>
 
@@ -521,6 +550,13 @@ const copied = ref<string | null>(null)
 const primaryProvider = ref('claude')
 const claudeAuthType = ref('oauth')
 const claudeApiKey = ref('')
+const claudeLoggedIn = ref(false)
+const claudeOauthState = ref<'idle' | 'loading' | 'waiting' | 'done'>('idle')
+const claudeOauthUrl = ref('')
+const claudeOauthClicked = ref(false)
+const claudeOauthCode = ref('')
+const claudeOauthSubmitting = ref(false)
+const claudeOauthError = ref('')
 const codexAuthType = ref('subscription')
 const codexApiKey = ref('')
 const codexLoginLoading = ref(false)
@@ -543,7 +579,7 @@ const chatEl = ref<HTMLElement | null>(null)
 const sessionId = `settings-${Date.now()}`
 
 onMounted(async () => {
-  await Promise.all([loadConfig(), loadStatus(), loadCatalog(), loadObsConfig()])
+  await Promise.all([loadConfig(), loadStatus(), loadCatalog(), loadObsConfig(), checkClaudeLoginStatus()])
   messages.value.push({
     role: 'assistant',
     text: 'Ahoj! Jsem tvůj settings asistent. Zeptej se mě na cokoliv ohledně konfigurace nebo instalace.',
@@ -790,6 +826,64 @@ async function saveHubBranch() {
   })
   hubBranchSaved.value = true
   setTimeout(() => { hubBranchSaved.value = false }, 2000)
+}
+
+async function checkClaudeLoginStatus() {
+  try {
+    const res = await fetch('/api/auth/claude-login/status')
+    const data = await res.json() as { ok: boolean }
+    claudeLoggedIn.value = data.ok
+  } catch { claudeLoggedIn.value = false }
+}
+
+async function loginClaude() {
+  claudeOauthState.value = 'loading'
+  claudeOauthError.value = ''
+  claudeOauthClicked.value = false
+  claudeOauthCode.value = ''
+  try {
+    const res = await fetch('/api/auth/claude-login', { method: 'POST' })
+    const data = await res.json() as { url?: string; alreadyLoggedIn?: boolean; error?: string }
+    if (!res.ok || data.error) {
+      claudeOauthError.value = data.error ?? `HTTP ${res.status}`
+      claudeOauthState.value = 'idle'
+      return
+    }
+    if (data.alreadyLoggedIn) {
+      claudeLoggedIn.value = true
+      claudeOauthState.value = 'done'
+      return
+    }
+    claudeOauthUrl.value = data.url ?? ''
+    claudeOauthState.value = 'waiting'
+  } catch (e) {
+    claudeOauthError.value = String(e)
+    claudeOauthState.value = 'idle'
+  }
+}
+
+async function submitClaudeOauthCode() {
+  if (!claudeOauthCode.value.trim()) return
+  claudeOauthSubmitting.value = true
+  claudeOauthError.value = ''
+  try {
+    const res = await fetch('/api/auth/claude-callback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: claudeOauthCode.value.trim() }),
+    })
+    const data = await res.json() as { ok?: boolean; error?: string }
+    if (data.ok) {
+      claudeLoggedIn.value = true
+      claudeOauthState.value = 'done'
+    } else {
+      claudeOauthError.value = data.error ?? 'Přihlášení selhalo'
+    }
+  } catch (e) {
+    claudeOauthError.value = String(e)
+  } finally {
+    claudeOauthSubmitting.value = false
+  }
 }
 
 async function loginCodexSubscription() {

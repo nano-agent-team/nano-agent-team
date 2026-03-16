@@ -81,11 +81,12 @@ export default {
 
     async function saveOauthTokenToConfig() {
       try {
-        // Try reading token from ~/.claude/.credentials.json (older Claude Code versions)
+        // Claude Code 2.x stores token in ~/.claude.json; older versions used ~/.claude/.credentials.json
         let token = null;
+        const home = process.env.HOME ?? '/root';
         const credPaths = [
-          path.join(process.env.HOME ?? '/root', '.claude', '.credentials.json'),
-          '/root/.claude/.credentials.json',
+          path.join(home, '.claude.json'),                    // Claude Code 2.x (new)
+          path.join(home, '.claude', '.credentials.json'),    // Claude Code 1.x (legacy)
         ];
         for (const p of credPaths) {
           try {
@@ -103,7 +104,7 @@ export default {
         }
 
         if (!token) {
-          log.info('OAuth login completed but token not accessible — will use mounted .claude dir');
+          log.warn('OAuth login completed but token not found in ~/.claude.json or ~/.claude/.credentials.json');
           return;
         }
 
@@ -111,6 +112,12 @@ export default {
         config.provider = { ...(config.provider ?? {}), type: 'claude-code-oauth', apiKey: token };
         saveConfig(config);
         log.info('OAuth token saved to config.json');
+
+        // Restart agents so they pick up the new credentials
+        if (reloadFeatures) {
+          log.info('Reloading agents with new credentials...');
+          await reloadFeatures().catch(err => log.warn('reloadFeatures error after OAuth', { err: err?.message }));
+        }
       } catch (err) {
         log.warn('Could not save OAuth token to config.json', { err: err?.message });
       }
@@ -530,9 +537,10 @@ export default {
 
     // ── GET /api/auth/claude-login/status — zkontroluje zda jsou credentials platné ──
     app.get('/api/auth/claude-login/status', (req, res) => {
+      const home = process.env.HOME ?? '/root';
       const credPaths = [
-        '/root/.claude/.credentials.json',
-        path.join(process.env.HOME ?? '/root', '.claude', '.credentials.json'),
+        path.join(home, '.claude.json'),                    // Claude Code 2.x
+        path.join(home, '.claude', '.credentials.json'),    // Claude Code 1.x
       ];
       for (const p of credPaths) {
         try {
@@ -541,6 +549,11 @@ export default {
             return res.json({ ok: true, path: p });
           }
         } catch { /* skip */ }
+      }
+      // Also check config.json apiKey as fallback
+      const config = loadConfig();
+      if (config?.provider?.type === 'claude-code-oauth' && config?.provider?.apiKey) {
+        return res.json({ ok: true, path: 'config.json' });
       }
       res.json({ ok: false });
     });

@@ -60,6 +60,8 @@ mkdir -p \
 # Store Claude/Codex credentials inside the data volume (host-independent)
 ln -sfn "$DATA_DIR/.claude" /root/.claude
 ln -sfn "$DATA_DIR/.codex" /root/.codex
+# Claude Code 2.x stores OAuth token in ~/.claude.json (not ~/.claude/.credentials.json)
+ln -sf "$DATA_DIR/.claude.json" /root/.claude.json
 
 # Log startup mode
 if [ -f "$DATA_DIR/config.json" ]; then

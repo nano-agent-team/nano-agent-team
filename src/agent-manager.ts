@@ -81,15 +81,21 @@ export class AgentManager {
       try {
         const config = await this.configService.load();
         // For OAuth, always read fresh token from credentials file (auto-refreshed by Claude Code CLI)
+        // Claude Code 2.x stores token in ~/.claude.json; 1.x used ~/.claude/.credentials.json
         if (config?.provider?.type === 'claude-code-oauth') {
           const homeDir = process.env.HOME ?? '/root';
-          const credPath = path.join(homeDir, '.claude', '.credentials.json');
-          if (fs.existsSync(credPath)) {
-            const creds = JSON.parse(fs.readFileSync(credPath, 'utf8')) as {
-              claudeAiOauth?: { accessToken?: string };
-            };
-            const token = creds.claudeAiOauth?.accessToken;
-            if (token) return token;
+          const credPaths = [
+            path.join(homeDir, '.claude.json'),
+            path.join(homeDir, '.claude', '.credentials.json'),
+          ];
+          for (const credPath of credPaths) {
+            if (fs.existsSync(credPath)) {
+              const creds = JSON.parse(fs.readFileSync(credPath, 'utf8')) as {
+                claudeAiOauth?: { accessToken?: string };
+              };
+              const token = creds.claudeAiOauth?.accessToken;
+              if (token) return token;
+            }
           }
         }
         if (config?.provider?.apiKey) return config.provider.apiKey;
