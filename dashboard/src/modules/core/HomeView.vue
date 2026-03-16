@@ -15,6 +15,7 @@
         v-for="agent in agents"
         :key="agent.agentId"
         :class="['agent-card', `status-${agent.status}`, agent.busy ? 'agent-busy' : '']"
+        @click="selectedAgentId = agent.agentId"
       >
         <div class="agent-header">
           <span class="agent-id">{{ agent.agentId }}</span>
@@ -55,12 +56,15 @@
         <div class="stat-label">Total</div>
       </div>
     </div>
+
+    <AgentModal v-if="selectedAgentId" :agentId="selectedAgentId" @close="selectedAgentId = null" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { relTime } from '../../utils/time'
+import AgentModal from '../../components/AgentModal.vue'
 
 interface AgentState {
   agentId: string
@@ -75,6 +79,7 @@ interface AgentState {
 
 const agents = ref<AgentState[]>([])
 const loading = ref(true)
+const selectedAgentId = ref<string | null>(null)
 
 async function loadHealth() {
   try {
@@ -147,6 +152,8 @@ onUnmounted(() => clearInterval(interval))
   transition: border-color 0.2s;
 }
 
+.agent-card { cursor: pointer; }
+.agent-card:hover { border-color: var(--accent); }
 .agent-card.status-running { border-left: 3px solid var(--accent2); }
 .agent-card.status-dead { border-left: 3px solid var(--danger); }
 .agent-card.status-starting { border-left: 3px solid var(--accent); }
