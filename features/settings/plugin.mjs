@@ -726,6 +726,9 @@ export default {
           progress('clone-team', teamId);
           const teamDir = path.join(dataDir, 'teams', teamId);
           const configDir = path.join(teamDir, 'config');
+          // Back up user config files before cloning so a force-reinstall doesn't wipe
+          // credentials and team-specific settings stored in config/ (e.g. gh-token, team.json).
+          // The backed-up buffers are written back immediately after the clone.
           const configBackup = {};
           if (force && fs.existsSync(configDir)) {
             for (const f of fs.readdirSync(configDir)) {

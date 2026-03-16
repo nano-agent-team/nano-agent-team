@@ -30,13 +30,14 @@
                 <span class="catalog-type">{{ item.type === 'team' ? 'Tým' : 'Agent' }}</span>
                 <span v-if="installedItems.includes(item.id)" class="badge-installed">✓ Nainstalováno</span>
               </div>
-              <div style="display:flex;align-items:center;gap:8px">
+              <div class="catalog-card-actions">
                 <button
                   v-if="installedItems.includes(item.id)"
                   class="btn-update"
                   :disabled="updatingItem === item.id"
                   @click.stop="updateItem(item.id)"
                 >{{ updatingItem === item.id ? 'Aktualizuji...' : '↻ Aktualizovat' }}</button>
+                <span v-if="updateError === item.id" class="error-msg update-error">Aktualizace selhala</span>
                 <span class="catalog-toggle">{{ expandedItem === item.id ? '▲' : '▼' }}</span>
               </div>
             </div>
@@ -145,7 +146,7 @@
         </div>
         <div class="field-row" style="margin-top:8px">
           <label class="field-label"></label>
-          <div style="display:flex;gap:8px;align-items:center">
+          <div class="branch-save-row">
             <button class="btn-secondary" @click="saveHubBranch">Uložit</button>
             <span v-if="hubBranchSaved" style="color:#3fb950;font-size:13px">✓ Uloženo</span>
           </div>
@@ -375,7 +376,7 @@
               <input v-model="obsEndpoints.grafana" class="field-input" placeholder="http://localhost:3000" />
             </div>
           </div>
-          <div style="display:flex;gap:8px;align-items:center;margin-top:12px">
+          <div class="obs-save-row">
             <button class="btn-primary" :disabled="obsSaving" @click="saveObsConfig">
               {{ obsSaving ? 'Ukládám...' : 'Uložit' }}
             </button>
@@ -440,6 +441,9 @@ interface NanoConfig {
     gemini?: { apiKey?: string }
   }
 }
+interface NanoConfigWithHub extends NanoConfig {
+  hub?: { branch?: string }
+}
 
 const tabs = [
   { id: 'hub', label: '🛒 Hub' },
@@ -455,6 +459,7 @@ const catalog = ref<Catalog>({ teams: [], agents: [] })
 const hubBranch = ref('main')
 const hubBranchSaved = ref(false)
 const updatingItem = ref<string | null>(null)
+const updateError = ref<string | null>(null)
 const catalogLoading = ref(false)
 const catalogError = ref('')
 const expandedItem = ref<string | null>(null)
@@ -552,7 +557,7 @@ async function loadConfig() {
       config.value = await res.json() as NanoConfig
       primaryProvider.value = config.value.primaryProvider ?? 'claude'
       claudeApiKey.value = config.value.providers?.claude?.apiKey ?? ''
-      hubBranch.value = (config.value as Record<string, unknown> & { hub?: { branch?: string } })?.hub?.branch ?? 'main'
+      hubBranch.value = (config.value as NanoConfigWithHub)?.hub?.branch ?? 'main'
       codexApiKey.value = config.value.providers?.codex?.apiKey ?? ''
       geminiApiKey.value = config.value.providers?.gemini?.apiKey ?? ''
       void loadTeamSetupStatuses(config.value.installed?.teams ?? [])
@@ -760,15 +765,18 @@ async function saveProviderConfig(provider: string) {
 
 async function updateItem(id: string) {
   updatingItem.value = id
+  updateError.value = null
   try {
-    await fetch('/api/hub/install', {
+    const res = await fetch('/api/hub/install', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ items: [id], force: true }),
     })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
     await fetch('/internal/reload', { method: 'POST' })
   } catch (e) {
     console.error('Update failed:', e)
+    updateError.value = id
   } finally {
     updatingItem.value = null
   }
@@ -1069,6 +1077,10 @@ async function loginCodexSubscription() {
 .btn-toggle:hover { border-color: var(--text-muted, #8b949e); }
 .obs-endpoints { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--bg, #0d1117); border-radius: 6px; }
 .obs-saved { font-size: 12px; color: var(--accent2, #3fb950); }
+.obs-save-row { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+.branch-save-row { display: flex; gap: 8px; align-items: center; }
+.catalog-card-actions { display: flex; align-items: center; gap: 8px; }
+.update-error { font-size: 12px; }
 
 /* Multi-Provider Configuration */
 .provider-selector { display: flex; gap: 8px; margin: 12px 0; }
