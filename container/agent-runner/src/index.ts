@@ -168,8 +168,14 @@ async function main(): Promise<void> {
       busy: isBusy,
       ...(currentTask ? { task: currentTask } : {}),
     };
-    nc.publish(`health.${AGENT_ID}`, codec.encode(JSON.stringify(payload)));
-    log.debug({ agentId: AGENT_ID }, 'Heartbeat sent');
+    try {
+      nc.publish(`health.${AGENT_ID}`, codec.encode(JSON.stringify(payload)));
+      log.debug({ agentId: AGENT_ID }, 'Heartbeat sent');
+    } catch (err) {
+      log.warn({ err }, 'Heartbeat publish failed — NATS connection lost, exiting');
+      clearInterval(heartbeatTimer);
+      process.exit(0);
+    }
   }, HEARTBEAT_INTERVAL_MS);
 
   // ── JetStream consumer pull loop ─────────────────────────────────────────
