@@ -140,8 +140,11 @@ jobs:
 
       - run: npm ci
 
-      - name: API testy (Vitest)
+      - name: API + NATS + Pipeline testy (Vitest)
         run: npm run test:api
+        env:
+          NATS_URL: nats://localhost:4222
+          MOCK_RESPONSE: "Mock provider: task acknowledged."
 
       - name: Nainstaluj Playwright prohlížeče
         run: npx playwright install --with-deps chromium

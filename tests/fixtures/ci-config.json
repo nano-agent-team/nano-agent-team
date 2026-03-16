@@ -1,9 +1,9 @@
 {
   "version": "1",
   "setupCompleted": true,
+  "primaryProvider": "mock",
   "provider": {
-    "type": "claude",
-    "apiKey": "ci-test-key-not-real"
+    "type": "mock"
   },
   "installed": {
     "features": [],

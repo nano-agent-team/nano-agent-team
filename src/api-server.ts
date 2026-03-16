@@ -26,6 +26,7 @@ import { isTracingEnabled } from './tracing/init.js';
 import type { AgentManager } from './agent-manager.js';
 import type { ConfigService } from './config-service.js';
 import type { SetupMode } from './setup-detector.js';
+import { listTickets, getTicket, createTicket, updateTicket, addComment, listComments, type TicketStatus, type TicketPriority, type TicketType } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const codec = StringCodec();
@@ -393,6 +394,98 @@ export async function createApiApp(
       sseClients.delete(res);
       logger.debug({ clients: sseClients.size }, 'SSE client disconnected');
     });
+  });
+
+  // ── Tickets REST API ─────────────────────────────────────────────────────
+
+  app.get('/api/tickets', (req: Request, res: Response) => {
+    try {
+      const { status, priority, assigned_to } = req.query as Record<string, string | undefined>;
+      const tickets = listTickets({ status, priority, assigned_to });
+      res.json(tickets);
+    } catch (err) {
+      logger.error({ err }, 'GET /api/tickets error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.post('/api/tickets', (req: Request, res: Response) => {
+    try {
+      const { title, status, priority, type, parent_id, blocked_by, author, assigned_to, labels, body, model_hint } =
+        req.body as {
+          title?: string;
+          status?: TicketStatus;
+          priority?: TicketPriority;
+          type?: TicketType;
+          parent_id?: string;
+          blocked_by?: string;
+          author?: string;
+          assigned_to?: string;
+          labels?: string;
+          body?: string;
+          model_hint?: string;
+        };
+      if (!title) return res.status(400).json({ error: '"title" is required' });
+      const ticket = createTicket({ title, status, priority, type, parent_id, blocked_by, author, assigned_to, labels, body, model_hint });
+      emitSseEvent('ticket_created', { ticket });
+      res.status(201).json(ticket);
+    } catch (err) {
+      logger.error({ err }, 'POST /api/tickets error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.get('/api/tickets/:id', (req: Request, res: Response) => {
+    try {
+      const ticket = getTicket(req.params.id);
+      if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+      res.json(ticket);
+    } catch (err) {
+      logger.error({ err }, 'GET /api/tickets/:id error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.patch('/api/tickets/:id', (req: Request, res: Response) => {
+    try {
+      const ticket = getTicket(req.params.id);
+      if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+      const updated = updateTicket(req.params.id, req.body as Parameters<typeof updateTicket>[1], req.body.changed_by);
+      if (!updated) return res.status(404).json({ error: 'Ticket not found' });
+      emitSseEvent('ticket_updated', { ticket: updated });
+      res.json(updated);
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('CHECK constraint')) {
+        return res.status(400).json({ error: 'Invalid field value', detail: err.message });
+      }
+      logger.error({ err }, 'PATCH /api/tickets/:id error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.get('/api/tickets/:id/comments', (req: Request, res: Response) => {
+    try {
+      const ticket = getTicket(req.params.id);
+      if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+      res.json(listComments(req.params.id));
+    } catch (err) {
+      logger.error({ err }, 'GET /api/tickets/:id/comments error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.post('/api/tickets/:id/comments', (req: Request, res: Response) => {
+    try {
+      const ticket = getTicket(req.params.id);
+      if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
+      const { author, body } = req.body as { author?: string; body?: string };
+      if (!author || !body) return res.status(400).json({ error: '"author" and "body" are required' });
+      const comment = addComment(req.params.id, author, body);
+      res.status(201).json(comment);
+    } catch (err) {
+      logger.error({ err }, 'POST /api/tickets/:id/comments error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
   });
 
   // ── Chat with settings agent (NATS bridge) ────────────────────────────────

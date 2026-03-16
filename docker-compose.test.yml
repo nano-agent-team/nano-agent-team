@@ -3,8 +3,9 @@
 # Spuštění: docker compose -f docker-compose.test.yml up -d
 #
 # Rozdíly oproti produkci:
-#   - Namountuje předkonfigurovaný config.json (setupCompleted=true, fake API key)
-#   - Agenti startují ale bez reálných LLM credentials (expected v CI)
+#   - Namountuje předkonfigurovaný config.json (setupCompleted=true, primaryProvider=mock)
+#   - Agenti používají MockProvider — žádné reálné LLM API volání
+#   - Port 4222 (NATS) je vystavený pro NATS integration testy
 #   - restart: no (CI nepotřebuje auto-restart)
 
 services:
@@ -16,12 +17,13 @@ services:
     stop_grace_period: 30s
     ports:
       - "3001:3001"
+      - "4222:4222"     # NATS — pro integration testy
     volumes:
       - data:/data
       - ./tests/fixtures/ci-config.json:/data/config.json:ro
     environment:
-      - ANTHROPIC_API_KEY=ci-test-key-not-real
       - LOG_LEVEL=warn
+      - MOCK_RESPONSE=Mock provider: task acknowledged.
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
       interval: 10s
