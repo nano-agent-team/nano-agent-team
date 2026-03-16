@@ -309,19 +309,21 @@
               <div class="connect-modal-inner">
                 <h3>Propojit GitHub</h3>
 
-                <!-- Step 1: existing or new app -->
+                <!-- Krok 1: Máš existující app? -->
+                <p class="connect-step-label">Krok 1 — GitHub App</p>
                 <label class="connect-option" :class="{ active: connectMode === 'new' }">
                   <input type="radio" v-model="connectMode" value="new">
-                  <div><strong>Vytvořit novou GitHub App</strong><span>Automatické nastavení přes GitHub</span></div>
+                  <div><strong>Vytvořit novou</strong><span>GitHub App se vytvoří automaticky</span></div>
                 </label>
                 <label class="connect-option" :class="{ active: connectMode === 'existing' }">
                   <input type="radio" v-model="connectMode" value="existing">
-                  <div><strong>Mám existující GitHub App</strong><span>Použít již vytvořenou app</span></div>
+                  <div><strong>Použít existující</strong><span>Mám už vytvořenou GitHub App</span></div>
                 </label>
 
-                <!-- New app: personal/org -->
+                <!-- Krok 2a: Nová app — personal/org -->
                 <template v-if="connectMode === 'new'">
-                  <label class="connect-option" style="margin-top:8px" :class="{ active: connectTarget === 'personal' }">
+                  <p class="connect-step-label" style="margin-top:14px">Krok 2 — Typ účtu</p>
+                  <label class="connect-option" :class="{ active: connectTarget === 'personal' }">
                     <input type="radio" v-model="connectTarget" value="personal">
                     <div><strong>Osobní účet</strong><span>github.com/váš-username</span></div>
                   </label>
@@ -332,14 +334,15 @@
                   <input v-if="connectTarget === 'org'" v-model="connectOrg" class="connect-org-input" type="text" placeholder="Název organizace (např. my-company)" autofocus>
                 </template>
 
-                <!-- Existing app: slug + appId + pem -->
+                <!-- Krok 2b: Existující app — slug + appId + pem -->
                 <template v-if="connectMode === 'existing'">
-                  <p style="font-size:12px;color:#8b949e;margin:8px 0 4px">
+                  <p class="connect-step-label" style="margin-top:14px">Krok 2 — Údaje aplikace</p>
+                  <p style="font-size:12px;color:#8b949e;margin:0 0 8px">
                     Najdi svou app na <a href="https://github.com/settings/apps" target="_blank" style="color:#58a6ff">github.com/settings/apps</a>
                   </p>
                   <input v-model="connectSlug" class="connect-org-input" type="text" placeholder="App slug (z URL: github.com/apps/tento-text)" style="margin-bottom:6px">
-                  <input v-model="connectAppId" class="connect-org-input" type="text" placeholder="App ID (číslo)">
-                  <textarea v-model="connectPem" class="connect-org-input" rows="5" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----" style="font-family:monospace;font-size:11px;resize:vertical;margin-top:6px"></textarea>
+                  <input v-model="connectAppId" class="connect-org-input" type="text" placeholder="App ID (číslo)" style="margin-bottom:6px">
+                  <textarea v-model="connectPem" class="connect-org-input" rows="5" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----" style="font-family:monospace;font-size:11px;resize:vertical"></textarea>
                 </template>
 
                 <div class="connect-modal-actions">
@@ -1052,6 +1055,7 @@ async function loginCodexSubscription() {
 .setup-badge { font-size: 12px; color: #f0883e; display: flex; align-items: center; gap: 6px; }
 .setup-badge.setup-ok { color: #3fb950; }
 .btn-link { background: none; border: none; color: #58a6ff; cursor: pointer; font-size: 12px; padding: 0; text-decoration: underline; }
+.connect-step-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: #8b949e; margin: 0 0 6px; }
 .connect-modal { width: 100%; margin-top: 12px; }
 .connect-modal-inner { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 20px; max-width: 420px; }
 .connect-modal-inner h3 { margin: 0 0 4px; font-size: 15px; }
