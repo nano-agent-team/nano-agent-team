@@ -722,10 +722,23 @@ export default {
         }
 
         try {
-          // 1. Clone team manifest
+          // 1. Clone team manifest (preserve config files across force reinstall)
           progress('clone-team', teamId);
           const teamDir = path.join(dataDir, 'teams', teamId);
+          const configDir = path.join(teamDir, 'config');
+          const configBackup = {};
+          if (force && fs.existsSync(configDir)) {
+            for (const f of fs.readdirSync(configDir)) {
+              try { configBackup[f] = fs.readFileSync(path.join(configDir, f)); } catch { /* skip */ }
+            }
+          }
           hubSparseClone(`teams/${teamId}`, teamDir);
+          if (force && Object.keys(configBackup).length > 0) {
+            fs.mkdirSync(configDir, { recursive: true });
+            for (const [f, buf] of Object.entries(configBackup)) {
+              fs.writeFileSync(path.join(configDir, f), buf);
+            }
+          }
 
           // 1b. Symlink node_modules into plugin-dist so ESM can resolve packages
           const pluginDistDir = path.join(teamDir, 'plugin-dist');
