@@ -62,7 +62,7 @@ function deepMerge(target, source) {
 }
 
 export default {
-  async register(app, _nc, _manager, opts) {
+  async register(app, _nc, manager, opts) {
     const { dataDir, configService, emitSseEvent, reloadFeatures } = opts;
     const configPath = path.join(dataDir, 'config.json');
 
@@ -540,6 +540,30 @@ export default {
         return res.json({ ok: true, path: 'config.json' });
       }
       res.json({ ok: false });
+    });
+
+    // ── POST /api/system/restart-agents — kill agent containers so health monitor restarts them ──
+    app.post('/api/system/restart-agents', async (req, res) => {
+      try {
+        if (!manager) return res.status(503).json({ error: 'AgentManager not available' });
+        const states = manager.getStates().filter(s => s.status === 'running' && s.containerId);
+        const ids = states.map(s => s.agentId);
+
+        const { default: Dockerode } = await import('dockerode');
+        const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
+
+        for (const s of states) {
+          try {
+            const container = docker.getContainer(s.containerId);
+            await container.kill({ signal: 'SIGTERM' });
+          } catch { /* ignore if already stopped */ }
+        }
+
+        console.log(`[settings] Killed agents for restart: ${ids.join(', ')}`);
+        res.json({ ok: true, restarted: ids });
+      } catch (err) {
+        res.status(500).json({ error: String(err) });
+      }
     });
 
     // ── GET /api/hub/catalog ─────────────────────────────────────────────────

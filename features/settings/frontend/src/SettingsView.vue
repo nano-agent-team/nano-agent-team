@@ -1032,6 +1032,7 @@ async function submitClaudeOauthCode() {
     if (data.ok) {
       claudeLoggedIn.value = true
       claudeOauthState.value = 'done'
+      fetch('/api/system/restart-agents', { method: 'POST' }).catch(() => {})
     } else {
       claudeOauthError.value = data.error ?? 'Přihlášení selhalo'
     }
