@@ -10,7 +10,7 @@
     "test:e2e": "playwright test",
     "test": "npm run test:api && npm run test:e2e",
     "oauth-setup": "node dist/oauth-flow.js",
-    "prepare": "husky"
+    "prepare": "husky || true"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
