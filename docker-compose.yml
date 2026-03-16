@@ -23,6 +23,11 @@ services:
       # Self-update: host Docker socket + project source dir
       # These allow the Update button in Settings to rebuild and restart the container.
       # Data in /data is always preserved (volume mount above).
+      #
+      # SECURITY NOTE: Mounting the host Docker socket grants the container equivalent
+      # of root access on the host. This is intentional for self-update in a
+      # trusted single-user/team deployment. Do NOT expose this setup on public networks.
+      # If self-update is not needed, remove these two lines.
       - /var/run/docker.sock:/var/run/host-docker.sock
       - .:/host-source
     environment:
