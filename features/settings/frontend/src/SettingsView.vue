@@ -30,7 +30,15 @@
                 <span class="catalog-type">{{ item.type === 'team' ? 'Tým' : 'Agent' }}</span>
                 <span v-if="installedItems.includes(item.id)" class="badge-installed">✓ Nainstalováno</span>
               </div>
-              <span class="catalog-toggle">{{ expandedItem === item.id ? '▲' : '▼' }}</span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <button
+                  v-if="installedItems.includes(item.id)"
+                  class="btn-update"
+                  :disabled="updatingItem === item.id"
+                  @click.stop="updateItem(item.id)"
+                >{{ updatingItem === item.id ? 'Aktualizuji...' : '↻ Aktualizovat' }}</button>
+                <span class="catalog-toggle">{{ expandedItem === item.id ? '▲' : '▼' }}</span>
+              </div>
             </div>
 
             <div v-if="expandedItem === item.id" class="requires-form">
@@ -449,6 +457,7 @@ const status = ref<ConfigStatus>({ complete: false, missing: [], setupCompleted:
 const catalog = ref<Catalog>({ teams: [], agents: [] })
 const hubBranch = ref('main')
 const hubBranchSaved = ref(false)
+const updatingItem = ref<string | null>(null)
 const catalogLoading = ref(false)
 const catalogError = ref('')
 const expandedItem = ref<string | null>(null)
@@ -753,6 +762,22 @@ async function saveProviderConfig(provider: string) {
   }
 }
 
+async function updateItem(id: string) {
+  updatingItem.value = id
+  try {
+    await fetch('/api/hub/install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: [id], force: true }),
+    })
+    await fetch('/internal/reload', { method: 'POST' })
+  } catch (e) {
+    console.error('Update failed:', e)
+  } finally {
+    updatingItem.value = null
+  }
+}
+
 async function saveHubBranch() {
   await fetch('/api/config/set-path', {
     method: 'POST',
@@ -953,6 +978,9 @@ async function loginCodexSubscription() {
   cursor: pointer;
 }
 .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-update { padding: 4px 10px; background: none; border: 1px solid #388bfd; border-radius: 6px; color: #58a6ff; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.btn-update:hover { background: #1c2433; }
+.btn-update:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .btn-copy {
   padding: 4px 10px;
