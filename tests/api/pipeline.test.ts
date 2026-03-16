@@ -12,7 +12,7 @@
 
 import { connect, StringCodec } from 'nats';
 
-const BASE = 'http://localhost:3001';
+const BASE = process.env.BASE_URL ?? 'http://localhost:3001';
 const NATS_URL = process.env.NATS_URL ?? 'nats://localhost:4222';
 const MOCK_RESPONSE = process.env.MOCK_RESPONSE ?? 'Mock provider: task acknowledged.';
 
@@ -63,7 +63,7 @@ describe('E2 — Agent restart po pádu', () => {
     const initialRestartCount = agent!.restartCount;
 
     // Zastavíme kontejner agenta (simulace pádu)
-    await fetch(`http://localhost:3001/api/health`); // jen pro jistotu že app běží
+    await fetch(`${BASE}/api/health`); // jen pro jistotu že app běží
     // Kontejner killneme přes docker CLI uvnitř nate kontejneru — přes speciální endpoint není
     // možné, proto testujeme restart detection přes dlouhý timeout nebo skip
     // Tento test je integrace s Docker démonem — v CI se spouští uvnitř DinD

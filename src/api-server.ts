@@ -332,11 +332,12 @@ export async function createApiApp(
     // Also scan /data/teams/*/agents/ and start team agents
     const dataTeamsDir = path.join(DATA_DIR, 'teams');
     if (fs.existsSync(dataTeamsDir)) {
+      const { loadAgents: loadTeamAgents } = await import('./agent-registry.js');
       for (const teamEntry of fs.readdirSync(dataTeamsDir, { withFileTypes: true })) {
         if (!teamEntry.isDirectory()) continue;
         const teamAgentsDir = path.join(dataTeamsDir, teamEntry.name, 'agents');
         if (!fs.existsSync(teamAgentsDir)) continue;
-        const teamAgents = loadAgents(teamAgentsDir);
+        const teamAgents = loadTeamAgents(teamAgentsDir);
         for (const agent of teamAgents) {
           if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
             await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
