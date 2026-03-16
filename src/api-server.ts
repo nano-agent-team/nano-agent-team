@@ -327,6 +327,7 @@ export async function createApiApp(
     for (const agent of builtinAgents) {
       if (agent.manifest.id === 'settings') continue; // already running
       if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
+        await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
         await manager.startAgent(agent);
       }
     }
