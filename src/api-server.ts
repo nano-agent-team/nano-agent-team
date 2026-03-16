@@ -107,7 +107,7 @@ export async function loadFeature(
 
   try {
     logger.info({ featureId, pluginPath }, 'Loading feature');
-    const mod = await import(pluginPath) as { default?: TeamPlugin } | TeamPlugin;
+    const mod = await import(`${pluginPath}?v=${Date.now()}`) as { default?: TeamPlugin } | TeamPlugin;
     const plugin = ('default' in mod ? mod.default : mod) as TeamPlugin | undefined;
 
     if (plugin && typeof plugin.register === 'function') {
@@ -168,7 +168,7 @@ async function loadTeamPlugins(
   for (const pluginPath of pluginPaths) {
     try {
       logger.info({ plugin: pluginPath }, 'Loading team plugin');
-      const mod = await import(pluginPath) as { default?: TeamPlugin } | TeamPlugin;
+      const mod = await import(`${pluginPath}?v=${Date.now()}`) as { default?: TeamPlugin } | TeamPlugin;
       const plugin = ('default' in mod ? mod.default : mod) as TeamPlugin | undefined;
 
       if (plugin && typeof plugin.register === 'function') {

@@ -308,25 +308,47 @@
             <div v-if="connectModal === t" class="connect-modal">
               <div class="connect-modal-inner">
                 <h3>Propojit GitHub</h3>
-                <p>Vyber typ účtu</p>
-                <label class="connect-option" :class="{ active: connectTarget === 'personal' }">
-                  <input type="radio" v-model="connectTarget" value="personal">
-                  <div>
-                    <strong>Osobní účet</strong>
-                    <span>github.com/váš-username</span>
-                  </div>
+
+                <!-- Step 1: existing or new app -->
+                <label class="connect-option" :class="{ active: connectMode === 'new' }">
+                  <input type="radio" v-model="connectMode" value="new">
+                  <div><strong>Vytvořit novou GitHub App</strong><span>Automatické nastavení přes GitHub</span></div>
                 </label>
-                <label class="connect-option" :class="{ active: connectTarget === 'org' }">
-                  <input type="radio" v-model="connectTarget" value="org">
-                  <div>
-                    <strong>Organizace</strong>
-                    <span>github.com/název-organizace</span>
-                  </div>
+                <label class="connect-option" :class="{ active: connectMode === 'existing' }">
+                  <input type="radio" v-model="connectMode" value="existing">
+                  <div><strong>Mám existující GitHub App</strong><span>Použít již vytvořenou app</span></div>
                 </label>
-                <input v-if="connectTarget === 'org'" v-model="connectOrg" class="connect-org-input" type="text" placeholder="Název organizace (např. my-company)" autofocus>
+
+                <!-- New app: personal/org -->
+                <template v-if="connectMode === 'new'">
+                  <label class="connect-option" style="margin-top:8px" :class="{ active: connectTarget === 'personal' }">
+                    <input type="radio" v-model="connectTarget" value="personal">
+                    <div><strong>Osobní účet</strong><span>github.com/váš-username</span></div>
+                  </label>
+                  <label class="connect-option" :class="{ active: connectTarget === 'org' }">
+                    <input type="radio" v-model="connectTarget" value="org">
+                    <div><strong>Organizace</strong><span>github.com/název-organizace</span></div>
+                  </label>
+                  <input v-if="connectTarget === 'org'" v-model="connectOrg" class="connect-org-input" type="text" placeholder="Název organizace (např. my-company)" autofocus>
+                </template>
+
+                <!-- Existing app: slug + appId + pem -->
+                <template v-if="connectMode === 'existing'">
+                  <p style="font-size:12px;color:#8b949e;margin:8px 0 4px">
+                    Najdi svou app na <a href="https://github.com/settings/apps" target="_blank" style="color:#58a6ff">github.com/settings/apps</a>
+                  </p>
+                  <input v-model="connectSlug" class="connect-org-input" type="text" placeholder="App slug (z URL: github.com/apps/tento-text)" style="margin-bottom:6px">
+                  <input v-model="connectAppId" class="connect-org-input" type="text" placeholder="App ID (číslo)">
+                  <textarea v-model="connectPem" class="connect-org-input" rows="5" placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----" style="font-family:monospace;font-size:11px;resize:vertical;margin-top:6px"></textarea>
+                </template>
+
                 <div class="connect-modal-actions">
                   <button class="btn-secondary" @click="connectModal = null">Zrušit</button>
-                  <button class="btn-primary" :disabled="connectTarget === 'org' && !connectOrg.trim()" @click="submitConnect(teamSetupUrls[t])">Pokračovat na GitHub →</button>
+                  <button
+                    class="btn-primary"
+                    :disabled="connectMode === 'new' ? (connectTarget === 'org' && !connectOrg.trim()) : (!connectSlug.trim() || !connectAppId.trim() || !connectPem.trim())"
+                    @click="submitConnect(teamSetupUrls[t])"
+                  >Pokračovat na GitHub →</button>
                 </div>
               </div>
             </div>
@@ -469,18 +491,38 @@ const installLog = ref<string[]>([])
 function openInNewTab(url: string) { window.open(url, '_blank', 'noopener') }
 
 // Connect modal state
-const connectModal = ref<string | null>(null)   // teamId currently showing modal
+const connectModal = ref<string | null>(null)
+const connectMode = ref<'new' | 'existing'>('new')
 const connectTarget = ref<'personal' | 'org'>('personal')
 const connectOrg = ref('')
+const connectSlug = ref('')
+const connectAppId = ref('')
+const connectPem = ref('')
 
 function openConnectModal(teamId: string) {
   connectModal.value = teamId
+  connectMode.value = 'new'
   connectTarget.value = 'personal'
   connectOrg.value = ''
+  connectSlug.value = ''
+  connectAppId.value = ''
+  connectPem.value = ''
 }
 
-function submitConnect(setupUrl: string) {
-  // Replace only the trailing /start segment to avoid partial matches
+async function submitConnect(setupUrl: string) {
+  if (connectMode.value === 'existing') {
+    const existingUrl = setupUrl.replace(/\/start$/, '/existing')
+    const res = await fetch(existingUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: connectSlug.value.trim(), appId: connectAppId.value.trim(), pem: connectPem.value.trim() }),
+    })
+    const data = await res.json() as { installUrl?: string; error?: string }
+    if (data.installUrl) window.location.href = data.installUrl
+    else alert('Chyba: ' + (data.error ?? 'Neznámá chyba'))
+    return
+  }
+  // New app: POST form to /manifest
   const manifestUrl = setupUrl.replace(/\/start$/, '/manifest')
   const form = document.createElement('form')
   form.method = 'POST'
