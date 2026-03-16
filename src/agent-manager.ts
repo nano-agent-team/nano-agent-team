@@ -204,6 +204,9 @@ export class AgentManager {
       }
       const { provider: providerName, model: baseModel, modelExplicit } = this.resolveAgentProvider(agent, config ?? {});
       const model = vaultConfigEarly.model ?? baseModel;
+      if (vaultConfigEarly.model) {
+        logger.info({ agentId: id, vaultModel: vaultConfigEarly.model, baseModel }, 'Model overridden by vault config');
+      }
 
       // Resolve auth tokens based on provider
       const apiKey = await this.resolveApiKey();

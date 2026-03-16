@@ -388,6 +388,10 @@ export async function createApiApp(
     return /^[a-z0-9-]+$/.test(id);
   }
 
+  /** Simple per-agent restart cooldown (10s) to prevent accidental DoS */
+  const restartCooldowns = new Map<string, number>();
+  const RESTART_COOLDOWN_MS = 10_000;
+
   app.get('/api/agents/:agentId/config', async (req: Request, res: Response) => {
     try {
       const agentId = req.params.agentId;
@@ -439,8 +443,13 @@ export async function createApiApp(
         }
       }
 
-      if (customInstructions !== undefined && typeof customInstructions !== 'string') {
-        return res.status(400).json({ error: 'customInstructions must be a string' });
+      if (customInstructions !== undefined) {
+        if (typeof customInstructions !== 'string') {
+          return res.status(400).json({ error: 'customInstructions must be a string' });
+        }
+        if (customInstructions.length > 10_000) {
+          return res.status(400).json({ error: 'customInstructions exceeds 10KB limit' });
+        }
       }
 
       const vaultAgentsDir = path.join(DATA_DIR, 'vault', 'agents');
@@ -467,6 +476,13 @@ export async function createApiApp(
 
       const agent = manager.getAgent(agentId);
       if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+      const lastRestart = restartCooldowns.get(agentId) ?? 0;
+      if (Date.now() - lastRestart < RESTART_COOLDOWN_MS) {
+        return res.status(429).json({ error: 'Restart cooldown active, please wait' });
+      }
+      restartCooldowns.set(agentId, Date.now());
+
       await manager.restartAgent(agentId);
       res.json({ ok: true });
     } catch (err) {

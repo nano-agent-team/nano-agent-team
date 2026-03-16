@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div class="modal-backdrop" @click.self="$emit('close')" @keydown.esc="$emit('close')">
+    <div class="modal-backdrop" @click.self="$emit('close')">
       <div class="modal" role="dialog" aria-modal="true">
         <!-- Header -->
         <div class="modal-header">
@@ -51,12 +51,12 @@
         <div class="modal-footer">
           <div class="footer-left">
             <button class="btn btn-primary" :disabled="saveStatus === 'saving'" @click="save">
-              {{ saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : saveStatus === 'error' ? 'Error' : 'Save' }}
+              {{ saveButtonText }}
             </button>
           </div>
           <div class="footer-right">
             <button class="btn btn-secondary" :disabled="restartStatus === 'restarting'" @click="restart">
-              {{ restartStatus === 'restarting' ? 'Restarting...' : restartStatus === 'done' ? 'Done!' : restartStatus === 'error' ? 'Error' : 'Restart agent' }}
+              {{ restartButtonText }}
             </button>
           </div>
         </div>
@@ -66,7 +66,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 interface AgentManifest {
   id: string
@@ -89,6 +89,24 @@ type RestartStatus = 'idle' | 'restarting' | 'done' | 'error'
 
 const saveStatus = ref<SaveStatus>('idle')
 const restartStatus = ref<RestartStatus>('idle')
+
+const saveButtonText = computed(() => {
+  switch (saveStatus.value) {
+    case 'saving': return 'Saving...'
+    case 'saved': return 'Saved!'
+    case 'error': return 'Error'
+    default: return 'Save'
+  }
+})
+
+const restartButtonText = computed(() => {
+  switch (restartStatus.value) {
+    case 'restarting': return 'Restarting...'
+    case 'done': return 'Done!'
+    case 'error': return 'Error'
+    default: return 'Restart agent'
+  }
+})
 
 async function loadConfig() {
   try {

@@ -15,7 +15,6 @@
         v-for="agent in agents"
         :key="agent.agentId"
         :class="['agent-card', `status-${agent.status}`, agent.busy ? 'agent-busy' : '']"
-        style="cursor: pointer"
         @click="selectedAgentId = agent.agentId"
       >
         <div class="agent-header">
@@ -153,6 +152,7 @@ onUnmounted(() => clearInterval(interval))
   transition: border-color 0.2s;
 }
 
+.agent-card { cursor: pointer; }
 .agent-card:hover { border-color: var(--accent); }
 .agent-card.status-running { border-left: 3px solid var(--accent2); }
 .agent-card.status-dead { border-left: 3px solid var(--danger); }
