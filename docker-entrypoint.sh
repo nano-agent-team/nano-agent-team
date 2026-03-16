@@ -53,7 +53,13 @@ mkdir -p \
   "$DATA_DIR/workspaces" \
   "$DATA_DIR/vault/public" \
   "$DATA_DIR/vault/agents" \
-  "$DATA_DIR/vault/teams"
+  "$DATA_DIR/vault/teams" \
+  "$DATA_DIR/.claude" \
+  "$DATA_DIR/.codex"
+
+# Store Claude/Codex credentials inside the data volume (host-independent)
+ln -sfn "$DATA_DIR/.claude" /root/.claude
+ln -sfn "$DATA_DIR/.codex" /root/.codex
 
 # Log startup mode
 if [ -f "$DATA_DIR/config.json" ]; then
