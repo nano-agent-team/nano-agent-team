@@ -10,7 +10,7 @@
 
 import { connect, StringCodec } from 'nats';
 
-const BASE = 'http://localhost:3001';
+const BASE = process.env.BASE_URL ?? 'http://localhost:3001';
 const NATS_URL = process.env.NATS_URL ?? 'nats://localhost:4222';
 
 describe('C1 — NATS konektivita', () => {

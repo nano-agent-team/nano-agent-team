@@ -22,8 +22,8 @@ services:
       - data:/data
       - ./tests/fixtures/ci-config.json:/data/config.json:ro
     environment:
-      - LOG_LEVEL=warn
-      - MOCK_RESPONSE=Mock provider: task acknowledged.
+      LOG_LEVEL: warn
+      MOCK_RESPONSE: "Mock provider: task acknowledged."
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
       interval: 10s

@@ -3,7 +3,7 @@
  * Předpoklad: aplikace běží na http://localhost:3001
  */
 
-const BASE = 'http://localhost:3001';
+const BASE = process.env.BASE_URL ?? 'http://localhost:3001';
 
 describe('A1 — GET /api/health', () => {
   let body: Record<string, unknown>;
