@@ -196,7 +196,14 @@ export class AgentManager {
       }
 
       // Resolve provider and model for this agent
-      const { provider: providerName, model, modelExplicit } = this.resolveAgentProvider(agent, config ?? {});
+      // Vault config override is loaded below after teamConfigBlock — read it early for model resolution
+      const vaultConfigPathEarly = path.join(DATA_DIR, 'vault', 'agents', `${id}.json`);
+      let vaultConfigEarly: { model?: string } = {};
+      if (fs.existsSync(vaultConfigPathEarly)) {
+        try { vaultConfigEarly = JSON.parse(fs.readFileSync(vaultConfigPathEarly, 'utf8')); } catch { /* ignore */ }
+      }
+      const { provider: providerName, model: baseModel, modelExplicit } = this.resolveAgentProvider(agent, config ?? {});
+      const model = vaultConfigEarly.model ?? baseModel;
 
       // Resolve auth tokens based on provider
       const apiKey = await this.resolveApiKey();
@@ -240,6 +247,15 @@ export class AgentManager {
       // Inject team config into agent's system prompt
       if (teamConfigBlock && claudeMdContent) {
         claudeMdContent += teamConfigBlock;
+      }
+
+      // Load vault custom instructions (appended after base CLAUDE.md + team config)
+      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${id}.md`);
+      if (fs.existsSync(customInstructionsPath)) {
+        const customContent = fs.readFileSync(customInstructionsPath, 'utf8').trim();
+        if (customContent) {
+          claudeMdContent += `\n\n## Custom instructions\n\n${customContent}`;
+        }
       }
 
       const env = [
@@ -399,6 +415,10 @@ export class AgentManager {
     }
   }
 
+  getAgent(agentId: string): LoadedAgent | undefined {
+    return this.states.get(agentId)?.agent;
+  }
+
   /**
    * Return current agent states snapshot (for health API).
    */
@@ -515,7 +535,7 @@ export class AgentManager {
     await this.restartAgent(agentId);
   }
 
-  private async restartAgent(agentId: string): Promise<void> {
+  async restartAgent(agentId: string): Promise<void> {
     const state = this.states.get(agentId);
     if (!state) return;
 

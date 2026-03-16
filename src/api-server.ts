@@ -381,6 +381,75 @@ export async function createApiApp(
     }
   });
 
+  // ── Agent config endpoints ────────────────────────────────────────────────
+
+  app.get('/api/agents/:agentId/config', async (req: Request, res: Response) => {
+    try {
+      const agent = manager.getAgent(req.params.agentId);
+      if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+      const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
+      const baseInstructions = fs.existsSync(claudeMdPath)
+        ? fs.readFileSync(claudeMdPath, 'utf8')
+        : '';
+
+      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${req.params.agentId}.md`);
+      const customInstructions = fs.existsSync(customInstructionsPath)
+        ? fs.readFileSync(customInstructionsPath, 'utf8')
+        : null;
+
+      const customConfigPath = path.join(DATA_DIR, 'vault', 'agents', `${req.params.agentId}.json`);
+      let customConfig: { model?: string } = {};
+      if (fs.existsSync(customConfigPath)) {
+        try { customConfig = JSON.parse(fs.readFileSync(customConfigPath, 'utf8')); } catch { /* ignore */ }
+      }
+
+      res.json({ manifest: agent.manifest, baseInstructions, customInstructions, customConfig });
+    } catch (err) {
+      logger.error({ err }, 'GET /api/agents/:agentId/config error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.put('/api/agents/:agentId/config', (req: Request, res: Response) => {
+    try {
+      const agent = manager.getAgent(req.params.agentId);
+      if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+      const { customInstructions, customConfig } = req.body as {
+        customInstructions?: string;
+        customConfig?: { model?: string };
+      };
+
+      const vaultAgentsDir = path.join(DATA_DIR, 'vault', 'agents');
+      fs.mkdirSync(vaultAgentsDir, { recursive: true });
+
+      if (customInstructions !== undefined) {
+        fs.writeFileSync(path.join(vaultAgentsDir, `${req.params.agentId}.md`), customInstructions, 'utf8');
+      }
+      if (customConfig !== undefined) {
+        fs.writeFileSync(path.join(vaultAgentsDir, `${req.params.agentId}.json`), JSON.stringify(customConfig, null, 2), 'utf8');
+      }
+
+      res.json({ ok: true });
+    } catch (err) {
+      logger.error({ err }, 'PUT /api/agents/:agentId/config error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  app.post('/api/agents/:agentId/restart', async (req: Request, res: Response) => {
+    try {
+      const agent = manager.getAgent(req.params.agentId);
+      if (!agent) return res.status(404).json({ error: 'Agent not found' });
+      await manager.restartAgent(req.params.agentId);
+      res.json({ ok: true });
+    } catch (err) {
+      logger.error({ err }, 'POST /api/agents/:agentId/restart error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── SSE stream ────────────────────────────────────────────────────────────
 
   app.get('/api/events', (req: Request, res: Response) => {
