@@ -14,7 +14,7 @@ services:
     ports:
       - "${PORT:-3001}:3001"
     volumes:
-      - data:/data            # persistentní data (sessions, vault, workspaces, DB)
+      - ${DATA_DIR:-./data}:/data  # persistentní data (sessions, vault, workspaces, DB)
       - ~/.claude:/root/.claude  # Claude Code credentials (dir auto-created by Docker if missing — run claude auth login to populate)
       - ~/.codex:/root/.codex    # Codex credentials (dir auto-created by Docker if missing — run codex auth to populate)
     healthcheck:
@@ -23,6 +23,3 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-
-volumes:
-  data:
