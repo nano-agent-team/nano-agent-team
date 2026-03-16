@@ -121,6 +121,28 @@
           </div>
         </div>
       </div>
+
+      <!-- Hub source -->
+      <div class="settings-section">
+        <h2>Zdroj hubu</h2>
+        <p class="section-desc">Větev Git repozitáře, ze které se instalují teamy a agenti. Změň na název PR větve pro testování.</p>
+        <div class="field-row">
+          <label class="field-label">Větev</label>
+          <input
+            type="text"
+            :value="hubBranch"
+            placeholder="main"
+            @change="hubBranch = ($event.target as HTMLInputElement).value"
+          />
+        </div>
+        <div class="field-row" style="margin-top:8px">
+          <label class="field-label"></label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn-secondary" @click="saveHubBranch">Uložit</button>
+            <span v-if="hubBranchSaved" style="color:#3fb950;font-size:13px">✓ Uloženo</span>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- ── Tab: Systém ──────────────────────────────────────────────────── -->
@@ -425,6 +447,8 @@ const status = ref<ConfigStatus>({ complete: false, missing: [], setupCompleted:
 
 // Hub catalog
 const catalog = ref<Catalog>({ teams: [], agents: [] })
+const hubBranch = ref('main')
+const hubBranchSaved = ref(false)
 const catalogLoading = ref(false)
 const catalogError = ref('')
 const expandedItem = ref<string | null>(null)
@@ -523,6 +547,7 @@ async function loadConfig() {
       config.value = await res.json() as NanoConfig
       primaryProvider.value = config.value.primaryProvider ?? 'claude'
       claudeApiKey.value = config.value.providers?.claude?.apiKey ?? ''
+      hubBranch.value = (config.value as Record<string, unknown> & { hub?: { branch?: string } })?.hub?.branch ?? 'main'
       codexApiKey.value = config.value.providers?.codex?.apiKey ?? ''
       geminiApiKey.value = config.value.providers?.gemini?.apiKey ?? ''
       void loadTeamSetupStatuses(config.value.installed?.teams ?? [])
@@ -726,6 +751,16 @@ async function saveProviderConfig(provider: string) {
   } catch (e) {
     console.error(`Failed to save ${provider} config:`, e)
   }
+}
+
+async function saveHubBranch() {
+  await fetch('/api/config/set-path', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: 'hub.branch', value: hubBranch.value || 'main' }),
+  })
+  hubBranchSaved.value = true
+  setTimeout(() => { hubBranchSaved.value = false }, 2000)
 }
 
 async function loginCodexSubscription() {
