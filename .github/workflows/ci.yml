@@ -119,17 +119,17 @@ jobs:
 
       - name: Wait for healthy
         run: |
-          echo "Čekám na health check..."
+          echo "Waiting for health check..."
           for i in $(seq 1 24); do
             status=$(curl -sf http://localhost:3001/api/health | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])" 2>/dev/null || echo "")
             if [ "$status" = "ok" ]; then
-              echo "App je ready (pokus $i)"
+              echo "App is ready (attempt $i)"
               exit 0
             fi
-            echo "Pokus $i/24 — čekám 5s..."
+            echo "Attempt $i/24 — waiting 5s..."
             sleep 5
           done
-          echo "Timeout — app se nespustila"
+          echo "Timeout — app failed to start"
           docker compose -f docker-compose.test.yml logs
           exit 1
 
@@ -140,16 +140,16 @@ jobs:
 
       - run: npm ci
 
-      - name: API + NATS + Pipeline testy (Vitest)
+      - name: API + NATS + Pipeline tests (Vitest)
         run: npm run test:api
         env:
           NATS_URL: nats://localhost:4222
           MOCK_RESPONSE: "Mock provider: task acknowledged."
 
-      - name: Nainstaluj Playwright prohlížeče
+      - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: E2E testy (Playwright)
+      - name: E2E tests (Playwright)
         run: npm run test:e2e
 
       - name: Upload Playwright report

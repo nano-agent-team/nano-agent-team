@@ -1,27 +1,27 @@
 ---
 name: Bug report
-about: Nahlásit chybu
+about: Report a bug
 labels: bug
 ---
 
-## Popis chyby
+## Bug description
 
-<!-- Co se stalo? Co jsi očekával/a? -->
+<!-- What happened? What did you expect? -->
 
-## Kroky k reprodukci
+## Steps to reproduce
 
 1.
 2.
 3.
 
-## Prostředí
+## Environment
 
 - OS:
 - Docker:
-- nano-agent-team verze:
+- nano-agent-team version:
 - LLM provider:
 
-## Logy
+## Logs
 
 ```
 # docker compose logs nano-agent-team
