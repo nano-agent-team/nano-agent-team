@@ -32,19 +32,6 @@
             <div class="field-hint">Appended on next restart</div>
           </section>
 
-          <!-- Settings -->
-          <section class="modal-section">
-            <div class="section-label">SETTINGS</div>
-            <div class="field-row">
-              <label class="field-label">Model override</label>
-              <input
-                v-model="modelOverride"
-                class="field-input"
-                type="text"
-                :placeholder="manifest?.model ?? 'default'"
-              />
-            </div>
-          </section>
         </div>
 
         <!-- Footer -->
@@ -82,7 +69,6 @@ const loading = ref(true)
 const manifest = ref<AgentManifest | null>(null)
 const baseInstructions = ref('')
 const customInstructions = ref('')
-const modelOverride = ref('')
 
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error'
 type RestartStatus = 'idle' | 'restarting' | 'done' | 'error'
@@ -121,7 +107,6 @@ async function loadConfig() {
     manifest.value = data.manifest
     baseInstructions.value = data.baseInstructions
     customInstructions.value = data.customInstructions ?? ''
-    modelOverride.value = data.customConfig.model ?? ''
   } catch (e) {
     console.error('Failed to load agent config', e)
   } finally {
@@ -134,7 +119,6 @@ async function save() {
   try {
     const body = {
       customInstructions: customInstructions.value,
-      customConfig: { ...(modelOverride.value ? { model: modelOverride.value } : {}) },
     }
     const res = await fetch(`/api/agents/${props.agentId}/config`, {
       method: 'PUT',
