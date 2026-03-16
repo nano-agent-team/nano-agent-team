@@ -156,6 +156,76 @@
 
     <!-- ── Tab: Systém ──────────────────────────────────────────────────── -->
     <div v-if="activeTab === 'system'" class="settings-body">
+
+      <!-- ── Aktualizace ────────────────────────────────────────────────── -->
+      <div class="settings-section">
+        <h2>🔄 Aktualizace</h2>
+        <p class="section-desc">Data a nastavení jsou vždy zachována — aktualizuje se pouze aplikační kód a Docker image.</p>
+
+        <div v-if="!updateCheckDone" class="update-idle">
+          <button class="btn-secondary" :disabled="updateChecking" @click="checkUpdate">
+            {{ updateChecking ? '⏳ Kontroluji...' : '🔍 Zkontrolovat aktualizace' }}
+          </button>
+        </div>
+
+        <div v-else>
+          <!-- Not enabled -->
+          <div v-if="!updateStatus.selfUpdateEnabled" class="update-status warn">
+            <span>⚠ Self-update není dostupný (chybí mount /host-source nebo /var/run/host-docker.sock).</span>
+            <p class="section-desc" style="margin-top:6px">Spusť manuálně na hostu: <code>./update.sh</code></p>
+          </div>
+
+          <!-- Up to date -->
+          <div v-else-if="updateStatus.upToDate" class="update-status ok">
+            <span>✓ Aktuální</span>
+            <span class="update-meta">větev <code>{{ updateStatus.branch }}</code>, commit <code>{{ updateStatus.commit }}</code></span>
+            <button class="btn-secondary" style="margin-left:auto" @click="checkUpdate">↺ Znovu zkontrolovat</button>
+          </div>
+
+          <!-- Update available -->
+          <div v-else-if="updateStatus.available" class="update-available">
+            <div class="update-status warn">
+              <span>↑ Dostupná aktualizace ({{ updateStatus.pendingCommits?.length ?? '?' }} commit{{ (updateStatus.pendingCommits?.length ?? 0) !== 1 ? 'y' : '' }})</span>
+              <button class="btn-secondary" style="margin-left:auto" @click="checkUpdate">↺ Znovu</button>
+            </div>
+            <ul v-if="updateStatus.pendingCommits?.length" class="pending-commits">
+              <li v-for="c in updateStatus.pendingCommits" :key="c" class="pending-commit">{{ c }}</li>
+            </ul>
+            <button
+              class="btn-primary"
+              :disabled="updating"
+              style="margin-top:8px"
+              @click="runUpdate"
+            >{{ updating ? '⏳ Aktualizuji...' : '🔄 Aktualizovat nyní' }}</button>
+          </div>
+
+          <!-- No update available but enabled -->
+          <div v-else-if="updateStatus.selfUpdateEnabled && !updateStatus.available" class="update-status ok">
+            <span>✓ Aktuální</span>
+            <span v-if="updateStatus.commit" class="update-meta">commit <code>{{ updateStatus.commit }}</code></span>
+            <button class="btn-secondary" style="margin-left:auto" @click="checkUpdate">↺ Znovu</button>
+          </div>
+
+          <!-- Force update button (always shown when self-update enabled) -->
+          <div v-if="updateStatus.selfUpdateEnabled && !updateStatus.available && updateCheckDone" style="margin-top:8px">
+            <button
+              class="btn-secondary"
+              :disabled="updating"
+              @click="runUpdate"
+            >{{ updating ? '⏳ Aktualizuji...' : '🔄 Vynutit přestavění' }}</button>
+          </div>
+        </div>
+
+        <!-- Update progress log -->
+        <div v-if="updateLog.length" class="install-log" style="margin-top:12px">
+          <div
+            v-for="(line, i) in updateLog"
+            :key="i"
+            :class="['install-log-line', line.startsWith('❌') ? 'log-error' : line.startsWith('✅') ? 'log-ok' : '']"
+          >{{ line }}</div>
+        </div>
+      </div>
+
       <div class="settings-section">
         <h2>Stav systému</h2>
         <div class="status-row">
@@ -562,6 +632,92 @@ const codexApiKey = ref('')
 const codexLoginLoading = ref(false)
 const codexLoginStatus = ref('')
 const geminiApiKey = ref('')
+
+// System update
+interface UpdateStatus {
+  selfUpdateEnabled?: boolean
+  available?: boolean
+  upToDate?: boolean
+  branch?: string
+  commit?: string
+  pendingCommits?: string[]
+  error?: string
+}
+const updateCheckDone = ref(false)
+const updateChecking = ref(false)
+const updating = ref(false)
+const updateStatus = ref<UpdateStatus>({})
+const updateLog = ref<string[]>([])
+let updateSse: EventSource | null = null
+
+async function checkUpdate() {
+  updateChecking.value = true
+  try {
+    const res = await fetch('/api/system/update-check')
+    if (res.ok) updateStatus.value = await res.json() as UpdateStatus
+    updateCheckDone.value = true
+  } catch { /* ignore */ }
+  finally { updateChecking.value = false }
+}
+
+const UPDATE_STEP_LABELS: Record<string, string> = {
+  'git-pull':          '📥 Stahuji změny z gitu...',
+  'git-pull-done':     '✅ Git pull OK',
+  'docker-build':      '🔨 Buildím Docker image...',
+  'docker-build-done': '✅ Docker image sestaven',
+  'restart':           '🚀 Restartuji kontejner...',
+  'done':              '✅ Aktualizace dokončena — obnovuji stránku...',
+  'error':             '❌ Chyba:',
+}
+
+async function runUpdate() {
+  updating.value = true
+  updateLog.value = []
+
+  // Subscribe to SSE before calling the API
+  updateSse?.close()
+  updateSse = new EventSource('/api/events')
+  updateSse.addEventListener('system-update-progress', (e) => {
+    const d = JSON.parse(e.data) as { step: string; detail: string }
+    if (d.step === 'output') {
+      if (d.detail.trim()) updateLog.value.push(d.detail)
+    } else {
+      const label = UPDATE_STEP_LABELS[d.step] ?? d.step
+      const line = d.detail ? `${label} ${d.detail}` : label
+      updateLog.value.push(line)
+      if (d.step === 'done') {
+        updateSse?.close()
+        setTimeout(() => window.location.reload(), 4000)
+      }
+      if (d.step === 'error') {
+        updating.value = false
+        updateSse?.close()
+      }
+    }
+  })
+  updateSse.onerror = () => {
+    // SSE drops when container restarts — that's expected
+    if (updating.value) {
+      updateLog.value.push('🔄 Připojení přerušeno (kontejner se restartuje)...')
+      setTimeout(() => window.location.reload(), 5000)
+    }
+    updateSse?.close()
+  }
+
+  try {
+    const res = await fetch('/api/system/update', { method: 'POST' })
+    const data = await res.json() as { ok?: boolean; message?: string; selfUpdateEnabled?: boolean }
+    if (!data.ok) {
+      updateLog.value.push(`❌ ${data.message ?? 'Aktualizace selhala'}`)
+      updating.value = false
+      updateSse?.close()
+    }
+  } catch (e) {
+    updateLog.value.push(`❌ ${String(e)}`)
+    updating.value = false
+    updateSse?.close()
+  }
+}
 
 // Observability
 const obsLevel = ref('none')
@@ -1089,6 +1245,24 @@ async function loginCodexSubscription() {
   font-size: 11px;
   cursor: pointer;
 }
+
+/* Update section */
+.update-idle { display: flex; align-items: center; gap: 10px; }
+.update-status {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  border: 1px solid var(--border, #30363d);
+}
+.update-status.ok { background: rgba(63, 185, 80, 0.08); border-color: rgba(63, 185, 80, 0.3); color: var(--accent2, #3fb950); }
+.update-status.warn { background: rgba(210, 153, 34, 0.08); border-color: rgba(210, 153, 34, 0.3); color: #d29922; }
+.update-meta { font-size: 11px; color: var(--text-muted, #8b949e); }
+.update-available { display: flex; flex-direction: column; gap: 6px; }
+.pending-commits { margin: 0; padding: 8px 12px; list-style: none; background: var(--surface2, #1c2128); border-radius: 6px; display: flex; flex-direction: column; gap: 2px; }
+.pending-commit { font-family: monospace; font-size: 12px; color: var(--text-muted, #8b949e); }
+.log-error { color: #f85149 !important; }
+.log-ok { color: var(--accent2, #3fb950) !important; }
 
 /* System tab */
 .section-desc { font-size: 13px; color: var(--text-muted, #8b949e); margin: 0 0 12px; }

@@ -18,8 +18,12 @@ services:
     volumes:
       # Persistent data: config, SQLite, sessions, vault, workspaces
       - ./data:/data
-      # Docker socket — needed to spawn agent containers
+      # Docker socket — needed to spawn agent containers + self-update
       - /var/run/docker.sock:/var/run/docker.sock
+      # Self-update: project source directory (for git pull + docker build)
+      - .:/host-source
+      # Self-update: SSH keys for git pull over SSH
+      - ~/.ssh:/root/.ssh:ro
       # Claude Code credentials — shared with host so OAuth tokens persist
       - ~/.claude:/root/.claude
       # Codex credentials — shared with host for subscription auth

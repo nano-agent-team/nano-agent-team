@@ -18,6 +18,13 @@ services:
       - "${PORT:-3001}:3001"
     volumes:
       - ${DATA_DIR:-./data}:/data  # persistentní data (sessions, vault, workspaces, DB)
+      - ~/.claude:/root/.claude  # Claude Code credentials (dir auto-created by Docker if missing — run claude auth login to populate)
+      - ~/.codex:/root/.codex    # Codex credentials (dir auto-created by Docker if missing — run codex auth to populate)
+      # Self-update: host Docker socket + project source dir
+      # These allow the Update button in Settings to rebuild and restart the container.
+      # Data in /data is always preserved (volume mount above).
+      - /var/run/docker.sock:/var/run/host-docker.sock
+      - .:/host-source
     environment:
       DATA_DIR: /data
       HOST_DATA_DIR: /data

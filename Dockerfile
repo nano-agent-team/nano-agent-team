@@ -79,7 +79,7 @@ RUN apk add --no-cache \
     nats-server \
     docker \
     docker-cli-compose \
-    openssh-keygen \
+    openssh-client \
     git \
     && rm -rf /var/cache/apk/*
 
@@ -93,7 +93,7 @@ RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
 
 # Production Node.js dependencies only
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev --ignore-scripts
 
 # Compiled TypeScript
 COPY --from=ts-builder /app/dist/ ./dist/
