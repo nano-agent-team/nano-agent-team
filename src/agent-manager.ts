@@ -324,11 +324,17 @@ export class AgentManager {
 
       // Volume: Provider-specific credentials
       // Claude Code credentials → /root/.claude (read-write for session cache)
+      // Claude Code 2.x also needs ~/.claude.json (OAuth token file)
       if (providerName === 'claude' || providerName === 'auto' || !providerName) {
         const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
         if (fs.existsSync(claudeDir)) {
           binds.push(`${claudeDir}:/root/.claude:rw`);
           logger.debug({ id, claudeDir }, 'Mounting .claude dir (rw)');
+        }
+        const claudeJson = path.join(process.env.HOME ?? '/root', '.claude.json');
+        if (fs.existsSync(claudeJson)) {
+          binds.push(`${claudeJson}:/root/.claude.json:rw`);
+          logger.debug({ id }, 'Mounting .claude.json (rw)');
         }
       }
 

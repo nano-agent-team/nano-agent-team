@@ -113,6 +113,18 @@ export default {
         saveConfig(config);
         log.info('OAuth token saved to config.json');
 
+        // Persist ~/.claude.json to data dir so it survives container restarts
+        const claudeJsonSrc = path.join(home, '.claude.json');
+        const claudeJsonDst = path.join(dataDir, '.claude.json');
+        try {
+          if (fs.existsSync(claudeJsonSrc)) {
+            fs.copyFileSync(claudeJsonSrc, claudeJsonDst);
+            log.info('~/.claude.json persisted to data dir');
+          }
+        } catch (e) {
+          log.warn('Could not persist .claude.json to data dir', { err: e?.message });
+        }
+
         // Restart agents so they pick up the new credentials
         if (reloadFeatures) {
           log.info('Reloading agents with new credentials...');
@@ -525,6 +537,12 @@ export default {
 
           // Přečteme token z Claude Code a uložíme do config.json
           await saveOauthTokenToConfig();
+
+          // Verify token was actually saved — if not, code was likely expired
+          const verifyConfig = loadConfig();
+          if (!verifyConfig?.provider?.apiKey) {
+            return res.status(400).json({ error: 'Kód byl přijat, ale přihlášení se nezdařilo (kód mohl vypršet). Zkus to znovu.' });
+          }
           res.json({ ok: true });
         } else {
           const body = await resp.text().catch(() => '');

@@ -60,8 +60,12 @@ mkdir -p \
 # Store Claude/Codex credentials inside the data volume (host-independent)
 ln -sfn "$DATA_DIR/.claude" /root/.claude
 ln -sfn "$DATA_DIR/.codex" /root/.codex
-# Claude Code 2.x stores OAuth token in ~/.claude.json (not ~/.claude/.credentials.json)
-ln -sf "$DATA_DIR/.claude.json" /root/.claude.json
+# Claude Code 2.x stores OAuth token in ~/.claude.json
+# Cannot use symlink — claude uses atomic rename which replaces symlinks
+# Instead: copy from data volume on startup, copy back after OAuth via saveOauthTokenToConfig
+if [ -f "$DATA_DIR/.claude.json" ]; then
+  cp "$DATA_DIR/.claude.json" /root/.claude.json
+fi
 
 # Log startup mode
 if [ -f "$DATA_DIR/config.json" ]; then
