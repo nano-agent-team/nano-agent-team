@@ -70,6 +70,8 @@ describe('C2 — Heartbeat od agentů', () => {
 
 describe('C3 — SSE event při vytvoření ticketu', () => {
   test('přijme ticket_created SSE event po POST /api/tickets', async () => {
+    const expectedTitle = `SSE test ticket C3 ${Date.now()}`;
+
     const eventReceived = new Promise<Record<string, unknown>>((resolve, reject) => {
       const controller = new AbortController();
       const timer = setTimeout(() => {
@@ -96,9 +98,13 @@ describe('C3 — SSE event při vytvoření ticketu', () => {
               if (line.startsWith('event: ')) {
                 event = line.slice(7).trim();
               } else if (line.startsWith('data: ') && event === 'ticket_created') {
-                clearTimeout(timer);
-                resolve(JSON.parse(line.slice(6)) as Record<string, unknown>);
-                return;
+                const data = JSON.parse(line.slice(6)) as Record<string, unknown>;
+                // Filter: only resolve for our specific ticket to avoid parallel test interference
+                if ((data as { ticket?: { title?: string } }).ticket?.title === expectedTitle) {
+                  clearTimeout(timer);
+                  resolve(data);
+                  return;
+                }
               }
             }
           }
@@ -114,10 +120,10 @@ describe('C3 — SSE event při vytvoření ticketu', () => {
     await fetch(`${BASE}/api/tickets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'SSE test ticket C3' }),
+      body: JSON.stringify({ title: expectedTitle }),
     });
 
     const event = await eventReceived;
-    expect((event as { ticket?: { title?: string } }).ticket?.title).toBe('SSE test ticket C3');
+    expect((event as { ticket?: { title?: string } }).ticket?.title).toBe(expectedTitle);
   }, 15_000);
 });

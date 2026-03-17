@@ -159,10 +159,12 @@ async function main(): Promise<void> {
 
   // ── Heartbeat (core NATS, not JetStream) ─────────────────────────────────
   // Track current task for heartbeat reporting
-  let currentTask = '';
+  let baseTask = '';     // task description from incoming message payload
+  let currentTask = '';  // current activity (updated on each tool call)
   let isBusy = false;
+  let heartbeatTimer: ReturnType<typeof setInterval>;
 
-  const heartbeatTimer = setInterval(() => {
+  function publishHeartbeat() {
     const payload: HeartbeatPayload = {
       agentId: AGENT_ID, ts: Date.now(),
       busy: isBusy,
@@ -170,12 +172,40 @@ async function main(): Promise<void> {
     };
     try {
       nc.publish(`health.${AGENT_ID}`, codec.encode(JSON.stringify(payload)));
-      log.debug({ agentId: AGENT_ID }, 'Heartbeat sent');
     } catch (err) {
       log.warn({ err }, 'Heartbeat publish failed — NATS connection lost, exiting');
       clearInterval(heartbeatTimer);
       process.exit(0);
     }
+  }
+
+  /** Maps a provider tool name to a short human-readable activity description. */
+  // NOTE: Update this map when adding new built-in tools
+  function toolActivity(toolName: string): string {
+    // MCP tools: mcp__server__operation_name
+    const mcpMatch = toolName.match(/^mcp__(\w+)__(.+)$/);
+    if (mcpMatch) {
+      const op = mcpMatch[2].replace(/_/g, ' ');
+      return `${mcpMatch[1]}: ${op}`;
+    }
+    const map: Record<string, string> = {
+      Bash: 'running command',
+      Read: 'reading file',
+      Write: 'writing file',
+      Edit: 'editing file',
+      Glob: 'searching files',
+      Grep: 'searching code',
+      WebFetch: 'fetching URL',
+      WebSearch: 'web search',
+      TodoWrite: 'updating todos',
+      TodoRead: 'reading todos',
+    };
+    return map[toolName] ?? toolName;
+  }
+
+  heartbeatTimer = setInterval(() => {
+    publishHeartbeat();
+    log.debug({ agentId: AGENT_ID }, 'Heartbeat sent');
   }, HEARTBEAT_INTERVAL_MS);
 
   // ── JetStream consumer pull loop ─────────────────────────────────────────
@@ -299,13 +329,15 @@ async function main(): Promise<void> {
 
     // Build human-readable task description
     if (ticketId) {
-      currentTask = ticketTitle ? `${ticketId}: ${ticketTitle}` : ticketId;
+      baseTask = ticketTitle ? `${ticketId}: ${ticketTitle}` : ticketId;
     } else if (chatText) {
-      currentTask = chatText.length > 60 ? chatText.slice(0, 57) + '...' : chatText;
+      baseTask = chatText.length > 60 ? chatText.slice(0, 57) + '...' : chatText;
     } else {
-      currentTask = subject.replace('agent.', '').replace('.inbox', '');
+      baseTask = subject.replace('agent.', '').replace('.inbox', '');
     }
+    currentTask = baseTask;
     isBusy = true;
+    publishHeartbeat(); // immediately notify dashboard
 
     // ── Extract trace context from NATS headers ──────────────────────────
     const headerAdapter = msg.headers ? {
@@ -396,6 +428,9 @@ async function main(): Promise<void> {
           sessionId = event.sessionId;
           currentSessionId = sessionId; // track for graceful shutdown
         } else if (event.type === 'tool_call') {
+          // Update current activity and immediately notify dashboard
+          currentTask = baseTask ? `${baseTask} → ${toolActivity(event.toolName)}` : toolActivity(event.toolName);
+          publishHeartbeat();
           // Record tool calls as span events
           if (querySpan) {
             querySpan.span.addEvent('tool_call', { 'tool.name': event.toolName });
@@ -470,7 +505,9 @@ async function main(): Promise<void> {
 
     // Mark agent as idle
     isBusy = false;
+    baseTask = '';
     currentTask = '';
+    publishHeartbeat(); // immediately notify dashboard that agent is idle
 
     msg.ack();
   }
