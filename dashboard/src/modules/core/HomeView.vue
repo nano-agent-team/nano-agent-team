@@ -97,7 +97,7 @@ let interval: ReturnType<typeof setInterval>
 
 onMounted(() => {
   loadHealth()
-  interval = setInterval(loadHealth, 15000)
+  interval = setInterval(loadHealth, 3000)
 })
 
 onUnmounted(() => clearInterval(interval))
