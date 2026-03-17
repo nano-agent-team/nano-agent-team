@@ -62,7 +62,7 @@ function deepMerge(target, source) {
 }
 
 export default {
-  async register(app, _nc, _manager, opts) {
+  async register(app, _nc, manager, opts) {
     const { dataDir, configService, emitSseEvent, reloadFeatures } = opts;
     const configPath = path.join(dataDir, 'config.json');
 
@@ -542,6 +542,30 @@ export default {
       res.json({ ok: false });
     });
 
+    // ── POST /api/system/restart-agents — kill agent containers so health monitor restarts them ──
+    app.post('/api/system/restart-agents', async (req, res) => {
+      try {
+        if (!manager) return res.status(503).json({ error: 'AgentManager not available' });
+        const states = manager.getStates().filter(s => s.status === 'running' && s.containerId);
+        const ids = states.map(s => s.agentId);
+
+        const { default: Dockerode } = await import('dockerode');
+        const docker = new Dockerode({ socketPath: '/var/run/docker.sock' });
+
+        for (const s of states) {
+          try {
+            const container = docker.getContainer(s.containerId);
+            await container.kill({ signal: 'SIGTERM' });
+          } catch (err) { log.warn(`Failed to kill container ${s.containerId}: ${err?.message ?? err}`); }
+        }
+
+        log.info(`Killed agents for restart: ${ids.join(', ')}`);
+        res.json({ ok: true, restarted: ids });
+      } catch (err) {
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
     // ── GET /api/hub/catalog ─────────────────────────────────────────────────
     // Returns available teams/agents from hub GitHub repo (or local fallback)
     app.get('/api/hub/catalog', async (req, res) => {
@@ -820,6 +844,116 @@ export default {
       }
 
       res.json({ ok: true, installed, errors: errors.length ? errors : undefined });
+    });
+
+    // ── GET /api/system/update-check ────────────────────────────────────────
+    // Dev mode (SKIP_DOCKERD=true): host Docker socket is at /var/run/docker.sock
+    // Prod mode (DinD):             host Docker socket is at /var/run/host-docker.sock
+    function resolveDockerSocket() {
+      if (process.env.SKIP_DOCKERD === 'true') return '/var/run/docker.sock';
+      if (fs.existsSync('/var/run/host-docker.sock')) return '/var/run/host-docker.sock';
+      return null;
+    }
+
+    app.get('/api/system/update-check', (req, res) => {
+      const sourceDir = '/host-source';
+      const hasSource = fs.existsSync(path.join(sourceDir, '.git'));
+
+      if (!hasSource) {
+        return res.json({ selfUpdateEnabled: false, available: false });
+      }
+
+      try {
+        spawnSync('git', ['-C', sourceDir, 'fetch', '--quiet'], { encoding: 'utf8', timeout: 15_000 });
+        const local  = spawnSync('git', ['-C', sourceDir, 'rev-parse', 'HEAD'],       { encoding: 'utf8' }).stdout.trim();
+        const remote = spawnSync('git', ['-C', sourceDir, 'rev-parse', '@{u}'],       { encoding: 'utf8' }).stdout.trim();
+        const branch = spawnSync('git', ['-C', sourceDir, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
+
+        if (!remote || local === remote) {
+          return res.json({ selfUpdateEnabled: true, available: false, upToDate: true, branch, commit: local.slice(0, 7) });
+        }
+
+        const logOut = spawnSync('git', ['-C', sourceDir, 'log', '--oneline', 'HEAD..@{u}'], { encoding: 'utf8' }).stdout.trim();
+        return res.json({
+          selfUpdateEnabled: true,
+          available: true,
+          branch,
+          commit: local.slice(0, 7),
+          pendingCommits: logOut ? logOut.split('\n') : [],
+        });
+      } catch (err) {
+        return res.json({ selfUpdateEnabled: true, available: false, error: err?.message });
+      }
+    });
+
+    // ── POST /api/system/update ──────────────────────────────────────────────
+    let updateInProgress = false;
+    app.post('/api/system/update', (req, res) => {
+      if (updateInProgress) {
+        return res.status(409).json({ ok: false, message: 'Update already in progress' });
+      }
+
+      const sourceDir      = '/host-source';
+      const hostDockerSock = resolveDockerSocket();
+      const hasSource = fs.existsSync(path.join(sourceDir, '.git'));
+      const hasDocker = hostDockerSock !== null && fs.existsSync(hostDockerSock);
+
+      if (!hasSource || !hasDocker) {
+        return res.status(400).json({
+          ok: false,
+          selfUpdateEnabled: false,
+          message: 'Self-update není dostupný. Spusť manuálně na hostu: ./update.sh',
+        });
+      }
+
+      updateInProgress = true;
+      // Respond immediately — update runs async, progress via SSE
+      res.json({ ok: true, started: true });
+
+      const progress = (step, detail = '') => {
+        emitSseEvent('system-update-progress', { step, detail, ts: Date.now() });
+        log.info(`[update] ${step}`, { detail });
+      };
+
+      // Helper: run command async, stream output lines to SSE
+      function runStep(cmd, args, opts = {}) {
+        return new Promise((resolve, reject) => {
+          const proc = spawn(cmd, args, { ...opts, stdio: 'pipe' });
+          let stderr = '';
+          proc.stdout?.on('data', d => { for (const line of String(d).split('\n')) { if (line.trim()) emitSseEvent('system-update-progress', { step: 'output', detail: line }); } });
+          proc.stderr?.on('data', d => { stderr += d; for (const line of String(d).split('\n')) { if (line.trim()) emitSseEvent('system-update-progress', { step: 'output', detail: line }); } });
+          proc.on('close', code => code === 0 ? resolve() : reject(new Error(stderr.slice(-400) || `exit ${code}`)));
+          proc.on('error', reject);
+        });
+      }
+
+      (async () => {
+        try {
+          progress('git-pull', 'Stahuji změny z gitu...');
+          await runStep('git', ['-C', sourceDir, 'pull', '--ff-only'], { timeout: 60_000 });
+          progress('git-pull-done', 'Git pull OK');
+
+          progress('docker-build', 'Buildím Docker image (trvá 2–5 minut)...');
+          await runStep('docker', ['-H', `unix://${hostDockerSock}`, 'build', '-t', 'nano-agent-team', sourceDir], { timeout: 600_000 });
+          progress('docker-build-done', 'Docker image sestaven');
+
+          progress('restart', 'Restartuji kontejner (data jsou zachována)...');
+          // Dev mode uses docker-compose.dev.yml; prod uses docker-compose.yml
+          const devCompose = path.join(sourceDir, 'docker-compose.dev.yml');
+          const prodCompose = path.join(sourceDir, 'docker-compose.yml');
+          const composeFile = (process.env.SKIP_DOCKERD === 'true' && fs.existsSync(devCompose)) ? devCompose : prodCompose;
+          await runStep('docker', [
+            '-H', `unix://${hostDockerSock}`,
+            'compose', '-f', composeFile,
+            'up', '-d', '--force-recreate',
+          ], { timeout: 120_000 });
+
+          progress('done', 'Aktualizace dokončena — stránka se brzy obnoví.');
+        } catch (err) {
+          progress('error', String(err));
+          updateInProgress = false;
+        }
+      })();
     });
 
     // ── Serve settings frontend static assets ───────────────────────────────

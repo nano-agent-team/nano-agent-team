@@ -79,7 +79,7 @@ RUN apk add --no-cache \
     nats-server \
     docker \
     docker-cli-compose \
-    openssh-keygen \
+    openssh-client \
     git \
     && rm -rf /var/cache/apk/*
 
