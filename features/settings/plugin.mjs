@@ -559,7 +559,7 @@ export default {
           } catch { /* ignore if already stopped */ }
         }
 
-        console.log(`[settings] Killed agents for restart: ${ids.join(', ')}`);
+        log.info(`Killed agents for restart: ${ids.join(', ')}`);
         res.json({ ok: true, restarted: ids });
       } catch (err) {
         res.status(500).json({ error: String(err) });
