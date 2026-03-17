@@ -66,6 +66,7 @@ export class AgentManager {
   private states = new Map<string, AgentState>();
   private docker: Dockerode;
   private healthTimer?: NodeJS.Timeout;
+  private proxyHost: string | null = null;
 
   constructor(
     private readonly nc: NatsConnection,
@@ -73,6 +74,49 @@ export class AgentManager {
   ) {
     // Default: connects via /var/run/docker.sock on Linux
     this.docker = new Dockerode();
+  }
+
+  /** Returns true when credentials.json exists → use proxy mode */
+  private isProxyMode(): boolean {
+    return fs.existsSync(path.join(DATA_DIR, 'credentials.json'));
+  }
+
+  /** Inspect Docker network to find the gateway IP that worker containers can reach */
+  private async resolveProxyHost(): Promise<string> {
+    if (DOCKER_NETWORK === 'host') return '127.0.0.1';
+    const networkName = DOCKER_NETWORK === 'bridge' ? 'bridge' : DOCKER_NETWORK;
+    try {
+      const net = await this.docker.getNetwork(networkName).inspect() as {
+        IPAM?: { Config?: Array<{ Gateway?: string }> };
+      };
+      const gateway = net.IPAM?.Config?.[0]?.Gateway;
+      if (gateway) return gateway;
+    } catch {
+      logger.warn('Cannot inspect bridge network, using 172.17.0.1');
+    }
+    return '172.17.0.1';
+  }
+
+  /** Returns cached proxy host, resolving once on first call */
+  private async getProxyHost(): Promise<string> {
+    if (!this.proxyHost) {
+      this.proxyHost = await this.resolveProxyHost();
+    }
+    return this.proxyHost;
+  }
+
+  /** Build Claude env vars: proxy URL in proxy mode, otherwise token-based */
+  private async resolveClaudeEnv(): Promise<string[]> {
+    if (this.isProxyMode()) {
+      const proxyHost = await this.getProxyHost();
+      return [`ANTHROPIC_BASE_URL=http://${proxyHost}:8082`];
+    }
+    const apiKey = await this.resolveApiKey();
+    const vars: string[] = [];
+    if (apiKey && !apiKey.startsWith('sk-ant-oat')) vars.push(`ANTHROPIC_API_KEY=${apiKey}`);
+    if (apiKey && apiKey.startsWith('sk-ant-oat')) vars.push(`CLAUDE_CODE_OAUTH_TOKEN=${apiKey}`);
+    if (ANTHROPIC_BASE_URL) vars.push(`ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}`);
+    return vars;
   }
 
   /** Resolve API key: reads fresh OAuth token from credentials file for oauth providers */
@@ -215,7 +259,6 @@ export class AgentManager {
       }
 
       // Resolve auth tokens based on provider
-      const apiKey = await this.resolveApiKey();
       const codexToken = config ? await this.resolveCodexToken(config) : undefined;
 
       // Read CLAUDE.md and pass as env var — agent dir is mounted from inside nano-live
@@ -277,12 +320,7 @@ export class AgentManager {
         `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
         `LOG_LEVEL=info`,
         // Provider-specific auth tokens
-        ...(providerName === 'claude' ? [
-          // OAuth tokens (sk-ant-oat*) must NOT be set as ANTHROPIC_API_KEY
-          ...(apiKey && !apiKey.startsWith('sk-ant-oat') ? [`ANTHROPIC_API_KEY=${apiKey}`] : []),
-          ...(apiKey && apiKey.startsWith('sk-ant-oat') ? [`CLAUDE_CODE_OAUTH_TOKEN=${apiKey}`] : []),
-          ...(ANTHROPIC_BASE_URL ? [`ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL}`] : []),
-        ] : []),
+        ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
         ...(providerName === 'codex' && codexToken ? [
           // Subscription token or API key
           ...(codexToken.startsWith('sk-proj-') || codexToken.startsWith('sk-')
@@ -325,7 +363,8 @@ export class AgentManager {
       // Volume: Provider-specific credentials
       // Claude Code credentials → /root/.claude (read-write for session cache)
       // Claude Code 2.x also needs ~/.claude.json (OAuth token file)
-      if (providerName === 'claude' || providerName === 'auto' || !providerName) {
+      // Skip in proxy mode: agents use ANTHROPIC_BASE_URL instead of direct auth
+      if ((providerName === 'claude' || providerName === 'auto' || !providerName) && !this.isProxyMode()) {
         const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
         if (fs.existsSync(claudeDir)) {
           binds.push(`${claudeDir}:/root/.claude:rw`);

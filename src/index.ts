@@ -12,10 +12,12 @@
  */
 
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { DATA_DIR, NATS_URL, AGENTS_DIR } from './config.js';
 import { logger } from './logger.js';
+import { startCredentialProxy } from './credential-proxy.js';
 import { connectNats, ensureStream, ensureConsumer, closeNats, publish } from './nats-client.js';
 import { loadAgents, loadManifest } from './agent-registry.js';
 import { AgentManager } from './agent-manager.js';
@@ -30,6 +32,14 @@ async function main(): Promise<void> {
   // ── 1. Detect setup mode ────────────────────────────────────────────────────
   const setupMode = await detectSetupMode(DATA_DIR);
   logger.info({ setupMode, dataDir: DATA_DIR }, 'Starting nano-agent-team');
+
+  // ── 1b. Start credential proxy (if credentials.json exists) ─────────────────
+  let proxyServer: http.Server | null = null;
+  const credPath = path.join(DATA_DIR, 'credentials.json');
+  if (fs.existsSync(credPath)) {
+    proxyServer = await startCredentialProxy(DATA_DIR);
+    logger.info('Credential proxy started on :8082');
+  }
 
   // ── 2. Start embedded NATS if needed, then connect ─────────────────────────
   // NATS_EMBEDDED=true (or default in Docker) → spawn nats-server subprocess
@@ -120,6 +130,7 @@ async function main(): Promise<void> {
   // ── Graceful shutdown ───────────────────────────────────────────────────────
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutting down...');
+    proxyServer?.close();
     await manager.stopAll();
     await closeNats(nc);
     stopEmbeddedNats();
