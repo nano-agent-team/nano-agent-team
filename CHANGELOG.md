@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
 - Handle code#state format in Claude OAuth callback ([`8e24b88`](https://github.com/nano-agent-team/nano-agent-team/commit/8e24b881a0bf0cd04eb1bb7b36901cfc667ac1ca))
 - Load team plugins on every reloadFeatures call ([`e061fae`](https://github.com/nano-agent-team/nano-agent-team/commit/e061fae1cb8a9e9d1e768355614ac9ccb35740c1))
 
+### Documentation
+
+- **ci:** Update CHANGELOG [skip ci] ([`ab1f505`](https://github.com/nano-agent-team/nano-agent-team/commit/ab1f50512f2b3a6ff34a1396b7c686c084b82147))
+
 ### Features
 
 - Initial commit — Faze 4 core infrastructure ([`a8e8a9f`](https://github.com/nano-agent-team/nano-agent-team/commit/a8e8a9f607a50a6fc94b15625ac68a264221bfa6))
@@ -47,6 +51,7 @@ All notable changes to this project will be documented in this file.
 - Add --name and --port CLI arguments to install.sh ([`9c0eb03`](https://github.com/nano-agent-team/nano-agent-team/commit/9c0eb03578bf74da406c7778354fe626bb65034f))
 - **settings:** Add Claude re-auth UI and restart-agents endpoint (#13) ([`ce3347a`](https://github.com/nano-agent-team/nano-agent-team/commit/ce3347afc7a2204a0e612bd3e076fc6d4eaad71f))
 - **settings:** Self-update — check and apply updates from within the app (#12) ([`ed39c2d`](https://github.com/nano-agent-team/nano-agent-team/commit/ed39c2d6b77e8bdb6fa25746992bc22f362be5b3))
+- **agent-runner:** Show real-time activity on agent cards (#15) ([`b096198`](https://github.com/nano-agent-team/nano-agent-team/commit/b096198126152e42a699b84766af144ef424d3c1))
 
 ### Miscellaneous
 
