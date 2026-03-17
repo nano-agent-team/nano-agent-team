@@ -1,25 +1,31 @@
-## Co tato změna dělá
+## What & Why
 
-<!-- Stručný popis — co se mění a proč -->
+<!-- What does this change do and why is it needed? -->
 
-## Typ změny
+## Type of change
 
 - [ ] Bug fix
-- [ ] Nová funkce
+- [ ] New feature
 - [ ] Refactoring
-- [ ] Dokumentace
-- [ ] Jiné: ___
+- [ ] Documentation
+- [ ] Other: ___
 
-## Testování
+## Breaking changes
 
-<!-- Jak jsi otestoval/a tuto změnu? -->
+<!-- List any breaking changes, or write "None" -->
 
-- [ ] `npm run build` prošel bez chyb
-- [ ] Otestováno lokálně s `docker compose up`
-- [ ] Relevantní scénář end-to-end (ticket pipeline / setup wizard / chat)
+## Related issue / ticket
+
+<!-- Closes #123, or N/A -->
+
+## Testing
+
+- [ ] `npm run build` passes
+- [ ] Tested with `docker compose up`
+- [ ] Relevant end-to-end scenario tested (ticket pipeline / setup wizard / chat)
 
 ## Checklist
 
-- [ ] Žádné secrets v kódu
-- [ ] `.env.example` aktualizován (pokud přibyla nová env proměnná)
-- [ ] Změny v API nebo feature.json jsou zpětně kompatibilní
+- [ ] No secrets in code
+- [ ] `.env.example` updated if new env vars added
+- [ ] API / `feature.json` changes are backward compatible

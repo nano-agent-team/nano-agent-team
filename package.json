@@ -9,7 +9,8 @@
     "test:api": "vitest run",
     "test:e2e": "playwright test",
     "test": "npm run test:api && npm run test:e2e",
-    "oauth-setup": "node dist/oauth-flow.js"
+    "oauth-setup": "node dist/oauth-flow.js",
+    "prepare": "husky || true"
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
@@ -35,6 +36,9 @@
     "@types/node": "^22.13.10",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
-    "vitest": "^4.1.0"
+    "vitest": "^4.1.0",
+    "husky": "^9.1.7",
+    "@commitlint/cli": "^19.8.0",
+    "@commitlint/config-conventional": "^19.8.0"
   }
 }

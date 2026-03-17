@@ -1,17 +1,17 @@
 ---
 name: Feature request
-about: Navrhnout novou funkci
+about: Suggest a new feature
 labels: enhancement
 ---
 
-## Problém / motivace
+## Problem / motivation
 
-<!-- Jaký problém tato funkce řeší? -->
+<!-- What problem does this feature solve? -->
 
-## Navrhované řešení
+## Proposed solution
 
-<!-- Jak by to mělo fungovat? -->
+<!-- How should it work? -->
 
-## Alternativy
+## Alternatives
 
-<!-- Zvažoval/a jsi jiné přístupy? -->
+<!-- Did you consider other approaches? -->

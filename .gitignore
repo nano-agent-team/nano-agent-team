@@ -12,3 +12,6 @@ features/*/node_modules/
 .env
 .env.local
 .env.*.local
+*.pem
+*.key
+credentials.json
