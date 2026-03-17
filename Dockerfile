@@ -93,7 +93,7 @@ RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
 
 # Production Node.js dependencies only
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev --ignore-scripts
+RUN npm ci --omit=dev
 
 # Compiled TypeScript
 COPY --from=ts-builder /app/dist/ ./dist/
