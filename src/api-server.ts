@@ -344,15 +344,17 @@ export async function createApiApp(
       }
     }
 
-    // Also scan /data/teams/*/agents/ and start team agents
+    // Scan /data/teams/*/  — load agents via team.json with root fallback
+    // Root fallback: if an agent is listed in team.json but has no team-specific manifest,
+    // the definition is resolved from DATA_DIR/agents/{agentId}/ (shared root).
     const dataTeamsDir = path.join(DATA_DIR, 'teams');
+    const dataAgentsDirForFallback = path.join(DATA_DIR, 'agents');
     if (fs.existsSync(dataTeamsDir)) {
-      const { loadAgents: loadTeamAgents } = await import('./agent-registry.js');
+      const { loadTeamAgentsWithFallback } = await import('./agent-registry.js');
       for (const teamEntry of fs.readdirSync(dataTeamsDir, { withFileTypes: true })) {
         if (!teamEntry.isDirectory()) continue;
-        const teamAgentsDir = path.join(dataTeamsDir, teamEntry.name, 'agents');
-        if (!fs.existsSync(teamAgentsDir)) continue;
-        const teamAgents = loadTeamAgents(teamAgentsDir);
+        const teamDir = path.join(dataTeamsDir, teamEntry.name);
+        const teamAgents = loadTeamAgentsWithFallback(teamEntry.name, teamDir, dataAgentsDirForFallback);
         for (const agent of teamAgents) {
           if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
             await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
