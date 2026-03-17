@@ -104,7 +104,7 @@ or without scope:
 
 ### Scopes (closed list)
 
-`api` | `dashboard` | `agent-runner` | `settings` | `observability` | `docker` | `security` | `ci`
+`api` | `dashboard` | `agent-runner` | `hub` | `settings` | `observability` | `docker` | `security` | `ci` | `install` | `auth` | `setup`
 
 ### Examples
 
@@ -130,7 +130,7 @@ Pattern: `<type>/<short-description>` or `<type>/<issue-id>-<short-description>`
 
 Examples:
 - `feat/agent-customization`
-- `fix/123-settings-hub-reinstall`
+- `fix/123-hub-reinstall`
 - `docs/contributing-english`
 
 ## Pull Request

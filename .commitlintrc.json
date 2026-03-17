@@ -2,7 +2,7 @@
   "extends": ["@commitlint/config-conventional"],
   "rules": {
     "type-enum": [2, "always", ["feat", "fix", "docs", "refactor", "test", "chore", "ci"]],
-    "scope-enum": [2, "always", ["api", "dashboard", "agent-runner", "settings", "observability", "docker", "security", "ci"]],
+    "scope-enum": [2, "always", ["api", "dashboard", "agent-runner", "hub", "settings", "observability", "docker", "security", "ci", "install", "auth", "setup"]],
     "scope-empty": [0],
     "subject-max-length": [2, "always", 72],
     "subject-case": [0],
