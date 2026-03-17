@@ -428,13 +428,32 @@ export default {
 
       const { codeVerifier, state } = authLoginSession;
 
+      // Normalize pasted input — handle multiple formats:
+      // 1. "xxxx#yyyy" (code#state) — shown by platform.claude.com
+      // 2. Full redirect URL "https://platform.claude.com/oauth/code/callback?code=xxxx&state=yyyy"
+      // 3. Raw code only "xxxx"
+      let extractedCode = code.trim();
+      if (extractedCode.includes('#')) {
+        extractedCode = extractedCode.split('#')[0];
+        console.log(`[auth] extracted code from code#state format`);
+      } else {
+        try {
+          const parsed = new URL(extractedCode);
+          const urlCode = parsed.searchParams.get('code');
+          if (urlCode) {
+            console.log(`[auth] extracted code from pasted URL`);
+            extractedCode = urlCode;
+          }
+        } catch { /* not a URL, use as-is */ }
+      }
+
       try {
         // Exchange auth code for token via PKCE
         // Claude CLI uses application/json (not form-encoded) and includes state
         console.log(`[auth] exchanging code via PKCE token exchange`);
         const tokenBody = JSON.stringify({
           grant_type: 'authorization_code',
-          code: code.trim(),
+          code: extractedCode,
           redirect_uri: CLAUDE_REDIRECT_URI,
           client_id: CLAUDE_CLIENT_ID,
           code_verifier: codeVerifier,
