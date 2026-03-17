@@ -18,6 +18,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
 import { execSync, spawnSync } from 'child_process';
+import crypto from 'crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -383,121 +384,37 @@ export default {
       res.json(available);
     });
 
-    // ── POST /api/auth/claude-login — spustí `claude auth login`, vrátí OAuth URL + port/state ──
+    // Claude OAuth constants (from claude-code CLI source)
+    const CLAUDE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
+    const CLAUDE_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback';
+    const CLAUDE_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
+    const CLAUDE_AUTH_URL = 'https://claude.ai/oauth/authorize';
+    const CLAUDE_SCOPES = 'org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload';
+
+    // ── POST /api/auth/claude-login — generates PKCE OAuth URL ──
     app.post('/api/auth/claude-login', async (req, res) => {
-      const claudeBin = findClaudeBin();
-      if (!claudeBin) {
-        return res.status(404).json({ error: 'claude CLI not found. Add it to the container image.' });
-      }
+      // Reset any previous session
+      authLoginProc = null;
+      authLoginSession = null;
 
-      // Zabij předchozí proces pokud ještě běží
-      if (authLoginProc) {
-        try { authLoginProc.kill(); } catch { /* ignore */ }
-        authLoginProc = null;
-        authLoginSession = null;
-      }
+      // Generate PKCE parameters (matching claude CLI: 32-byte verifier, 32-byte state)
+      const codeVerifier = crypto.randomBytes(32).toString('base64url');
+      const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+      const state = crypto.randomBytes(32).toString('base64url');
 
-      let responded = false;
-      let proc;
-      try {
-        proc = spawn(claudeBin, ['auth', 'login'], {
-          stdio: ['ignore', 'pipe', 'pipe'],
-          env: { PATH: process.env.PATH, HOME: process.env.HOME, TERM: 'xterm' },
-        });
-      } catch (spawnErr) {
-        return res.status(500).json({ error: `Failed to start claude: ${spawnErr.message}` });
-      }
-      authLoginProc = proc;
+      const url = new URL(CLAUDE_AUTH_URL);
+      url.searchParams.set('code', 'true');
+      url.searchParams.set('client_id', CLAUDE_CLIENT_ID);
+      url.searchParams.set('response_type', 'code');
+      url.searchParams.set('redirect_uri', CLAUDE_REDIRECT_URI);
+      url.searchParams.set('scope', CLAUDE_SCOPES);
+      url.searchParams.set('code_challenge', codeChallenge);
+      url.searchParams.set('code_challenge_method', 'S256');
+      url.searchParams.set('state', state);
 
-      proc.on('error', (err) => {
-        authLoginProc = null;
-        authLoginSession = null;
-        if (!responded) {
-          responded = true;
-          clearTimeout(urlTimeout);
-          res.status(500).json({ error: `claude spawn error: ${err.message}` });
-        }
-      });
+      authLoginSession = { codeVerifier, state };
 
-      const urlTimeout = setTimeout(() => {
-        if (!responded) {
-          responded = true;
-          proc.kill();
-          res.status(504).json({ error: 'Timeout — claude auth login did not emit URL within 15s' });
-        }
-      }, 15_000);
-
-      function handleOutput(data) {
-        if (responded) return;
-        const text = data.toString();
-        const urlMatch = text.match(/https:\/\/[^\s]+/);
-        if (urlMatch) {
-          const url = urlMatch[0];
-          const state = new URL(url).searchParams.get('state') ?? '';
-
-          // Najdeme port který claude otevřel přes inode mapping (spolehlivé)
-          setTimeout(() => {
-            let port = null;
-            try {
-              const pid = proc.pid;
-
-              // 1. Získáme inode čísla socketů daného procesu z /proc/PID/fd
-              const fds = fs.readdirSync(`/proc/${pid}/fd`);
-              const inodes = new Set();
-              for (const fd of fds) {
-                try {
-                  const link = fs.readlinkSync(`/proc/${pid}/fd/${fd}`);
-                  const m = link.match(/socket:\[(\d+)\]/);
-                  if (m) inodes.add(m[1]);
-                } catch { /* fd může zmizet */ }
-              }
-
-              // 2. Mapujeme inode → port z /proc/net/tcp + tcp6
-              for (const tcpFile of ['tcp', 'tcp6']) {
-                try {
-                  const netTcp = fs.readFileSync(`/proc/${pid}/net/${tcpFile}`, 'utf8');
-                  for (const line of netTcp.split('\n').slice(1)) {
-                    const parts = line.trim().split(/\s+/);
-                    if (parts.length < 10) continue;
-                    if (parts[3] !== '0A') continue; // jen LISTEN
-                    if (!inodes.has(parts[9])) continue; // jen sockety tohoto procesu
-                    const portHex = parts[1].split(':')[1];
-                    port = parseInt(portHex, 16);
-                    break;
-                  }
-                } catch { /* tcp6 nemusí existovat */ }
-                if (port) break;
-              }
-            } catch { /* ignore */ }
-
-            authLoginSession = { port, state, proc };
-            responded = true;
-            clearTimeout(urlTimeout);
-            res.json({ url, port, state });
-          }, 1500); // počkáme 1.5s než claude otevře server
-        }
-      }
-
-      proc.stdout.on('data', handleOutput);
-      proc.stderr.on('data', handleOutput);
-
-      proc.on('exit', (exitCode) => {
-        authLoginProc = null;
-        if (!responded) {
-          responded = true;
-          clearTimeout(urlTimeout);
-          if (exitCode === 0) {
-            // Already logged in — save token to config.json
-            void saveOauthTokenToConfig();
-            res.json({ url: null, alreadyLoggedIn: true });
-          } else {
-            res.status(500).json({ error: `claude auth login exited with code ${exitCode}` });
-          }
-        } else if (exitCode === 0) {
-          authLoginSession = null;
-          emitSseEvent('auth-completed', { type: 'claude-code-oauth' });
-        }
-      });
+      res.json({ url: url.toString(), state });
     });
 
     // ── POST /api/auth/claude-callback — uživatel vloží kód ze stránky Anthropic ──
@@ -509,45 +426,75 @@ export default {
         return res.status(409).json({ error: 'No active auth login session. Start with POST /api/auth/claude-login first.' });
       }
 
-      const { port, state } = authLoginSession;
-      if (!port) {
-        return res.status(500).json({ error: 'Could not detect claude callback port. Try again.' });
-      }
+      const { codeVerifier, state } = authLoginSession;
 
       try {
-        const query = `code=${encodeURIComponent(code.trim())}&state=${encodeURIComponent(state)}`;
-        // Try IPv4 first, fall back to IPv6 (Claude may listen on ::1)
-        let resp;
-        let successHost;
-        for (const host of [`127.0.0.1`, `[::1]`]) {
-          try {
-            resp = await fetch(`http://${host}:${port}/callback?${query}`);
-            successHost = host;
-            break;
-          } catch { /* try next */ }
-        }
-        if (!resp) throw new Error(`Could not reach claude callback on port ${port} (tried IPv4 and IPv6)`);
-        console.log(`[auth] claude callback forwarded via http://${successHost}:${port}`);
-        if (resp.ok || resp.status === 302) {
-          // Claude zpracoval kód — počkáme na exit procesu (max 10s)
-          await new Promise((resolve) => {
-            const t = setTimeout(resolve, 10_000);
-            authLoginSession?.proc?.on('exit', () => { clearTimeout(t); resolve(); });
-          });
+        // Exchange auth code for token via PKCE
+        // Claude CLI uses application/json (not form-encoded) and includes state
+        console.log(`[auth] exchanging code via PKCE token exchange`);
+        const tokenBody = JSON.stringify({
+          grant_type: 'authorization_code',
+          code: code.trim(),
+          redirect_uri: CLAUDE_REDIRECT_URI,
+          client_id: CLAUDE_CLIENT_ID,
+          code_verifier: codeVerifier,
+          state,
+        });
+        const tokenRes = await fetch(CLAUDE_TOKEN_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: tokenBody,
+        });
 
-          // Přečteme token z Claude Code a uložíme do config.json
-          await saveOauthTokenToConfig();
+        const tokenData = await tokenRes.json().catch(() => ({}));
+        console.log(`[auth] token exchange response: HTTP ${tokenRes.status}`, JSON.stringify(tokenData).slice(0, 200));
 
-          // Verify token was actually saved — if not, code was likely expired
-          const verifyConfig = loadConfig();
-          if (!verifyConfig?.provider?.apiKey) {
-            return res.status(400).json({ error: 'Kód byl přijat, ale přihlášení se nezdařilo (kód mohl vypršet). Zkus to znovu.' });
-          }
-          res.json({ ok: true });
-        } else {
-          const body = await resp.text().catch(() => '');
-          res.status(400).json({ error: `claude rejected code: HTTP ${resp.status} ${body}` });
+        if (!tokenRes.ok) {
+          const errMsg = tokenData?.error?.message ?? tokenData?.error_description ?? tokenData?.error ?? `HTTP ${tokenRes.status}`;
+          return res.status(400).json({ error: `Token exchange failed: ${errMsg}` });
         }
+
+        if (!tokenData.access_token) {
+          return res.status(400).json({ error: 'Token exchange returned no access_token' });
+        }
+
+        // Write OAuth token to ~/.claude.json in the format Claude Code expects
+        const home = process.env.HOME ?? '/root';
+        const claudeJsonPath = path.join(home, '.claude.json');
+        let claudeJson = {};
+        try { claudeJson = JSON.parse(fs.readFileSync(claudeJsonPath, 'utf8')); } catch { /* fresh */ }
+
+        claudeJson.claudeAiOauth = {
+          accessToken: tokenData.access_token,
+          refreshToken: tokenData.refresh_token ?? null,
+          expiresAt: tokenData.expires_in ? Date.now() + tokenData.expires_in * 1000 : null,
+          scopes: tokenData.scope ? tokenData.scope.split(' ') : CLAUDE_SCOPES.split(' '),
+          subscriptionType: tokenData.subscription_type ?? null,
+          rateLimitTier: tokenData.rate_limit_tier ?? null,
+        };
+
+        fs.writeFileSync(claudeJsonPath, JSON.stringify(claudeJson, null, 2), { mode: 0o600 });
+
+        // Persist to data volume so it survives container restart
+        const dataDir = process.env.DATA_DIR ?? '/data';
+        const dataClaudeJsonPath = path.join(dataDir, '.claude.json');
+        try { fs.copyFileSync(claudeJsonPath, dataClaudeJsonPath); } catch (e) {
+          log.warn('Could not copy .claude.json to data volume', { err: String(e) });
+        }
+
+        console.log(`[auth] OAuth token saved to ${claudeJsonPath}`);
+        authLoginSession = null;
+
+        // Update config.json with the token so agents can use it
+        await saveOauthTokenToConfig();
+
+        const verifyConfig = loadConfig();
+        if (!verifyConfig?.provider?.apiKey) {
+          return res.status(400).json({ error: 'Token saved but config update failed. Check logs.' });
+        }
+
+        emitSseEvent('auth-completed', { type: 'claude-code-oauth' });
+        res.json({ ok: true });
       } catch (err) {
         res.status(500).json({ error: `Callback failed: ${String(err)}` });
       }
