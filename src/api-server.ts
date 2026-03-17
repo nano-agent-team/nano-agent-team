@@ -361,6 +361,9 @@ export async function createApiApp(
         }
       }
     }
+
+    // Load team plugins (routes registered by installed teams)
+    await loadTeamPlugins(app, nc, manager, configService, reloadFeatures);
   };
 
   // ── Plugin list registered FIRST — must not be overridden by team plugins ──
@@ -646,8 +649,7 @@ export async function createApiApp(
 
   app.post('/internal/reload', async (_req: Request, res: Response) => {
     try {
-      await reloadFeatures();
-      await loadTeamPlugins(app, nc, manager, configService, reloadFeatures);
+      await reloadFeatures(); // includes loadTeamPlugins
       const plugins = await getPluginList();
       emitSseEvent('system', { type: 'plugins-updated', plugins });
       logger.info('Live reload completed');
