@@ -831,7 +831,7 @@ export default {
       }
 
       // 7. Reload features + start new agents
-      progress('reload', 'Spouštím agenty...');
+      progress('reload', 'Starting agents...');
       try {
         if (reloadFeatures) await reloadFeatures();
       } catch (err) {
@@ -855,8 +855,27 @@ export default {
       return null;
     }
 
+    // Self-update is a privileged operation — only available once the app is fully set up.
+    // The app is designed for trusted single-user/team deployments (no public-internet exposure).
+    // Requiring setup completion ensures the app is configured and the operator is in control.
+    function requireSetupCompleted(req, res) {
+      const config = loadConfig();
+      if (!config?.setupCompleted) {
+        res.status(403).json({ error: 'Setup must be completed before using system update.' });
+        return false;
+      }
+      return true;
+    }
+
+    // Validate that sourceDir is exactly the expected path — no traversal possible.
+    const ALLOWED_SOURCE_DIR = '/host-source';
+    function validateSourceDir(dir) {
+      return path.resolve(dir) === ALLOWED_SOURCE_DIR;
+    }
+
     app.get('/api/system/update-check', (req, res) => {
-      const sourceDir = '/host-source';
+      if (!requireSetupCompleted(req, res)) return;
+      const sourceDir = ALLOWED_SOURCE_DIR;
       const hasSource = fs.existsSync(path.join(sourceDir, '.git'));
 
       if (!hasSource) {
@@ -892,8 +911,13 @@ export default {
       if (updateInProgress) {
         return res.status(409).json({ ok: false, message: 'Update already in progress' });
       }
-
-      const sourceDir      = '/host-source';
+      if (!requireSetupCompleted(req, res)) return;
+      // sourceDir is always the hardcoded constant — validateSourceDir is defense-in-depth
+      // for future refactors that might accidentally pass user input here.
+      const sourceDir      = ALLOWED_SOURCE_DIR;
+      if (!validateSourceDir(sourceDir)) {
+        return res.status(400).json({ ok: false, error: 'Invalid source directory.' });
+      }
       const hostDockerSock = resolveDockerSocket();
       const hasSource = fs.existsSync(path.join(sourceDir, '.git'));
       const hasDocker = hostDockerSock !== null && fs.existsSync(hostDockerSock);
@@ -902,7 +926,7 @@ export default {
         return res.status(400).json({
           ok: false,
           selfUpdateEnabled: false,
-          message: 'Self-update není dostupný. Spusť manuálně na hostu: ./update.sh',
+          message: 'Self-update not available. Run manually on the host: ./update.sh',
         });
       }
 
@@ -929,16 +953,17 @@ export default {
 
       (async () => {
         try {
-          progress('git-pull', 'Stahuji změny z gitu...');
+          progress('git-pull', 'Pulling latest changes from git...');
           await runStep('git', ['-C', sourceDir, 'pull', '--ff-only'], { timeout: 60_000 });
           progress('git-pull-done', 'Git pull OK');
 
-          progress('docker-build', 'Buildím Docker image (trvá 2–5 minut)...');
+          progress('docker-build', 'Building Docker image (this may take 2–5 minutes)...');
           await runStep('docker', ['-H', `unix://${hostDockerSock}`, 'build', '-t', 'nano-agent-team', sourceDir], { timeout: 600_000 });
-          progress('docker-build-done', 'Docker image sestaven');
+          progress('docker-build-done', 'Docker image built');
 
-          progress('restart', 'Restartuji kontejner (data jsou zachována)...');
-          // Dev mode uses docker-compose.dev.yml; prod uses docker-compose.yml
+          progress('restart', 'Restarting container (data is preserved)...');
+          // Dev mode uses docker-compose.dev.yml; prod uses docker-compose.yml.
+          // WARNING: composeFile is derived from hardcoded sourceDir — do not use user input here.
           const devCompose = path.join(sourceDir, 'docker-compose.dev.yml');
           const prodCompose = path.join(sourceDir, 'docker-compose.yml');
           const composeFile = (process.env.SKIP_DOCKERD === 'true' && fs.existsSync(devCompose)) ? devCompose : prodCompose;
@@ -948,7 +973,7 @@ export default {
             'up', '-d', '--force-recreate',
           ], { timeout: 120_000 });
 
-          progress('done', 'Aktualizace dokončena — stránka se brzy obnoví.');
+          progress('done', 'Update complete — the page will reload shortly.');
         } catch (err) {
           progress('error', String(err));
           updateInProgress = false;
