@@ -556,7 +556,7 @@ export default {
           try {
             const container = docker.getContainer(s.containerId);
             await container.kill({ signal: 'SIGTERM' });
-          } catch { /* ignore if already stopped */ }
+          } catch (err) { log.warn(`Failed to kill container ${s.containerId}: ${err?.message ?? err}`); }
         }
 
         log.info(`Killed agents for restart: ${ids.join(', ')}`);
@@ -887,7 +887,12 @@ export default {
     });
 
     // ── POST /api/system/update ──────────────────────────────────────────────
+    let updateInProgress = false;
     app.post('/api/system/update', (req, res) => {
+      if (updateInProgress) {
+        return res.status(409).json({ ok: false, message: 'Update already in progress' });
+      }
+
       const sourceDir      = '/host-source';
       const hostDockerSock = resolveDockerSocket();
       const hasSource = fs.existsSync(path.join(sourceDir, '.git'));
@@ -901,6 +906,7 @@ export default {
         });
       }
 
+      updateInProgress = true;
       // Respond immediately — update runs async, progress via SSE
       res.json({ ok: true, started: true });
 
@@ -945,6 +951,7 @@ export default {
           progress('done', 'Aktualizace dokončena — stránka se brzy obnoví.');
         } catch (err) {
           progress('error', String(err));
+          updateInProgress = false;
         }
       })();
     });
