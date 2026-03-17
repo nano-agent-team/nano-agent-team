@@ -5,6 +5,10 @@ BLOCKED_PATTERNS="\.env$|\.env\.|\.pem$|\.key$|credentials\.json$"
 staged_files=$(git diff --cached --name-only)
 
 for file in $staged_files; do
+  # Allow .example files (e.g. .env.example)
+  case "$file" in
+    *.example) continue ;;
+  esac
   if echo "$file" | grep -qE "$BLOCKED_PATTERNS"; then
     echo "ERROR: Refusing to commit secret file: $file"
     echo "Remove it from staging: git reset HEAD $file"
