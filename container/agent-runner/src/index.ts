@@ -162,6 +162,7 @@ async function main(): Promise<void> {
   let baseTask = '';     // task description from incoming message payload
   let currentTask = '';  // current activity (updated on each tool call)
   let isBusy = false;
+  let heartbeatTimer: ReturnType<typeof setInterval>;
 
   function publishHeartbeat() {
     const payload: HeartbeatPayload = {
@@ -179,6 +180,7 @@ async function main(): Promise<void> {
   }
 
   /** Maps a provider tool name to a short human-readable activity description. */
+  // NOTE: Update this map when adding new built-in tools
   function toolActivity(toolName: string): string {
     // MCP tools: mcp__server__operation_name
     const mcpMatch = toolName.match(/^mcp__(\w+)__(.+)$/);
@@ -201,7 +203,7 @@ async function main(): Promise<void> {
     return map[toolName] ?? toolName;
   }
 
-  const heartbeatTimer = setInterval(() => {
+  heartbeatTimer = setInterval(() => {
     publishHeartbeat();
     log.debug({ agentId: AGENT_ID }, 'Heartbeat sent');
   }, HEARTBEAT_INTERVAL_MS);

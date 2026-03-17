@@ -25,7 +25,7 @@ Browser → Dashboard → Core Server → NATS JetStream → Agent Containers
 
 - Agent container lifecycle management (start, stop, restart, health monitoring)
 - NATS JetStream message routing between agents
-- Dashboard UI — health overview, ticket board, agent configuration, settings (including monitoring enhancements and real-time observability improvements)
+- Dashboard UI — health overview, ticket board, agent configuration, settings
 - **Agent customization** — per-agent model overrides and custom instructions via `data/vault/`
 - LLM provider configuration (Claude, Codex, Gemini)
 - Team and feature installation from hub catalog
@@ -74,5 +74,5 @@ When proposing a new feature, ask:
 
 ---
 
-**Last Updated**: 2026-03-17
+**Last Updated**: 2026-03-16
 **Maintained By**: nano-agent-team contributors
