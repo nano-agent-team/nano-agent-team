@@ -855,8 +855,27 @@ export default {
       return null;
     }
 
+    // Self-update is a privileged operation — only available once the app is fully set up.
+    // The app is designed for trusted single-user/team deployments (no public-internet exposure).
+    // Requiring setup completion ensures the app is configured and the operator is in control.
+    function requireSetupCompleted(req, res) {
+      const config = loadConfig();
+      if (!config?.setupCompleted) {
+        res.status(403).json({ error: 'Setup must be completed before using system update.' });
+        return false;
+      }
+      return true;
+    }
+
+    // Validate that sourceDir is exactly the expected path — no traversal possible.
+    const ALLOWED_SOURCE_DIR = '/host-source';
+    function validateSourceDir(dir) {
+      return path.resolve(dir) === ALLOWED_SOURCE_DIR;
+    }
+
     app.get('/api/system/update-check', (req, res) => {
-      const sourceDir = '/host-source';
+      if (!requireSetupCompleted(req, res)) return;
+      const sourceDir = ALLOWED_SOURCE_DIR;
       const hasSource = fs.existsSync(path.join(sourceDir, '.git'));
 
       if (!hasSource) {
@@ -892,8 +911,11 @@ export default {
       if (updateInProgress) {
         return res.status(409).json({ ok: false, message: 'Update already in progress' });
       }
-
-      const sourceDir      = '/host-source';
+      if (!requireSetupCompleted(req, res)) return;
+      const sourceDir      = ALLOWED_SOURCE_DIR;
+      if (!validateSourceDir(sourceDir)) {
+        return res.status(400).json({ ok: false, error: 'Invalid source directory.' });
+      }
       const hostDockerSock = resolveDockerSocket();
       const hasSource = fs.existsSync(path.join(sourceDir, '.git'));
       const hasDocker = hostDockerSock !== null && fs.existsSync(hostDockerSock);

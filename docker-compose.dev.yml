@@ -22,8 +22,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Self-update: project source directory (for git pull + docker build)
       - .:/host-source
-      # Self-update: SSH keys for git pull over SSH
-      - ~/.ssh:/root/.ssh:ro
+      # Note: SSH keys are NOT mounted. git pull uses HTTPS (default for GitHub).
+      # For SSH-based remotes, configure SSH agent forwarding on the host instead.
       # Claude Code credentials — shared with host so OAuth tokens persist
       - ~/.claude:/root/.claude
       # Codex credentials — shared with host for subscription auth
