@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
 - **api:** Address PR #18 review comments ([`6410ac1`](https://github.com/nano-agent-team/nano-agent-team/commit/6410ac1863b79238bbe44d2210fbe2d1cb5f208e))
 - **ci:** Expose MCP port 3003 and use bind mount for multi-instance tests ([`d00c01b`](https://github.com/nano-agent-team/nano-agent-team/commit/d00c01bbfb60cf78943154c4409beed5373eefed))
 - **agent-runner:** Add 60s timeout to WAIT_FOR_START_SIGNAL rollover wait ([`7b9d6b8`](https://github.com/nano-agent-team/nano-agent-team/commit/7b9d6b8d404f5157fbdc539b8760651fde185033))
+- **api:** Add missing plugin.mjs stub for workflow-editor tool ([`f0aa88b`](https://github.com/nano-agent-team/nano-agent-team/commit/f0aa88b9393598fc3b2619094ae9341040d4c67c))
 
 ### Documentation
 
@@ -36,6 +37,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`8657415`](https://github.com/nano-agent-team/nano-agent-team/commit/8657415788dbd7577e695a49d88ba65dedf4840b))
 - **ci:** Update CHANGELOG [skip ci] ([`ac4bbfc`](https://github.com/nano-agent-team/nano-agent-team/commit/ac4bbfc797c8217d9f8f48953af54a7355008891))
 - **ci:** Update CHANGELOG [skip ci] ([`2a229f5`](https://github.com/nano-agent-team/nano-agent-team/commit/2a229f517fee5d20ed31c706ac97d0db4a1f279c))
+- **ci:** Update CHANGELOG [skip ci] ([`6cf9844`](https://github.com/nano-agent-team/nano-agent-team/commit/6cf98449d1af8afb60b44669e875bcb781d115fa))
 
 ### Features
 
