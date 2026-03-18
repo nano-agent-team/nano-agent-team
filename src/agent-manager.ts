@@ -215,7 +215,9 @@ export class AgentManager {
 
   async startAgent(agent: LoadedAgent): Promise<void> {
     const { id } = agent.manifest;
-    const containerName = `nano-agent-${id}`;
+    // When an agent is loaded in team context (root fallback), use team-scoped name
+    // to prevent conflicts if multiple teams share the same root agent definition.
+    const containerName = agent.teamId ? `nano-agent-${agent.teamId}-${id}` : `nano-agent-${id}`;
 
     // Initialize state
     this.states.set(id, {

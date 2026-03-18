@@ -42,6 +42,8 @@ export interface LoadedAgent {
   manifest: AgentManifest;
   /** Absolute path to the agent directory */
   dir: string;
+  /** Team ID when agent is loaded in team context (enables per-team container naming) */
+  teamId?: string;
 }
 
 /**
@@ -97,6 +99,73 @@ export function loadAgents(agentsDir: string): LoadedAgent[] {
   scanDirectory(resolvedDir, agents);
 
   logger.info({ count: agents.length, agentsDir: resolvedDir }, 'Agents loaded');
+  return agents;
+}
+
+/**
+ * Load team agents using team.json as the source of truth, with root agent fallback.
+ *
+ * For each agentId listed in team.json:
+ *   1. Check `teamDir/agents/{agentId}/manifest.json` — use if present (team override)
+ *   2. Fall back to `rootAgentsDir/{agentId}/manifest.json` — shared root definition
+ *
+ * Agents loaded this way carry teamId so AgentManager can name containers
+ * `nano-agent-{teamId}-{agentId}`, preventing conflicts when multiple teams
+ * share the same root agent definition.
+ *
+ * Falls back to scanning teamDir/agents/ if team.json is missing or has no agents[].
+ */
+export function loadTeamAgentsWithFallback(
+  teamId: string,
+  teamDir: string,
+  rootAgentsDir: string,
+): LoadedAgent[] {
+  const teamJsonPath = path.join(teamDir, 'team.json');
+
+  // No team.json — scan team agents dir the old way
+  if (!fs.existsSync(teamJsonPath)) {
+    return loadAgents(path.join(teamDir, 'agents')).map((a) => ({ ...a, teamId }));
+  }
+
+  let team: { agents?: string[] };
+  try {
+    team = JSON.parse(fs.readFileSync(teamJsonPath, 'utf8')) as { agents?: string[] };
+  } catch (err) {
+    logger.warn({ err, teamId, teamJsonPath }, 'Cannot parse team.json — skipping team agents');
+    return [];
+  }
+
+  if (!Array.isArray(team.agents) || team.agents.length === 0) {
+    logger.debug({ teamId }, 'team.json has no agents[] — nothing to load');
+    return [];
+  }
+
+  const agents: LoadedAgent[] = [];
+  for (const agentId of team.agents) {
+    const teamAgentDir = path.join(teamDir, 'agents', agentId);
+    const rootAgentDir = path.join(rootAgentsDir, agentId);
+
+    const hasTeamManifest = fs.existsSync(path.join(teamAgentDir, 'manifest.json'));
+    const hasRootManifest = fs.existsSync(path.join(rootAgentDir, 'manifest.json'));
+
+    if (!hasTeamManifest && !hasRootManifest) {
+      logger.warn({ agentId, teamId }, 'Skipping team agent — manifest not found in team dir or root agents dir');
+      continue;
+    }
+
+    const agentDir = hasTeamManifest ? teamAgentDir : rootAgentDir;
+    const source = hasTeamManifest ? 'team' : 'root';
+
+    try {
+      const manifest = loadManifest(agentDir);
+      agents.push({ manifest, dir: agentDir, teamId });
+      logger.debug({ id: manifest.id, dir: agentDir, teamId, source }, 'Team agent resolved');
+    } catch (err) {
+      logger.warn({ err, agentId, teamId }, 'Skipping team agent — cannot load manifest');
+    }
+  }
+
+  logger.info({ count: agents.length, teamId }, 'Team agents loaded');
   return agents;
 }
 
