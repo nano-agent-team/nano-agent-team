@@ -12,6 +12,7 @@ export type McpServerConfig =
 export type ProviderEvent =
   | { type: 'session_id'; sessionId: string }
   | { type: 'tool_call'; toolName: string }
+  | { type: 'text'; text: string }
   | { type: 'result'; result: string; success: boolean; errorSubtype?: string };
 
 export interface ProviderRunOptions {

@@ -352,6 +352,25 @@ export class AgentManager {
         `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
         // Pass CLAUDE.md content as env var (avoids Docker bind mount path resolution issues)
         ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
+        // Inject MCP servers from mcp_config manifest field
+        ...(() => {
+          if (!agent.manifest.mcp_config) return [];
+          try {
+            const raw = fs.readFileSync(agent.manifest.mcp_config, 'utf8');
+            const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
+            const servers = parsed.mcpServers ?? {};
+            // Patch API_PORT and CONTROL_PLANE_URL to match current instance
+            const apiPort = process.env.API_PORT ?? '3001';
+            const cfg = servers as Record<string, { env?: Record<string, string> }>;
+            if (cfg.config?.env) cfg.config.env['API_PORT'] = apiPort;
+            if (cfg.management?.env) {
+              cfg.management.env['CONTROL_PLANE_URL'] = `http://host.docker.internal:${apiPort}`;
+            }
+            return [`AGENT_MCP_SERVERS=${JSON.stringify(servers)}`];
+          } catch {
+            return [];
+          }
+        })(),
         // Pass GitHub token if available (from team config or env vars, for gh CLI and git push)
         ...(githubToken ? [`GH_TOKEN=${githubToken}`] : []),
         // Pass repo URL from config (set during team install)
@@ -387,9 +406,10 @@ export class AgentManager {
           logger.debug({ id, claudeDir }, 'Mounting .claude dir (rw)');
         }
         const claudeJson = path.join(process.env.HOME ?? '/root', '.claude.json');
+        const hostClaudeJson = process.env.HOST_CLAUDE_JSON ?? claudeJson;
         if (fs.existsSync(claudeJson)) {
-          binds.push(`${claudeJson}:/root/.claude.json:rw`);
-          logger.debug({ id }, 'Mounting .claude.json (rw)');
+          binds.push(`${hostClaudeJson}:/root/.claude.json:rw`);
+          logger.debug({ id, hostClaudeJson }, 'Mounting .claude.json (rw)');
         }
       }
 

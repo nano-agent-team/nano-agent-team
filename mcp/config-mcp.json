@@ -7,7 +7,16 @@
         "DATA_DIR": "/data",
         "API_PORT": "3001",
         "FEATURES_DIR": "/app/features",
-        "TEAMS_DIR": "/app/teams"
+        "TEAMS_DIR": "/app/teams",
+        "MCP_SERVERS_DIR": "/app/mcp-servers"
+      }
+    },
+    "management": {
+      "command": "node",
+      "args": ["/app/dist/mcp/management-server.js"],
+      "env": {
+        "DATA_DIR": "/data",
+        "CONTROL_PLANE_URL": "http://host.docker.internal:3001"
       }
     }
   }

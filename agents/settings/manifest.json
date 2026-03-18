@@ -5,7 +5,11 @@
   "description": "Guides users through initial setup and manages system configuration.",
   "session_type": "persistent",
   "subscribe_topics": ["agent.settings.inbox"],
-  "mcp_config": "/app/mcp/config-mcp.json",
+  "mcp_permissions": {
+    "config": "*",
+    "management": "*"
+  },
+  "model": "claude-sonnet-4-6",
   "capabilities": ["reasoning", "long-context"],
-  "provider": "auto"
+  "provider": "claude"
 }

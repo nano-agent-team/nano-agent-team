@@ -1,74 +1,185 @@
 <template>
-  <div class="home-root">
-    <div class="home-header">
-      <h1>nano-agent-team</h1>
-      <div class="header-sub">Agent health overview</div>
-    </div>
+  <div class="workspace">
 
-    <div class="agents-grid">
-      <div v-if="loading" class="empty-state">Načítám...</div>
-      <div v-else-if="agents.length === 0" class="empty-state">
-        <div style="font-size:32px;opacity:0.2">🤖</div>
-        <div>Žádní agenti — start nano-agent-team</div>
+    <!-- LEFT: Agent roster -->
+    <aside class="agents-panel">
+      <div class="panel-head">
+        <span class="panel-title">AGENTS</span>
+        <span class="count-badge">{{ agents.length }}</span>
       </div>
-      <div
-        v-for="agent in agents"
-        :key="agent.agentId"
-        :class="['agent-card', `status-${agent.status}`, agent.busy ? 'agent-busy' : '']"
-        @click="selectedAgentId = agent.agentId"
-      >
-        <div class="agent-header">
-          <span class="agent-id">{{ agent.agentId }}</span>
-          <span v-if="agent.busy" class="status-badge status-busy">pracuje</span>
-          <span v-else :class="`status-badge status-${agent.status}`">{{ agent.status }}</span>
-        </div>
-        <div v-if="agent.busy && agent.task" class="agent-task">
-          {{ agent.task }}
-        </div>
-        <div class="agent-meta">
-          <div v-if="agent.startedAt">
-            <span class="meta-label">Started</span>
-            <span class="meta-value">{{ relTime(agent.startedAt) }}</span>
-          </div>
-          <div v-if="agent.lastHeartbeat">
-            <span class="meta-label">Heartbeat</span>
-            <span class="meta-value">{{ relTime(agent.lastHeartbeat) }}</span>
-          </div>
-          <div>
-            <span class="meta-label">Restarts</span>
-            <span class="meta-value">{{ agent.restartCount }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
 
-    <div class="stats-row">
-      <div class="stat-card">
-        <div class="stat-value">{{ agents.filter(a => a.status === 'running').length }}</div>
-        <div class="stat-label">Running</div>
+      <div class="agent-list">
+        <div v-if="loading && agents.length === 0" class="list-empty">
+          <span class="blink">_</span> scanning...
+        </div>
+        <div v-else-if="agents.length === 0" class="list-empty">
+          no agents running
+        </div>
+        <button
+          v-for="agent in agents"
+          :key="agent.agentId"
+          class="agent-row"
+          :class="[`s-${agent.status}`, { busy: agent.busy }]"
+          @click="selectedAgentId = agent.agentId"
+        >
+          <span class="status-dot" :class="`dot-${agent.status}`" />
+          <span class="row-body">
+            <span class="row-id">{{ agent.agentId }}</span>
+            <span v-if="agent.busy && agent.task" class="row-task">{{ agent.task }}</span>
+            <span v-else class="row-status">{{ agent.status }}</span>
+          </span>
+          <span v-if="agent.restartCount > 0" class="restart-badge">{{ agent.restartCount }}r</span>
+          <span v-if="agent.busy" class="working-dots"><span /><span /><span /></span>
+        </button>
       </div>
-      <div class="stat-card">
-        <div class="stat-value">{{ agents.filter(a => a.status === 'dead').length }}</div>
-        <div class="stat-label">Dead</div>
+
+      <!-- Mini stats -->
+      <div class="panel-foot">
+        <span class="foot-stat">
+          <span class="foot-dot dot-running" />
+          {{ agents.filter(a => a.status === 'running').length }}
+        </span>
+        <span class="foot-sep">/</span>
+        <span class="foot-stat">
+          <span class="foot-dot dot-dead" />
+          {{ agents.filter(a => a.status === 'dead').length }}
+        </span>
+        <span class="foot-sep">/</span>
+        <span class="foot-stat total">{{ agents.length }} total</span>
       </div>
-      <div class="stat-card">
-        <div class="stat-value">{{ agents.length }}</div>
-        <div class="stat-label">Total</div>
+    </aside>
+
+    <!-- RIGHT: Settings agent chat -->
+    <section class="chat-panel">
+      <div class="chat-head">
+        <div class="chat-head-left">
+          <span class="agent-sigil">SA</span>
+          <div class="chat-head-info">
+            <span class="chat-title">Settings Agent</span>
+            <span class="chat-sub">system configuration &amp; onboarding</span>
+          </div>
+        </div>
+        <div class="chat-head-right">
+          <button
+            v-if="messages.length > 0"
+            class="icon-btn"
+            title="New session"
+            @click="clearSession"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M8 1.5A6.5 6.5 0 1 0 14.5 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <path d="M14.5 2v6h-6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <div class="conn-status" :class="{ connected: isConnected }">
+            <span class="conn-dot" />
+            <span class="conn-label">{{ isConnected ? 'connected' : 'offline' }}</span>
+          </div>
+        </div>
       </div>
-    </div>
+
+      <!-- Messages -->
+      <div class="messages-wrap" ref="messagesEl">
+        <div class="messages-inner">
+          <div v-if="messages.length === 0" class="chat-empty">
+            <div class="empty-sigil">SA</div>
+            <div class="empty-text">Settings Agent is ready.<br>How can I help you set up your system?</div>
+          </div>
+
+          <template v-for="(msg, i) in messages" :key="msg.id">
+            <div
+              class="msg-row"
+              :class="[msg.role, msg.type, { 'grouped': isGrouped(i) }]"
+            >
+              <div
+                class="msg-bubble"
+                :class="[msg.role, msg.type]"
+                @mouseenter="hoveredMsg = msg.id"
+                @mouseleave="hoveredMsg = null"
+              >
+                <div v-if="msg.role === 'agent'" class="msg-content" v-html="renderMarkdown(msg.text)" />
+                <div v-else class="msg-content user-text">{{ msg.text }}</div>
+                <div class="msg-footer">
+                  <span class="msg-ts">{{ formatTs(msg.ts) }}</span>
+                  <button
+                    v-if="msg.role === 'agent' && hoveredMsg === msg.id"
+                    class="copy-btn"
+                    :class="{ copied: copiedMsg === msg.id }"
+                    @click="copyMessage(msg)"
+                    title="Copy"
+                  >
+                    <svg v-if="copiedMsg !== msg.id" width="11" height="11" viewBox="0 0 16 16" fill="none">
+                      <rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
+                      <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                    <svg v-else width="11" height="11" viewBox="0 0 16 16" fill="none">
+                      <path d="M2.5 8.5L6 12L13.5 4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- Loading indicator -->
+          <div v-if="loading_chat" class="msg-row agent">
+            <div class="msg-bubble agent loading-bubble">
+              <span class="typing-dot" /><span class="typing-dot" /><span class="typing-dot" />
+              <span v-if="currentToolCall" class="tool-call-label">{{ currentToolCall }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input -->
+      <div class="input-area">
+        <div class="input-wrap" :class="{ focused: inputFocused, disabled: loading_chat }">
+          <textarea
+            ref="inputEl"
+            v-model="inputText"
+            class="chat-input"
+            placeholder="Type a message..."
+            rows="1"
+            :disabled="loading_chat"
+            @keydown.enter.exact.prevent="sendMessage"
+            @keydown.enter.shift.exact="() => {}"
+            @input="autoResize"
+            @focus="inputFocused = true"
+            @blur="inputFocused = false"
+          />
+          <button
+            class="send-btn"
+            :disabled="!inputText.trim() || loading_chat"
+            @click="sendMessage"
+            title="Send (Enter)"
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M14 8L2 2l2.5 6L2 14l12-6z" fill="currentColor"/>
+            </svg>
+          </button>
+        </div>
+        <div class="input-hint">
+          <span>Enter to send</span>
+          <span class="hint-sep">·</span>
+          <span>Shift+Enter for newline</span>
+        </div>
+      </div>
+    </section>
 
     <AgentModal v-if="selectedAgentId" :agentId="selectedAgentId" @close="selectedAgentId = null" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { relTime } from '../../utils/time'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
+import { marked } from 'marked'
 import AgentModal from '../../components/AgentModal.vue'
+
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface AgentState {
   agentId: string
-  status: 'starting' | 'running' | 'dead' | 'restarting'
+  status: 'starting' | 'running' | 'dead' | 'restarting' | 'rolling-over'
   restartCount: number
   startedAt?: string
   lastHeartbeat?: string
@@ -77,164 +188,778 @@ interface AgentState {
   task?: string
 }
 
+interface ChatMessage {
+  id: string
+  role: 'user' | 'agent'
+  type?: 'error'
+  text: string
+  ts: number
+}
+
+// ── Refs ──────────────────────────────────────────────────────────────────────
+
 const agents = ref<AgentState[]>([])
 const loading = ref(true)
 const selectedAgentId = ref<string | null>(null)
 
+const messages = ref<ChatMessage[]>([])
+const inputText = ref('')
+const loading_chat = ref(false)
+const isConnected = ref(true)
+const inputFocused = ref(false)
+const hoveredMsg = ref<string | null>(null)
+const copiedMsg = ref<string | null>(null)
+const messagesEl = ref<HTMLElement | null>(null)
+const inputEl = ref<HTMLTextAreaElement | null>(null)
+const currentToolCall = ref<string | null>(null)
+
+function uuid(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16)
+  })
+}
+
+// Session ID persisted across page refreshes
+const SESSION_KEY = 'settings-session-id'
+const sessionId = ref(sessionStorage.getItem(SESSION_KEY) ?? uuid())
+sessionStorage.setItem(SESSION_KEY, sessionId.value)
+
+// ── Agent health polling ───────────────────────────────────────────────────────
+
 async function loadHealth() {
   try {
     const res = await fetch('/api/health')
-    const data = await res.json()
+    const data = await res.json() as { agents?: AgentState[] }
     agents.value = Array.isArray(data.agents) ? data.agents : []
-  } catch (e) {
-    console.error('loadHealth error', e)
+    isConnected.value = true
+  } catch {
+    isConnected.value = false
   } finally {
     loading.value = false
   }
 }
 
-let interval: ReturnType<typeof setInterval>
+let healthInterval: ReturnType<typeof setInterval>
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+
+function parseReply(reply: unknown): string {
+  if (typeof reply === 'string') return reply
+  if (reply && typeof reply === 'object') {
+    const r = reply as Record<string, unknown>
+    if (typeof r.content === 'string') return r.content
+    if (typeof r.message === 'string') return r.message
+    if (typeof r.text === 'string') return r.text
+    if (typeof r.result === 'string' && r.result) return r.result
+    // Empty result from agent — don't show raw JSON
+    if ('result' in r && !r.result) return ''
+    return JSON.stringify(reply, null, 2)
+  }
+  return String(reply ?? '')
+}
+
+async function sendMessage() {
+  const text = inputText.value.trim()
+  if (!text || loading_chat.value) return
+
+  inputText.value = ''
+  await nextTick()
+  if (inputEl.value) {
+    inputEl.value.style.height = 'auto'
+  }
+
+  messages.value.push({ id: uuid(), role: 'user', text, ts: Date.now() })
+  loading_chat.value = true
+  await scrollToBottom()
+
+  // Streaming message placeholder — will be updated as chunks arrive
+  const agentMsgId = uuid()
+  let streamingMsg: ChatMessage | null = null
+
+  try {
+    const res = await fetch('/api/chat/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, sessionId: sessionId.value }),
+    })
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+
+    const processLine = async (line: string) => {
+      if (!line.startsWith('data: ')) return
+      try {
+        const event = JSON.parse(line.slice(6)) as { type: string; text?: string; error?: string; toolName?: string }
+
+        if (event.type === 'tool_call') {
+          currentToolCall.value = event.toolName ?? null
+        } else if (event.type === 'chunk') {
+          currentToolCall.value = null
+          if (!streamingMsg) {
+            // First chunk — replace typing indicator with real message
+            loading_chat.value = false
+            messages.value.push({ id: agentMsgId, role: 'agent', text: '', ts: Date.now() })
+            // Use the reactive proxy from the array, not the plain object
+            streamingMsg = messages.value[messages.value.length - 1]
+          }
+          streamingMsg.text += event.text ?? ''
+          // Yield to Vue so each chunk renders immediately rather than batching
+          await nextTick()
+          scrollToBottom()
+        } else if (event.type === 'error') {
+          loading_chat.value = false
+          messages.value.push({ id: agentMsgId, role: 'agent', type: 'error', text: event.error ?? 'Error', ts: Date.now() })
+        }
+      } catch { /* ignore malformed lines */ }
+    }
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) await processLine(line.trim())
+    }
+    // Process any remaining buffer
+    if (buf.trim()) await processLine(buf.trim())
+
+    isConnected.value = true
+  } catch (err) {
+    loading_chat.value = false
+    messages.value.push({
+      id: agentMsgId,
+      role: 'agent',
+      type: 'error',
+      text: `Connection error: ${err instanceof Error ? err.message : String(err)}`,
+      ts: Date.now(),
+    })
+    isConnected.value = false
+  } finally {
+    loading_chat.value = false
+    currentToolCall.value = null
+    await scrollToBottom()
+    await nextTick()
+    inputEl.value?.focus()
+  }
+}
+
+function clearSession() {
+  messages.value = []
+  const newId = uuid()
+  sessionId.value = newId
+  sessionStorage.setItem(SESSION_KEY, newId)
+  nextTick(() => inputEl.value?.focus())
+}
+
+async function scrollToBottom(smooth = false) {
+  await nextTick()
+  if (messagesEl.value) {
+    messagesEl.value.scrollTo({
+      top: messagesEl.value.scrollHeight,
+      behavior: smooth ? 'smooth' : 'instant',
+    })
+  }
+}
+
+function autoResize(e: Event) {
+  const el = e.target as HTMLTextAreaElement
+  el.style.height = 'auto'
+  const lineH = parseInt(getComputedStyle(el).lineHeight) || 20
+  el.style.height = Math.min(el.scrollHeight, lineH * 4 + 16) + 'px'
+}
+
+function renderMarkdown(text: string): string {
+  try {
+    return marked.parse(text) as string
+  } catch {
+    return text
+  }
+}
+
+function formatTs(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+// Group consecutive same-role messages (skip gap between them)
+function isGrouped(i: number): boolean {
+  if (i === 0) return false
+  return messages.value[i].role === messages.value[i - 1].role
+}
+
+async function copyMessage(msg: ChatMessage) {
+  try {
+    await navigator.clipboard.writeText(msg.text)
+    copiedMsg.value = msg.id
+    setTimeout(() => { copiedMsg.value = null }, 1500)
+  } catch { /* ignore */ }
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────────────
 
 onMounted(() => {
   loadHealth()
-  interval = setInterval(loadHealth, 3000)
+  healthInterval = setInterval(loadHealth, 3000)
+  nextTick(() => inputEl.value?.focus())
 })
 
-onUnmounted(() => clearInterval(interval))
+onUnmounted(() => clearInterval(healthInterval))
 </script>
 
 <style scoped>
-.home-root {
-  padding: 24px;
-  overflow-y: auto;
-  height: calc(100vh - 40px);
-}
+/* ── Layout ─────────────────────────────────────────────────────────────────── */
 
-.home-header {
-  margin-bottom: 24px;
-}
-
-.home-header h1 {
-  font-size: 22px;
-  color: var(--accent);
-  font-weight: 700;
-  letter-spacing: 2px;
-}
-
-.header-sub {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 4px;
-}
-
-.agents-grid {
+.workspace {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
-  margin-bottom: 24px;
+  grid-template-columns: 300px 1fr;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
-.empty-state {
+/* ── Left panel ─────────────────────────────────────────────────────────────── */
+
+.agents-panel {
   display: flex;
   flex-direction: column;
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.panel-head {
+  display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.panel-title {
+  font-size: 10px;
+  letter-spacing: 2px;
   color: var(--text-muted);
-  padding: 40px;
-  grid-column: 1 / -1;
+  font-weight: 600;
 }
 
-.agent-card {
-  background: var(--surface);
+.count-badge {
+  font-size: 11px;
+  background: var(--surface2);
+  color: var(--text-muted);
+  padding: 1px 7px;
+  border-radius: 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 14px 16px;
-  transition: border-color 0.2s;
 }
 
-.agent-card { cursor: pointer; }
-.agent-card:hover { border-color: var(--accent); }
-.agent-card.status-running { border-left: 3px solid var(--accent2); }
-.agent-card.status-dead { border-left: 3px solid var(--danger); }
-.agent-card.status-starting { border-left: 3px solid var(--accent); }
-.agent-card.status-restarting { border-left: 3px solid var(--warning); }
-
-.agent-card.agent-busy {
-  border-left: 3px solid #f0883e;
-  background: rgba(240, 136, 62, 0.06);
-  animation: busy-pulse 2s ease-in-out infinite;
+.agent-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
 }
 
-@keyframes busy-pulse {
-  0%, 100% { box-shadow: none; }
-  50% { box-shadow: 0 0 8px rgba(240, 136, 62, 0.2); }
-}
+.agent-list::-webkit-scrollbar { width: 3px; }
+.agent-list::-webkit-scrollbar-track { background: transparent; }
+.agent-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
-.agent-task {
+.list-empty {
+  padding: 24px 16px;
   font-size: 12px;
-  color: #f0883e;
-  padding: 4px 0 8px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.1s;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  position: relative;
+}
+
+.agent-row:hover { background: var(--surface); }
+.agent-row.busy { background: rgba(240, 136, 62, 0.04); }
+
+/* Status dot */
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-running    { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); animation: pulse-green 2.5s ease-in-out infinite; }
+.dot-dead       { background: var(--danger); }
+.dot-starting   { background: var(--accent); animation: pulse-blue 1.5s ease-in-out infinite; }
+.dot-restarting { background: var(--warning); animation: pulse-orange 1s ease-in-out infinite; }
+.dot-rolling-over { background: var(--warning); animation: pulse-orange 1s ease-in-out infinite; }
+
+@keyframes pulse-green  { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+@keyframes pulse-blue   { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+@keyframes pulse-orange { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
+
+.row-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.row-id {
+  font-size: 12px;
+  color: var(--text);
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.agent-header {
+.row-status {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.row-task {
+  font-size: 10px;
+  color: #f0883e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.restart-badge {
+  font-size: 9px;
+  color: var(--warning);
+  background: rgba(210, 153, 34, 0.15);
+  padding: 1px 5px;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.working-dots {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.working-dots span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: #f0883e;
+  animation: wd 1.2s ease-in-out infinite;
+}
+.working-dots span:nth-child(2) { animation-delay: 0.2s; }
+.working-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes wd { 0%,100% { opacity:0.2; } 50% { opacity:1; } }
+
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.foot-stat {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.foot-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.foot-dot.dot-running { background: var(--accent2); }
+.foot-dot.dot-dead    { background: var(--danger); }
+
+.foot-sep { color: var(--border); font-size: 10px; }
+.foot-stat.total { color: var(--text-muted); }
+
+/* ── Right panel: chat ──────────────────────────────────────────────────────── */
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+/* Chat header */
+.chat-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 10px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
 }
 
-.agent-id {
-  font-size: 14px;
-  color: var(--text);
-  font-weight: 600;
-}
-
-.status-badge {
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-weight: 600;
-}
-
-.status-running { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
-.status-dead { background: rgba(248, 81, 73, 0.15); color: #f85149; }
-.status-starting { background: rgba(88, 166, 255, 0.15); color: #58a6ff; }
-.status-restarting { background: rgba(210, 153, 34, 0.15); color: #d29922; }
-.status-busy { background: rgba(240, 136, 62, 0.15); color: #f0883e; }
-
-.agent-meta { display: flex; flex-direction: column; gap: 4px; }
-.agent-meta > div { display: flex; justify-content: space-between; font-size: 11px; }
-.meta-label { color: var(--text-muted); }
-.meta-value { color: var(--text); }
-
-.stats-row {
+.chat-head-left {
   display: flex;
+  align-items: center;
   gap: 12px;
 }
 
-.stat-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px 24px;
-  text-align: center;
-  min-width: 100px;
+.chat-head-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 
-.stat-value {
-  font-size: 28px;
+.agent-sigil {
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
   font-weight: 700;
   color: var(--accent);
+  letter-spacing: 1px;
+  flex-shrink: 0;
 }
 
-.stat-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin-top: 4px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+.chat-head-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
+
+.chat-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.chat-sub {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.icon-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.icon-btn:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+  background: var(--surface2);
+}
+
+.conn-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+}
+
+.conn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.conn-status.connected .conn-dot { background: var(--accent2); box-shadow: 0 0 4px var(--accent2); }
+.conn-status.connected .conn-label { color: var(--accent2); }
+
+/* Messages */
+.messages-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.messages-wrap::-webkit-scrollbar { width: 4px; }
+.messages-wrap::-webkit-scrollbar-track { background: transparent; }
+.messages-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.messages-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 100%;
+  justify-content: flex-end;
+}
+
+/* Empty state */
+.chat-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 48px 24px;
+  text-align: center;
+}
+
+.empty-sigil {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+.empty-text {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* Message rows */
+.msg-row {
+  display: flex;
+  animation: msg-in 0.18s ease-out both;
+}
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg-row.user  { justify-content: flex-end; }
+.msg-row.agent { justify-content: flex-start; }
+
+/* Grouped messages: reduce gap */
+.msg-row.grouped { margin-top: -4px; }
+
+.msg-bubble {
+  max-width: 72%;
+  padding: 10px 14px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.55;
+  position: relative;
+}
+
+.msg-bubble.user {
+  background: var(--accent);
+  color: #0d1117;
+  border-radius: 4px 4px 2px 4px;
+}
+
+.msg-bubble.agent {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 4px 4px 4px 2px;
+}
+
+/* Error message */
+.msg-bubble.agent.error {
+  background: rgba(248, 81, 73, 0.08);
+  border-color: rgba(248, 81, 73, 0.3);
+  color: #ffa198;
+}
+
+.user-text { white-space: pre-wrap; word-break: break-word; }
+
+/* Markdown rendering inside agent bubbles */
+.msg-content :deep(p)           { margin: 0 0 8px; }
+.msg-content :deep(p:last-child) { margin-bottom: 0; }
+.msg-content :deep(code)         { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; font-size: 12px; font-family: inherit; }
+.msg-content :deep(pre)          { background: rgba(0,0,0,0.4); padding: 10px 12px; border-radius: 4px; overflow-x: auto; margin: 8px 0; border: 1px solid rgba(255,255,255,0.06); }
+.msg-content :deep(pre code)     { background: none; padding: 0; font-size: 12px; }
+.msg-content :deep(ul),
+.msg-content :deep(ol)           { padding-left: 18px; margin: 6px 0; }
+.msg-content :deep(li)           { margin: 3px 0; }
+.msg-content :deep(strong)       { color: var(--text); font-weight: 600; }
+.msg-content :deep(a)            { color: var(--accent); text-decoration: none; border-bottom: 1px solid transparent; transition: border-color 0.1s; }
+.msg-content :deep(a:hover)      { border-bottom-color: var(--accent); }
+.msg-content :deep(h1),
+.msg-content :deep(h2),
+.msg-content :deep(h3)           { font-size: 13px; font-weight: 700; margin: 12px 0 4px; color: var(--accent); letter-spacing: 0.5px; }
+.msg-content :deep(table)        { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 12px; }
+.msg-content :deep(th)           { background: rgba(0,0,0,0.3); padding: 5px 10px; border: 1px solid var(--border); text-align: left; font-weight: 600; }
+.msg-content :deep(td)           { padding: 4px 10px; border: 1px solid var(--border); }
+.msg-content :deep(blockquote)   { border-left: 2px solid var(--accent); padding-left: 12px; color: var(--text-muted); margin: 8px 0; font-style: italic; }
+.msg-content :deep(hr)           { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+
+/* Message footer: timestamp + copy */
+.msg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.msg-ts {
+  font-size: 9px;
+  color: var(--text-muted);
+  opacity: 0.55;
+  line-height: 1;
+}
+.msg-bubble.user .msg-ts { color: rgba(13,17,23,0.45); }
+
+.copy-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  opacity: 0.6;
+  transition: opacity 0.1s, color 0.1s;
+  line-height: 1;
+}
+.copy-btn:hover { opacity: 1; color: var(--text); }
+.copy-btn.copied { color: var(--accent2); opacity: 1; }
+
+/* Typing indicator */
+.loading-bubble {
+  padding: 12px 16px 10px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.tool-call-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-left: 6px;
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.typing-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  animation: typing 1.4s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+@keyframes typing {
+  0%,80%,100% { transform: scale(0.6); opacity: 0.35; }
+  40%         { transform: scale(1);   opacity: 1; }
+}
+
+/* Input area */
+.input-area {
+  padding: 12px 24px 14px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
+}
+
+.input-wrap {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px 8px 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.input-wrap.focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.08);
+}
+
+.input-wrap.disabled {
+  opacity: 0.6;
+}
+
+.chat-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  resize: none;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+  max-height: calc(1.5em * 4 + 16px);
+  overflow-y: auto;
+}
+.chat-input::-webkit-scrollbar { width: 3px; }
+.chat-input::-webkit-scrollbar-thumb { background: var(--border); }
+
+.chat-input::placeholder { color: var(--text-muted); opacity: 0.45; }
+.chat-input:disabled { cursor: not-allowed; }
+
+.send-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 3px;
+  background: var(--accent);
+  border: none;
+  color: #0d1117;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, opacity 0.15s;
+}
+.send-btn:hover:not(:disabled) { background: #79c0ff; }
+.send-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+
+.input-hint {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  opacity: 0.45;
+  letter-spacing: 0.3px;
+}
+.hint-sep { opacity: 0.5; }
+
+/* Blink cursor */
+.blink { animation: blink 1s step-end infinite; }
+@keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0; } }
 </style>

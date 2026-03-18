@@ -26,6 +26,8 @@ import { isTracingEnabled } from './tracing/init.js';
 import type { AgentManager } from './agent-manager.js';
 import type { ConfigService } from './config-service.js';
 import type { SetupMode } from './setup-detector.js';
+import type { McpManager } from './mcp-manager.js';
+import type { McpGateway } from './mcp-gateway.js';
 import { listTickets, getTicket, createTicket, addComment, listComments, type TicketStatus, type TicketPriority, type TicketType } from './db.js';
 import { TicketRegistry } from './tickets/registry.js';
 import { LocalTicketProvider } from './tickets/local-provider.js';
@@ -295,7 +297,7 @@ export async function createApiApp(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway },
 ): Promise<express.Application> {
   const app = express();
   app.use(express.json());
@@ -778,25 +780,92 @@ export async function createApiApp(
     const sid = sessionId ?? 'default';
     const replySubject = `chat.reply.${sid}.${Date.now()}`;
 
+    // SSE stream — forwards real LLM tokens as they arrive from the agent runner
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    const sse = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    // streamSubject receives token-by-token chunks; replySubject is kept for fallback
+    const streamSubject = `chat.stream.${sid}.${Date.now()}`;
+
     try {
-      const sub = nc.subscribe(replySubject, { max: 1, timeout: 30_000 });
+      const sub = nc.subscribe(streamSubject, { timeout: 90_000 });
 
       await publish(nc, 'agent.settings.inbox',
-        JSON.stringify({ content: message, sessionId: sid, replySubject }),
+        JSON.stringify({ content: message, sessionId: sid, replySubject, streamSubject }),
       );
 
       for await (const msg of sub) {
-        const data = JSON.parse(codec.decode(msg.data)) as unknown;
-        res.json({ reply: data });
-        break;
+        const event = JSON.parse(codec.decode(msg.data)) as { type: string; text?: string; error?: string };
+        sse(event);
+        if (event.type === 'done' || event.type === 'error') break;
       }
     } catch (err) {
       logger.error({ err }, 'Chat settings error');
-      res.status(503).json({ error: 'Settings agent not responding', detail: String(err) });
+      sse({ type: 'error', error: 'Settings agent not responding' });
     }
+    res.end();
   });
 
   // ── Internal reload (called by setup_complete MCP tool) ───────────────────
+
+  // ── Internal management API (used by management MCP server in settings agent) ─
+
+  app.get('/internal/status', (_req: Request, res: Response) => {
+    try {
+      res.json({
+        setupMode: opts.setupMode,
+        agents: manager.getStates(),
+        mcpServers: opts.mcpManager?.getStates() ?? [],
+        ts: Date.now(),
+      });
+    } catch (err) {
+      logger.error({ err }, 'GET /internal/status error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post('/internal/agents/:agentId/start', async (req: Request, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+      const agent = manager.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: `Agent '${agentId}' not found` });
+      await manager.startAgent(agent);
+      res.json({ ok: true, agentId });
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/agents/:agentId/start error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post('/internal/agents/:agentId/stop', async (req: Request, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+      await manager.stopAgent(agentId);
+      res.json({ ok: true, agentId });
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/agents/:agentId/stop error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post('/internal/mcp-servers/:serverId/restart', async (req: Request, res: Response) => {
+    try {
+      const { serverId } = req.params;
+      if (!opts.mcpManager) return res.status(503).json({ error: 'MCP manager not available' });
+      await opts.mcpManager.restart(serverId);
+      // Invalidate gateway tool cache so tools are re-discovered from restarted container
+      opts.mcpGateway?.invalidateCache(serverId);
+      logger.info({ serverId }, 'MCP server restarted via internal API');
+      res.json({ ok: true, serverId });
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/mcp-servers/:serverId/restart error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
 
   app.post('/internal/reload', async (_req: Request, res: Response) => {
     try {
@@ -854,7 +923,7 @@ export async function startApiServer(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway },
 ): Promise<void> {
   const app = await createApiApp(manager, nc, configService, opts);
 

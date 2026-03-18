@@ -64,6 +64,16 @@ const ticketsMcpServer = MCP_GATEWAY_URL
   ? { type: 'http' as const, url: MCP_GATEWAY_URL, headers: { 'x-agent-id': AGENT_ID } }
   : { command: 'node', args: [TICKETS_MCP_PATH], env: { DB_PATH, AGENT_ID } };
 
+/** Extra MCP servers injected from the agent manifest's mcp_config field */
+const agentMcpServers: Record<string, unknown> = (() => {
+  const raw = process.env.AGENT_MCP_SERVERS;
+  if (!raw) return {};
+  try { return JSON.parse(raw) as Record<string, unknown>; } catch { return {}; }
+})();
+
+/** All MCP servers: tickets + any agent-specific servers */
+const allMcpServers = { tickets: ticketsMcpServer, ...agentMcpServers };
+
 // ─── Logger ──────────────────────────────────────────────────────────────────
 
 /** OTel trace correlation mixin — adds traceId/spanId to every log line */
@@ -97,6 +107,8 @@ interface IncomingMessage {
   /** Topic event payload (e.g. { ticket_id, title } from topic.ticket.new) */
   [key: string]: unknown;
   replySubject?: string;
+  /** If set, text tokens are streamed to this subject as they arrive from the LLM */
+  streamSubject?: string;
 }
 
 interface ReplyPayload {
@@ -320,7 +332,7 @@ async function main(): Promise<void> {
           prompt: '',
           sessionId: savedSessionId,
           maxTurns: 50,
-          mcpServers: { tickets: ticketsMcpServer },
+          mcpServers: allMcpServers,
         });
 
         for await (const event of providerRun) {
@@ -457,6 +469,7 @@ async function main(): Promise<void> {
       let result = '';
       let sessionId: string | undefined;
       let errorSubtype: string | undefined;
+      const streamSubject = (payload as Record<string, unknown>).streamSubject as string | undefined;
 
       const workingTimer = setInterval(() => {
         try { msg.working(); } catch { /* ignore if msg already acked */ }
@@ -471,16 +484,23 @@ async function main(): Promise<void> {
           sessionId: existingSessionId,
           maxTurns: 50,
           ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
-          mcpServers: { tickets: ticketsMcpServer },
+          mcpServers: allMcpServers,
         });
 
         for await (const event of providerRun) {
           if (event.type === 'session_id') {
             sessionId = event.sessionId;
             currentSessionId = sessionId;
+          } else if (event.type === 'text') {
+            if (streamSubject) {
+              nc.publish(streamSubject, codec.encode(JSON.stringify({ type: 'chunk', text: event.text })));
+            }
           } else if (event.type === 'tool_call') {
             currentTask = baseTask ? `${baseTask} → ${toolActivity(event.toolName)}` : toolActivity(event.toolName);
             publishHeartbeat();
+            if (streamSubject) {
+              nc.publish(streamSubject, codec.encode(JSON.stringify({ type: 'tool_call', toolName: event.toolName })));
+            }
             if (querySpan) {
               querySpan.span.addEvent('tool_call', { 'tool.name': event.toolName });
             }
@@ -512,6 +532,14 @@ async function main(): Promise<void> {
         log.debug({ agentId: AGENT_ID, sessionId }, 'Session id saved');
       }
       currentSessionId = undefined;
+
+      // ── Signal stream end ─────────────────────────────────────────────────
+      if (streamSubject) {
+        const doneEvent = errorSubtype
+          ? { type: 'error', error: result }
+          : { type: 'done' };
+        nc.publish(streamSubject, codec.encode(JSON.stringify(doneEvent)));
+      }
 
       // ── Publish reply ─────────────────────────────────────────────────────
       const replySubject = payload.replySubject ?? `agent.${AGENT_ID}.reply`;

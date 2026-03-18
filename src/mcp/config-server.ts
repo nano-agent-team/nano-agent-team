@@ -24,8 +24,10 @@ import {
 const DATA_DIR = process.env.DATA_DIR ?? '/data';
 const API_PORT = process.env.API_PORT ?? '3001';
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
+const SECRETS_PATH = path.join(DATA_DIR, 'secrets.json');
 const FEATURES_DIR = process.env.FEATURES_DIR ?? '/app/features';
 const TEAMS_DIR = process.env.TEAMS_DIR ?? '/app/teams';
+const MCP_SERVERS_DIR = process.env.MCP_SERVERS_DIR ?? '/app/mcp-servers';
 
 // ── Config helpers ────────────────────────────────────────────────────────────
 
@@ -76,6 +78,41 @@ function getMissing(config: Record<string, unknown>): string[] {
   if (!provider?.type) missing.push('provider.type');
   return missing;
 }
+
+// ── Secret helpers ─────────────────────────────────────────────────────────────
+
+function loadSecrets(): Record<string, string> {
+  try {
+    return JSON.parse(fs.readFileSync(SECRETS_PATH, 'utf8')) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+function saveSecrets(secrets: Record<string, string>): void {
+  const dir = path.dirname(SECRETS_PATH);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(SECRETS_PATH, JSON.stringify(secrets, null, 2), { mode: 0o600 });
+}
+
+function scanMcpServerManifests(): Array<{ id: string; name: string; required_secrets: string[] }> {
+  if (!fs.existsSync(MCP_SERVERS_DIR)) return [];
+  const result: Array<{ id: string; name: string; required_secrets: string[] }> = [];
+  for (const entry of fs.readdirSync(MCP_SERVERS_DIR, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const mPath = path.join(MCP_SERVERS_DIR, entry.name, 'manifest.json');
+    if (!fs.existsSync(mPath)) continue;
+    try {
+      const m = JSON.parse(fs.readFileSync(mPath, 'utf8')) as {
+        id: string; name: string; required_secrets?: string[];
+      };
+      result.push({ id: m.id, name: m.name, required_secrets: m.required_secrets ?? [] });
+    } catch { /* skip */ }
+  }
+  return result;
+}
+
+// ── Config helpers ────────────────────────────────────────────────────────────
 
 function scanManifests(dir: string, filename: string): Array<{ id: string; name: string }> {
   if (!fs.existsSync(dir)) return [];
@@ -150,6 +187,38 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
       name: 'list_available',
       description: 'List teams and features available to install.',
       inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'list_secrets',
+      description: 'List all secret keys and whether they are set. Values are never exposed.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'set_secret',
+      description: 'Store a secret value (e.g. API token). Stored in data/secrets.json (mode 0600).',
+      inputSchema: {
+        type: 'object',
+        required: ['key', 'value'],
+        properties: {
+          key: { type: 'string', description: 'Secret key, e.g. "GH_TOKEN"' },
+          value: { type: 'string', description: 'Secret value' },
+        },
+      },
+    },
+    {
+      name: 'check_secrets',
+      description: 'Check which required secrets are missing for given MCP server IDs.',
+      inputSchema: {
+        type: 'object',
+        required: ['server_ids'],
+        properties: {
+          server_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'MCP server IDs to check, e.g. ["github", "jira"]',
+          },
+        },
+      },
     },
   ],
 }));
@@ -235,6 +304,57 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           type: 'text',
           text: JSON.stringify({ teams, features }),
         }],
+      };
+    }
+
+    case 'list_secrets': {
+      const secrets = loadSecrets();
+      const mcpServers = scanMcpServerManifests();
+      const keys = Object.keys(secrets);
+      // Show each key with is_set flag — never expose values
+      const result = keys.map((k) => ({ key: k, is_set: true }));
+      // Also include required_secrets from MCP servers that aren't set yet
+      const known = new Set(keys);
+      for (const srv of mcpServers) {
+        for (const reqKey of srv.required_secrets) {
+          if (!known.has(reqKey)) {
+            result.push({ key: reqKey, is_set: false });
+            known.add(reqKey);
+          }
+        }
+      }
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+      };
+    }
+
+    case 'set_secret': {
+      const key = a.key as string;
+      const value = a.value as string;
+      const secrets = loadSecrets();
+      secrets[key] = value;
+      saveSecrets(secrets);
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: true, key }) }],
+      };
+    }
+
+    case 'check_secrets': {
+      const serverIds = a.server_ids as string[];
+      const secrets = loadSecrets();
+      const mcpServers = scanMcpServerManifests();
+      const result: Array<{ server_id: string; missing: string[]; ready: boolean }> = [];
+      for (const serverId of serverIds) {
+        const srv = mcpServers.find((s) => s.id === serverId);
+        if (!srv) {
+          result.push({ server_id: serverId, missing: [], ready: false });
+          continue;
+        }
+        const missing = srv.required_secrets.filter((k) => !secrets[k]);
+        result.push({ server_id: serverId, missing, ready: missing.length === 0 });
+      }
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
       };
     }
 
