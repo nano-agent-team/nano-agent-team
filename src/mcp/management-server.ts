@@ -15,7 +15,7 @@
  *   install_team          — install team from hub + trigger reload
  */
 
-import { execSync, execFileSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -273,9 +273,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       try {
         if (fs.existsSync(path.join(HUB_DIR, '.git'))) {
           // Already cloned — pull latest
-          execSync('git pull --ff-only', {
+          execFileSync('git', ['pull', '--ff-only'], {
             cwd: HUB_DIR,
-            env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+            env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/root', GIT_TERMINAL_PROMPT: '0' },
             timeout: 30_000,
           });
           return { content: [{ type: 'text', text: JSON.stringify({ ok: true, action: 'pulled', dir: HUB_DIR }) }] };
@@ -315,6 +315,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case 'get_hub_team': {
       const teamId = a.team_id as string;
+      if (!/^[a-z0-9_-]+$/.test(teamId)) {
+        return { content: [{ type: 'text', text: 'Invalid team_id format.' }], isError: true };
+      }
       const teamDir = hubTeamPath(teamId);
 
       if (!fs.existsSync(teamDir)) {
@@ -362,6 +365,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     case 'install_team': {
       const teamId = a.team_id as string;
+      if (!/^[a-z0-9_-]+$/.test(teamId)) {
+        return { content: [{ type: 'text', text: 'Invalid team_id format.' }], isError: true };
+      }
       const teamDir = hubTeamPath(teamId);
 
       if (!fs.existsSync(teamDir)) {

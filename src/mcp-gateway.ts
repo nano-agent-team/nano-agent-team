@@ -540,6 +540,7 @@ function buildMcpServer(
     });
 
     server.tool('get_hub_team', 'Get hub team details: agents, required secrets.', { team_id: z.string() }, async ({ team_id }) => {
+      if (!/^[a-z0-9_-]+$/.test(team_id)) return { content: [{ type: 'text' as const, text: 'Invalid team_id format.' }] };
       const teamDir = path.join(HUB_DIR, 'teams', team_id);
       if (!fs.existsSync(teamDir)) return { content: [{ type: 'text' as const, text: `Team "${team_id}" not found in hub.` }] };
       const manifest = hubReadJson<{ id: string; name: string; description?: string }>(path.join(teamDir, 'team.json'));
@@ -560,6 +561,7 @@ function buildMcpServer(
     });
 
     server.tool('install_team', 'Install a team from hub: copy to /data/teams, update config, trigger reload.', { team_id: z.string() }, async ({ team_id }) => {
+      if (!/^[a-z0-9_-]+$/.test(team_id)) return { content: [{ type: 'text' as const, text: 'Invalid team_id format.' }] };
       const teamDir = path.join(HUB_DIR, 'teams', team_id);
       if (!fs.existsSync(teamDir)) return { content: [{ type: 'text' as const, text: `Team "${team_id}" not found. Call fetch_hub first.` }] };
       const destDir = path.join(opts.dataDir, 'teams', team_id);
