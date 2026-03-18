@@ -15,7 +15,7 @@
  *   install_team          — install team from hub + trigger reload
  */
 
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -282,8 +282,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         } else {
           // Fresh clone
           if (fs.existsSync(HUB_DIR)) fs.rmSync(HUB_DIR, { recursive: true, force: true });
-          execSync(`git clone --depth 1 "${cloneUrl}" "${HUB_DIR}"`, {
-            env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+          execFileSync('git', ['clone', '--depth', '1', cloneUrl, HUB_DIR], {
+            env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/root', GIT_TERMINAL_PROMPT: '0' },
             timeout: 60_000,
           });
           return { content: [{ type: 'text', text: JSON.stringify({ ok: true, action: 'cloned', dir: HUB_DIR }) }] };
@@ -374,7 +374,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // Copy team files to /data/teams/{teamId}
       const destDir = path.join(DATA_DIR, 'teams', teamId);
       fs.mkdirSync(destDir, { recursive: true });
-      execSync(`cp -r "${teamDir}/." "${destDir}"`, { timeout: 10_000 });
+      execFileSync('cp', ['-r', `${teamDir}/.`, destDir], { timeout: 10_000 });
 
       // Update config.json
       const config = loadConfig();

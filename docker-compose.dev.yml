@@ -34,7 +34,7 @@ services:
       DATA_DIR: /data
       HOST_DATA_DIR: ${PWD}/data
       LOG_LEVEL: info
-      API_PORT: 3001
+      API_PORT: 3002
       MCP_GATEWAY_PORT: 3004
       HOST_CODEX_DIR: ${HOME}/.codex
       HOST_CLAUDE_JSON: ${HOME}/.claude.json
@@ -44,7 +44,7 @@ services:
       # NATS_URL: nats://nats:4222
       # NATS_EMBEDDED: "false"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/api/health"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:3002/api/health"]
       interval: 30s
       timeout: 5s
       retries: 3

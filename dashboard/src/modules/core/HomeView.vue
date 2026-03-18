@@ -173,6 +173,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { marked } from 'marked'
+import DOMPurify from 'dompurify'
 import AgentModal from '../../components/AgentModal.vue'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -376,9 +377,9 @@ function autoResize(e: Event) {
 
 function renderMarkdown(text: string): string {
   try {
-    return marked.parse(text) as string
+    return DOMPurify.sanitize(marked.parse(text) as string)
   } catch {
-    return text
+    return DOMPurify.sanitize(text)
   }
 }
 

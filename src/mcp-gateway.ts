@@ -23,7 +23,7 @@
  *   "mcp_access": { "github": ["pr.read", "pr.comment"] }
  */
 
-import { execSync } from 'child_process';
+import { execSync, execFileSync } from 'child_process';
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
@@ -174,15 +174,23 @@ function cfgSetNested(obj: Record<string, unknown>, keys: string[], value: unkno
 }
 function cfgMaskSecrets(cfg: Record<string, unknown>): Record<string, unknown> {
   const m = JSON.parse(JSON.stringify(cfg)) as Record<string, unknown>;
-  const p = m.provider as Record<string, unknown> | undefined;
-  if (p?.apiKey) p.apiKey = '***';
+  // Walk entire tree and mask any key that looks like a secret
+  const maskKeys = new Set(['apiKey', 'token', 'secret', 'password', 'key']);
+  const walk = (obj: Record<string, unknown>) => {
+    for (const [k, v] of Object.entries(obj)) {
+      if (maskKeys.has(k) && v) { obj[k] = '***'; }
+      else if (v && typeof v === 'object' && !Array.isArray(v)) walk(v as Record<string, unknown>);
+    }
+  };
+  walk(m);
   return m;
 }
 function cfgMissing(cfg: Record<string, unknown>): string[] {
+  // OAuth/subscription users have primaryProvider set but no apiKey — that's valid
+  if (cfg.primaryProvider) return [];
   const missing: string[] = [];
   const p = cfg.provider as Record<string, unknown> | undefined;
   if (!p?.apiKey) missing.push('provider.apiKey');
-  if (!p?.type) missing.push('provider.type');
   return missing;
 }
 function cfgScanManifests(dir: string, filename: string): Array<{ id: string; name: string }> {
@@ -507,11 +515,11 @@ function buildMcpServer(
       })();
       try {
         if (fs.existsSync(path.join(HUB_DIR, '.git'))) {
-          execSync('git pull --ff-only', { cwd: HUB_DIR, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, timeout: 30_000 });
+          execFileSync('git', ['pull', '--ff-only'], { cwd: HUB_DIR, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/root', GIT_TERMINAL_PROMPT: '0' }, timeout: 30_000 });
           return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, action: 'pulled', dir: HUB_DIR }) }] };
         } else {
           if (fs.existsSync(HUB_DIR)) fs.rmSync(HUB_DIR, { recursive: true, force: true });
-          execSync(`git clone --depth 1 "${cloneUrl}" "${HUB_DIR}"`, { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' }, timeout: 60_000 });
+          execFileSync('git', ['clone', '--depth', '1', cloneUrl, HUB_DIR], { env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/root', GIT_TERMINAL_PROMPT: '0' }, timeout: 60_000 });
           return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, action: 'cloned', dir: HUB_DIR }) }] };
         }
       } catch (err) {
@@ -556,7 +564,7 @@ function buildMcpServer(
       if (!fs.existsSync(teamDir)) return { content: [{ type: 'text' as const, text: `Team "${team_id}" not found. Call fetch_hub first.` }] };
       const destDir = path.join(opts.dataDir, 'teams', team_id);
       fs.mkdirSync(destDir, { recursive: true });
-      execSync(`cp -r "${teamDir}/." "${destDir}"`, { timeout: 10_000 });
+      execFileSync('cp', ['-r', `${teamDir}/.`, destDir], { timeout: 10_000 });
       const cfg = cfgLoad(configPath);
       const installed = (cfg.installed as { features: string[]; teams: string[] } | undefined) ?? { features: [], teams: [] };
       installed.teams = [...new Set([...installed.teams, team_id])];

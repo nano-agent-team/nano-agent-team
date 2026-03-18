@@ -16,7 +16,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
-import express, { type Request, type Response } from 'express';
+import express, { type Request, type Response, type NextFunction } from 'express';
 import { StringCodec, type NatsConnection } from 'nats';
 
 import { API_PORT, AGENTS_DIR, DATA_DIR } from './config.js';
@@ -784,13 +784,19 @@ export async function createApiApp(
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
-    const sse = (data: object) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+    res.flushHeaders();
+    const sse = (data: object) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      (res as unknown as { flush?: () => void }).flush?.();
+    };
 
     // streamSubject receives token-by-token chunks; replySubject is kept for fallback
     const streamSubject = `chat.stream.${sid}.${Date.now()}`;
 
     try {
       const sub = nc.subscribe(streamSubject, { timeout: 90_000 });
+      // Clean up subscription if client disconnects before done
+      req.on('close', () => sub.unsubscribe());
 
       await publish(nc, 'agent.settings.inbox',
         JSON.stringify({ content: message, sessionId: sid, replySubject, streamSubject }),
@@ -811,6 +817,12 @@ export async function createApiApp(
   // ── Internal reload (called by setup_complete MCP tool) ───────────────────
 
   // ── Internal management API (used by management MCP server in settings agent) ─
+  // Restricted to localhost — not reachable from external network
+  app.use('/internal', (req: Request, res: Response, next: NextFunction) => {
+    const ip = req.ip ?? req.socket.remoteAddress ?? '';
+    if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
+    res.status(403).json({ error: 'Forbidden' });
+  });
 
   app.get('/internal/status', (_req: Request, res: Response) => {
     try {
