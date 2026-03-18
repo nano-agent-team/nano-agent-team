@@ -60,6 +60,13 @@ export interface AgentManifest {
   capabilities?: string[];
   /** LLM provider: provider name or 'auto' (default: 'auto' = use primaryProvider) */
   provider?: string;
+  /**
+   * MCP Gateway permissions — which tool operations this agent may call.
+   * Key: MCP namespace (e.g. "tickets"). Value: array of allowed operations or "*" for all.
+   * If omitted, all tools are available (backward compat).
+   * Example: { "tickets": ["get", "list", "comment", "approve"] }
+   */
+  mcp_permissions?: Record<string, string[] | '*'>;
 }
 
 // ─── Workflow Binding ─────────────────────────────────────────────────────────

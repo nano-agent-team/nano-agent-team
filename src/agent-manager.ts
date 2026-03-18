@@ -25,6 +25,7 @@ import {
   DOCKER_NETWORK,
   HEALTH_CHECK_INTERVAL_MS,
   NATS_URL,
+  MCP_GATEWAY_PORT,
 } from './config.js';
 import { logger } from './logger.js';
 import type { LoadedAgent, DispatchConfig } from './agent-registry.js';
@@ -332,6 +333,8 @@ export class AgentManager {
         `MODEL_EXPLICIT=${modelExplicit}`,
         `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
         `LOG_LEVEL=info`,
+        // MCP Gateway — HTTP MCP server in nate, accessible from DinD via host.docker.internal
+        `MCP_GATEWAY_URL=http://${this.resolveMcpGatewayHost()}:${MCP_GATEWAY_PORT}/mcp`,
         // Provider-specific auth tokens
         ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
         ...(providerName === 'codex' && codexToken ? [
@@ -914,6 +917,11 @@ export class AgentManager {
       '127.0.0.1',
       'host.docker.internal',
     );
+  }
+
+  /** Returns the hostname agent containers should use to reach nate services (MCP Gateway etc.) */
+  private resolveMcpGatewayHost(): string {
+    return DOCKER_NETWORK === 'host' ? 'localhost' : 'host.docker.internal';
   }
 
   /**

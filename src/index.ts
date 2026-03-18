@@ -15,13 +15,16 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { DATA_DIR, NATS_URL, AGENTS_DIR } from './config.js';
+import { DATA_DIR, NATS_URL, AGENTS_DIR, MCP_GATEWAY_PORT } from './config.js';
 import { logger } from './logger.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { connectNats, ensureStream, ensureConsumer, closeNats, publish } from './nats-client.js';
 import { loadAgents, loadManifest, resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
 import { AgentManager } from './agent-manager.js';
 import { startApiServer } from './api-server.js';
+import { McpGateway } from './mcp-gateway.js';
+import { TicketRegistry } from './tickets/registry.js';
+import { LocalTicketProvider } from './tickets/local-provider.js';
 import { detectSetupMode, isSetupRequired } from './setup-detector.js';
 import { ConfigService } from './config-service.js';
 import { startEmbeddedNats, stopEmbeddedNats } from './nats-embedded.js';
@@ -68,6 +71,16 @@ async function main(): Promise<void> {
 
   const configService = new ConfigService(DATA_DIR);
   const manager = new AgentManager(nc, configService);
+
+  // ── MCP Gateway ─────────────────────────────────────────────────────────────
+  const ticketRegistry = new TicketRegistry(nc);
+  ticketRegistry.registerGlobal(new LocalTicketProvider());
+
+  const mcpGateway = new McpGateway(ticketRegistry, (agentId) => {
+    const agent = manager.getAgent(agentId);
+    return agent?.manifest.mcp_permissions ?? {};
+  });
+  mcpGateway.start(MCP_GATEWAY_PORT);
 
   if (isSetupRequired(setupMode)) {
     // ── 5a. Setup mode ─────────────────────────────────────────────────────────
@@ -133,6 +146,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutting down...');
     proxyServer?.close();
+    mcpGateway.stop();
     await manager.stopAll();
     await closeNats(nc);
     stopEmbeddedNats();

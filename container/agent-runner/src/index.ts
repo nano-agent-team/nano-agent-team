@@ -51,9 +51,18 @@ const SESSION_FILE = '/workspace/sessions/session_id';
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const DB_PATH = process.env.DB_PATH ?? '/workspace/db/nano-agent-team.db';
 
+// MCP Gateway — HTTP server running in nate, accessible from DinD via host.docker.internal
+// Falls back to stdio MCP if gateway URL is not provided
+const MCP_GATEWAY_URL = process.env.MCP_GATEWAY_URL ?? '';
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const TICKETS_MCP_PATH = path.join(__dirname, 'tickets-mcp-stdio.js');
+
+/** MCP server config passed to provider.run() — HTTP gateway if available, stdio fallback */
+const ticketsMcpServer = MCP_GATEWAY_URL
+  ? { type: 'http' as const, url: MCP_GATEWAY_URL, headers: { 'x-agent-id': AGENT_ID } }
+  : { command: 'node', args: [TICKETS_MCP_PATH], env: { DB_PATH, AGENT_ID } };
 
 // ─── Logger ──────────────────────────────────────────────────────────────────
 
@@ -311,13 +320,7 @@ async function main(): Promise<void> {
           prompt: '',
           sessionId: savedSessionId,
           maxTurns: 50,
-          mcpServers: {
-            tickets: {
-              command: 'node',
-              args: [TICKETS_MCP_PATH],
-              env: { DB_PATH, AGENT_ID },
-            },
-          },
+          mcpServers: { tickets: ticketsMcpServer },
         });
 
         for await (const event of providerRun) {
@@ -459,13 +462,7 @@ async function main(): Promise<void> {
           sessionId: existingSessionId,
           maxTurns: 50,
           ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
-          mcpServers: {
-            tickets: {
-              command: 'node',
-              args: [TICKETS_MCP_PATH],
-              env: { DB_PATH, AGENT_ID },
-            },
-          },
+          mcpServers: { tickets: ticketsMcpServer },
         });
 
         for await (const event of providerRun) {
