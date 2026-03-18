@@ -434,6 +434,17 @@ export async function createApiApp(
             }
           }
         }
+
+        // Register entrypoint routes for { from, to } binding inputs
+        // Dispatcher bridges external topic → agent.{instanceId}.{portName}
+        for (const agent of instances) {
+          const instanceId = getInstanceId(agent);
+          for (const input of Object.values(agent.binding?.inputs ?? {})) {
+            if (typeof input === 'object' && 'from' in input && 'to' in input) {
+              await manager.registerEntrypointRoute(input.from, `agent.${instanceId}.${input.to}`);
+            }
+          }
+        }
       }
     }
 

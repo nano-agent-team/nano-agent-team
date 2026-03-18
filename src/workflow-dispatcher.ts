@@ -25,6 +25,57 @@ export class WorkflowDispatcher {
   ) {}
 
   /**
+   * Register a 1-to-1 entrypoint route: external subject → agent entrypoint subject.
+   * Creates a durable JetStream consumer on `from` and forwards every message to `toSubject`.
+   * Used for { from, to } binding inputs — agent subscribes to toSubject, not to `from`.
+   */
+  async registerEntrypointRoute(from: string, toSubject: string): Promise<void> {
+    const js = this.nc.jetstream();
+    const jsm = await this.nc.jetstreamManager();
+
+    const consumerName = `ep-${from.replace(/\./g, '-')}`;
+
+    try {
+      await jsm.consumers.info('AGENTS', consumerName);
+    } catch {
+      await jsm.consumers.add('AGENTS', {
+        durable_name: consumerName,
+        filter_subject: from,
+        ack_policy: AckPolicy.Explicit,
+        deliver_policy: DeliverPolicy.New,
+      });
+    }
+
+    const consumer = await js.consumers.get('AGENTS', consumerName);
+    logger.info({ from, toSubject }, 'WorkflowDispatcher: registered entrypoint route');
+
+    void this.entrypointRouteLoop(consumer, from, toSubject);
+  }
+
+  private async entrypointRouteLoop(
+    consumer: Awaited<ReturnType<ReturnType<NatsConnection['jetstream']>['consumers']['get']>>,
+    from: string,
+    toSubject: string,
+  ): Promise<void> {
+    try {
+      const messages = await consumer.consume({ max_messages: 1 });
+      for await (const msg of messages) {
+        try {
+          const js = this.nc.jetstream();
+          await js.publish(toSubject, msg.data, { headers: msg.headers });
+          msg.ack();
+          logger.debug({ from, toSubject }, 'WorkflowDispatcher: forwarded to entrypoint');
+        } catch (err) {
+          logger.error({ err, from, toSubject }, 'WorkflowDispatcher: entrypoint route failed');
+          msg.nak();
+        }
+      }
+    } catch (err) {
+      logger.error({ err, from, toSubject }, 'WorkflowDispatcher: entrypoint route loop error');
+    }
+  }
+
+  /**
    * Register a dispatch rule for a NATS subject.
    * Creates a durable JetStream consumer and starts an async pull loop.
    * Each message is routed to an instance picked by the configured strategy.

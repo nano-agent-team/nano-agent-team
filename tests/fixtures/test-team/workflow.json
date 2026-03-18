@@ -23,7 +23,12 @@
     }
   },
   "bindings": {
-    "worker-a": { "inputs": { "work": "topic.test.direct-a" } },
+    "worker-a": {
+      "inputs": {
+        "work":    "topic.test.direct-a",
+        "tickets": { "from": "topic.test.entrypoint-a", "to": "tickets" }
+      }
+    },
     "worker-b": { "inputs": { "work": "topic.test.direct-b" } },
     "pool-worker": { "inputs": { "work": "topic.test.pool" } }
   }

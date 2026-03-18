@@ -47,6 +47,13 @@ export interface AgentManifest {
   repo_path?: string;
   /** Docker image to use for this agent. Defaults to AGENT_IMAGE (nano-agent:latest) */
   image?: string;
+  /**
+   * Named entrypoint port names for this agent.
+   * Each name resolves to subject: agent.{instanceId}.{portName}
+   * "inbox" is always implicitly available (agent.{instanceId}.inbox).
+   * Example: ["inbox", "tickets"] → agent receives on .inbox and .tickets
+   */
+  entrypoints?: string[];
   /** Mount host SSH keys (~/.ssh) into container for git SSH access */
   ssh_mount?: boolean;
   /** Capability tags for auto model selection: 'fast', 'cheap', 'reasoning', 'long-context', ... */
@@ -57,10 +64,25 @@ export interface AgentManifest {
 
 // ─── Workflow Binding ─────────────────────────────────────────────────────────
 
+/**
+ * Entrypoint route binding: external topic → named agent entrypoint.
+ *
+ * `from`  — external NATS subject the dispatcher listens on
+ * `to`    — entrypoint port name declared in agent manifest.entrypoints
+ *           Resolved to subject: agent.{instanceId}.{to}
+ */
+export interface WorkflowInputBinding {
+  from: string;
+  to: string;
+}
+
+/** A binding input value is either a plain subject (backward compat) or an entrypoint route */
+export type InputBinding = string | WorkflowInputBinding;
+
 /** Maps an agent's logical ports to concrete NATS subjects in a workflow */
 export interface WorkflowBinding {
-  /** port → NATS subject for inputs */
-  inputs?: Record<string, string>;
+  /** port → subject (string) or port → { from, to } entrypoint route */
+  inputs?: Record<string, InputBinding>;
   /** port → NATS subject for outputs */
   outputs?: Record<string, string>;
 }
@@ -148,11 +170,22 @@ export function resolveTopicsForAgent(
   binding?: WorkflowBinding,
   instanceId?: string,
 ): string[] {
-  const inbox = `agent.${instanceId ?? agent.id}.inbox`;
+  const id = instanceId ?? agent.id;
+  const inbox = `agent.${id}.inbox`;
 
   if (binding?.inputs) {
-    const boundSubjects = Object.values(binding.inputs).filter(s => s !== inbox);
-    return [inbox, ...boundSubjects];
+    const subjects = new Set<string>([inbox]);
+    for (const input of Object.values(binding.inputs)) {
+      if (typeof input === 'string') {
+        // Backward compat: plain subject added directly to consumer filter
+        subjects.add(input);
+      } else {
+        // Entrypoint route: consumer filters on the TO subject (agent.{id}.{portName})
+        // The FROM subject is handled by WorkflowDispatcher — agent never subscribes to it
+        subjects.add(`agent.${id}.${input.to}`);
+      }
+    }
+    return [...subjects];
   }
 
   if (agent.subscribe_topics && agent.subscribe_topics.length > 0) {

@@ -934,4 +934,12 @@ export class AgentManager {
   async registerDispatch(subject: string, config: DispatchConfig): Promise<void> {
     await this.dispatcher.register(subject, config);
   }
+
+  /**
+   * Register a 1-to-1 entrypoint route: external subject → agent entrypoint subject.
+   * Delegates to WorkflowDispatcher.
+   */
+  async registerEntrypointRoute(from: string, toSubject: string): Promise<void> {
+    await this.dispatcher.registerEntrypointRoute(from, toSubject);
+  }
 }

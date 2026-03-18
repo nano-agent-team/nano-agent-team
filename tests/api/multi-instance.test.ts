@@ -14,8 +14,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { expandInstances } from '../../src/workflow-registry.js';
-import { getInstanceId } from '../../src/agent-registry.js';
-import type { WorkflowManifest, LoadedAgent } from '../../src/agent-registry.js';
+import { getInstanceId, resolveTopicsForAgent } from '../../src/agent-registry.js';
+import type { WorkflowManifest, LoadedAgent, AgentManifest } from '../../src/agent-registry.js';
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
@@ -90,10 +90,22 @@ beforeAll(async () => {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   }
 
-  // 4. Reload
+  // 4. Wait for volume sync (OrbStack/Docker Desktop may lag on macOS)
+  // Verify the manifest is visible inside the nate container before reloading.
+  await pollUntil(
+    async () => {
+      try {
+        execSync('docker exec nate test -f /data/teams/test-dispatch-team/agents/worker/manifest.json', { stdio: 'ignore' });
+        return true;
+      } catch { return false; }
+    },
+    { timeoutMs: 10_000, intervalMs: 200, label: 'test team files synced to container' },
+  );
+
+  // 5. Reload
   await fetch(`${BASE_URL}/internal/reload`, { method: 'POST' });
 
-  // 5. Wait for all 4 instances running (sequential Docker starts: ~10s each × 4 = ~50s)
+  // 6. Wait for all 4 instances running (sequential Docker starts: ~10s each × 4 = ~50s)
   console.log('[multi-instance] Waiting for 4 test instances to start...');
   await pollUntil(
     async () => {
@@ -108,7 +120,7 @@ beforeAll(async () => {
     { timeoutMs: 120_000, intervalMs: 3_000, label: 'all 4 instances running' },
   );
 
-  // 6. Wait for heartbeats from worker-a and worker-b (least-busy needs lastHeartbeat)
+  // 7. Wait for heartbeats from worker-a and worker-b (least-busy needs lastHeartbeat)
   console.log('[multi-instance] Waiting for heartbeats from worker-a and worker-b...');
   await pollUntil(
     async () => {
@@ -303,6 +315,41 @@ describe('T5: getInstanceId', () => {
   });
 });
 
+describe('T6: resolveTopicsForAgent — entrypoint { from, to } binding', () => {
+  const manifest: AgentManifest = { id: 'worker', name: 'W', version: '0.1.0', entrypoints: ['inbox', 'tickets'] };
+
+  test('{ from, to } adds agent.{instanceId}.{portName} to consumer filter (not the from subject)', () => {
+    const topics = resolveTopicsForAgent(
+      manifest,
+      { inputs: { t: { from: 'topic.external', to: 'tickets' } } },
+      'worker-a',
+    );
+    expect(topics).toContain('agent.worker-a.tickets');
+    expect(topics).not.toContain('topic.external');
+  });
+
+  test('inbox is always included alongside entrypoint subjects', () => {
+    const topics = resolveTopicsForAgent(
+      manifest,
+      { inputs: { t: { from: 'topic.external', to: 'tickets' } } },
+      'worker-a',
+    );
+    expect(topics).toContain('agent.worker-a.inbox');
+    expect(topics).toContain('agent.worker-a.tickets');
+  });
+
+  test('mixed binding: plain string + { from, to } both work', () => {
+    const topics = resolveTopicsForAgent(
+      manifest,
+      { inputs: { direct: 'topic.direct', ep: { from: 'topic.ext', to: 'tickets' } } },
+      'worker-a',
+    );
+    expect(topics).toContain('topic.direct');           // plain string — direct subscription
+    expect(topics).toContain('agent.worker-a.tickets'); // entrypoint — dispatcher bridges
+    expect(topics).not.toContain('topic.ext');          // from subject — never in consumer filter
+  });
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // INTEGRATION TESTS — require live stack + test agent containers
 // ═════════════════════════════════════════════════════════════════════════════
@@ -419,4 +466,22 @@ describe('T11: Competing pool — messages distributed across pool-worker-1 and 
       expect(['pool-worker-1', 'pool-worker-2']).toContain(r.instanceId);
     }
   }, 25_000);
+});
+
+describe('T12: Entrypoint route — { from, to } binding routes to agent.{id}.{portName}', () => {
+  test('message on topic.test.entrypoint-a is received by worker-a on its .tickets entrypoint', async () => {
+    if (!stackAvailable) { console.warn('T12 skipped'); return; }
+    if (!(await natsAvailable())) { console.warn('T12 skipped — NATS not reachable'); return; }
+
+    const payload = JSON.stringify({ text: 'entrypoint-test', ts: Date.now() });
+    const [received] = await Promise.all([
+      collectReceived(1, 10_000),
+      sleep(200).then(() => publishToNats('topic.test.entrypoint-a', payload)),
+    ]);
+
+    expect(received).toHaveLength(1);
+    // Dispatcher forwards to agent.worker-a.tickets; worker-a receives it
+    expect(received[0].instanceId).toBe('worker-a');
+    expect(received[0].subject).toBe('agent.worker-a.tickets');
+  }, 15_000);
 });
