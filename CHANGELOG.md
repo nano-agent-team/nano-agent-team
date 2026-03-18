@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
 
 - **ci:** Update CHANGELOG [skip ci] ([`ab1f505`](https://github.com/nano-agent-team/nano-agent-team/commit/ab1f50512f2b3a6ff34a1396b7c686c084b82147))
 - **ci:** Update CHANGELOG [skip ci] ([`8657415`](https://github.com/nano-agent-team/nano-agent-team/commit/8657415788dbd7577e695a49d88ba65dedf4840b))
+- **ci:** Update CHANGELOG [skip ci] ([`ac4bbfc`](https://github.com/nano-agent-team/nano-agent-team/commit/ac4bbfc797c8217d9f8f48953af54a7355008891))
 
 ### Features
 
@@ -54,6 +55,7 @@ All notable changes to this project will be documented in this file.
 - **settings:** Self-update — check and apply updates from within the app (#12) ([`ed39c2d`](https://github.com/nano-agent-team/nano-agent-team/commit/ed39c2d6b77e8bdb6fa25746992bc22f362be5b3))
 - **agent-runner:** Show real-time activity on agent cards (#15) ([`b096198`](https://github.com/nano-agent-team/nano-agent-team/commit/b096198126152e42a699b84766af144ef424d3c1))
 - Root agent definitions — shared agents with team fallback (#16) ([`8f18092`](https://github.com/nano-agent-team/nano-agent-team/commit/8f18092d1f235f0deb0fce65cf07b96f2aedd09b))
+- **github-team:** Product Owner agent + self-learning for all agents (#17) ([`3b49624`](https://github.com/nano-agent-team/nano-agent-team/commit/3b496247ce6835e936e28ec1f9338ea89481a58c))
 
 ### Miscellaneous
 
