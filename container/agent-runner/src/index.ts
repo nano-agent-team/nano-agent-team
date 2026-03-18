@@ -35,6 +35,7 @@ import type { Provider } from './providers/index.js';
 
 const NATS_URL = process.env.NATS_URL ?? 'nats://localhost:4222';
 const AGENT_ID = process.env.AGENT_ID ?? 'unknown';
+const CONSUMER_NAME = process.env.CONSUMER_NAME ?? AGENT_ID;
 const SUBSCRIBE_TOPICS = (process.env.SUBSCRIBE_TOPICS ?? '').split(',').filter(Boolean);
 const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';
 const PROVIDER_NAME = process.env.PROVIDER ?? 'claude';
@@ -248,9 +249,9 @@ async function main(): Promise<void> {
 
   let consumer: Consumer;
   try {
-    consumer = await js.consumers.get('AGENTS', AGENT_ID);
+    consumer = await js.consumers.get('AGENTS', CONSUMER_NAME);
   } catch (err) {
-    log.error({ err, agentId: AGENT_ID }, 'Failed to get JetStream consumer — is it created?');
+    log.error({ err, agentId: AGENT_ID, consumerName: CONSUMER_NAME }, 'Failed to get JetStream consumer — is it created?');
     clearInterval(heartbeatTimer);
     await nc.drain();
     process.exit(1);

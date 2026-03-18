@@ -323,7 +323,8 @@ export class AgentManager {
       const env = [
         `NATS_URL=${this.resolveNatsUrl()}`,
         `AGENT_ID=${id}`,
-        `SUBSCRIBE_TOPICS=${(Array.isArray(vaultConfigEarly.subscribe_topics) && vaultConfigEarly.subscribe_topics.length > 0 ? vaultConfigEarly.subscribe_topics : resolveTopicsForAgent(agent.manifest, agent.binding)).join(',')}`,
+        `CONSUMER_NAME=${agent.consumerName ?? id}`,
+        `SUBSCRIBE_TOPICS=${(Array.isArray(vaultConfigEarly.subscribe_topics) && vaultConfigEarly.subscribe_topics.length > 0 ? vaultConfigEarly.subscribe_topics : resolveTopicsForAgent(agent.manifest, agent.binding, id)).join(',')}`,
         `PROVIDER=${providerName}`,
         `MODEL=${model}`,
         `MODEL_EXPLICIT=${modelExplicit}`,
@@ -481,6 +482,14 @@ export class AgentManager {
 
   getAgent(agentId: string): LoadedAgent | undefined {
     return this.states.get(agentId)?.agent;
+  }
+
+  /**
+   * Remove an agent from the in-memory state map.
+   * Used by reloadFeatures to allow dead agents to be restarted on next reload.
+   */
+  removeFromStates(agentId: string): void {
+    this.states.delete(agentId);
   }
 
   /**
@@ -678,7 +687,8 @@ export class AgentManager {
       const env = [
         `NATS_URL=${this.resolveNatsUrl()}`,
         `AGENT_ID=${agentId}`,
-        `SUBSCRIBE_TOPICS=${resolveTopicsForAgent(agent.manifest, agent.binding).join(',')}`,
+        `CONSUMER_NAME=${agent.consumerName ?? agentId}`,
+        `SUBSCRIBE_TOPICS=${resolveTopicsForAgent(agent.manifest, agent.binding, agentId).join(',')}`,
         `PROVIDER=${providerName}`,
         `MODEL=${model}`,
         `MODEL_EXPLICIT=${modelExplicit}`,

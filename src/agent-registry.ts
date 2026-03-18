@@ -143,8 +143,12 @@ export function getInstanceId(agent: LoadedAgent): string {
  * 2. manifest.subscribe_topics
  * 3. Fallback: agent.{id}.inbox only (with warning)
  */
-export function resolveTopicsForAgent(agent: AgentManifest, binding?: WorkflowBinding): string[] {
-  const inbox = `agent.${agent.id}.inbox`;
+export function resolveTopicsForAgent(
+  agent: AgentManifest,
+  binding?: WorkflowBinding,
+  instanceId?: string,
+): string[] {
+  const inbox = `agent.${instanceId ?? agent.id}.inbox`;
 
   if (binding?.inputs) {
     const boundSubjects = Object.values(binding.inputs).filter(s => s !== inbox);

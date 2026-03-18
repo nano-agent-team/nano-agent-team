@@ -414,8 +414,13 @@ export async function createApiApp(
         for (const agent of instances) {
           const instanceId = getInstanceId(agent);
           const consumerName = agent.consumerName ?? instanceId;
-          if (!manager.getStates().find(s => s.agentId === instanceId)) {
-            const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
+          const existing = manager.getStates().find(s => s.agentId === instanceId);
+          if (!existing || existing.status === 'dead') {
+            // Dead agents (max restarts reached) are reset and restarted on explicit reload
+            if (existing?.status === 'dead') {
+              manager.removeFromStates(instanceId);
+            }
+            const topics = resolveTopicsForAgent(agent.manifest, agent.binding, instanceId);
             await ensureConsumer(nc, 'AGENTS', consumerName, topics);
             await manager.startAgent(agent);
           }
