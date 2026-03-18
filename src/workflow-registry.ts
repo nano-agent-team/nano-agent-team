@@ -128,11 +128,16 @@ export function expandInstances(
           for (const agent of agents) {
             const agentInstanceId = agent.instanceId ?? agent.manifest.id;
             if (dispatchConfig.to.includes(agentInstanceId)) {
-              agent.binding ??= {};
-              agent.binding.inputs ??= {};
-              // Add subject as an input port if not already present
-              if (!Object.values(agent.binding.inputs).includes(subject)) {
-                agent.binding.inputs[`_broadcast_${subject.replace(/\./g, '_')}`] = subject;
+              const existingInputs = agent.binding?.inputs ?? {};
+              // Add subject as an input port if not already present (copy, never mutate in-place)
+              if (!Object.values(existingInputs).includes(subject)) {
+                agent.binding = {
+                  ...agent.binding,
+                  inputs: {
+                    ...existingInputs,
+                    [`_broadcast_${subject.replace(/\./g, '_')}`]: subject,
+                  },
+                };
               }
             }
           }

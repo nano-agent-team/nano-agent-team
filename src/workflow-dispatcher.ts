@@ -55,7 +55,10 @@ export class WorkflowDispatcher {
     const consumer = await js.consumers.get('AGENTS', consumerName);
     logger.info({ from, toSubject }, 'WorkflowDispatcher: registered entrypoint route');
 
-    void this.entrypointRouteLoop(consumer, from, toSubject);
+    void this.runWithBackoff(
+      () => this.entrypointRouteLoop(consumer, from, toSubject),
+      `entrypoint:${from}=>${toSubject}`,
+    );
   }
 
   private async entrypointRouteLoop(
@@ -63,21 +66,17 @@ export class WorkflowDispatcher {
     from: string,
     toSubject: string,
   ): Promise<void> {
-    try {
-      const messages = await consumer.consume({ max_messages: 1 });
-      for await (const msg of messages) {
-        try {
-          const js = this.nc.jetstream();
-          await js.publish(toSubject, msg.data, { headers: msg.headers });
-          msg.ack();
-          logger.debug({ from, toSubject }, 'WorkflowDispatcher: forwarded to entrypoint');
-        } catch (err) {
-          logger.error({ err, from, toSubject }, 'WorkflowDispatcher: entrypoint route failed');
-          msg.nak();
-        }
+    const messages = await consumer.consume({ max_messages: 1 });
+    for await (const msg of messages) {
+      try {
+        const js = this.nc.jetstream();
+        await js.publish(toSubject, msg.data, { headers: msg.headers });
+        msg.ack();
+        logger.debug({ from, toSubject }, 'WorkflowDispatcher: forwarded to entrypoint');
+      } catch (err) {
+        logger.error({ err, from, toSubject }, 'WorkflowDispatcher: entrypoint route failed');
+        msg.nak();
       }
-    } catch (err) {
-      logger.error({ err, from, toSubject }, 'WorkflowDispatcher: entrypoint route loop error');
     }
   }
 
@@ -111,8 +110,11 @@ export class WorkflowDispatcher {
 
     logger.info({ subject, strategy: config.strategy, to: config.to }, 'WorkflowDispatcher: registered dispatch rule');
 
-    // Start async pull loop
-    void this.pullLoop(consumer, subject, config);
+    // Start async pull loop — restarts automatically on unexpected errors
+    void this.runWithBackoff(
+      () => this.pullLoop(consumer, subject, config),
+      `dispatch:${subject}`,
+    );
   }
 
   private async pullLoop(
@@ -120,33 +122,47 @@ export class WorkflowDispatcher {
     subject: string,
     config: DispatchConfig,
   ): Promise<void> {
-    try {
-      const messages = await consumer.consume({ max_messages: 1 });
+    const messages = await consumer.consume({ max_messages: 1 });
 
-      for await (const msg of messages) {
-        const instanceId = this.pickInstance(config.strategy, config.to);
+    for await (const msg of messages) {
+      const instanceId = this.pickInstance(config.strategy, config.to);
 
-        if (!instanceId) {
-          // No available instance — nack with delay to keep message in queue
-          msg.nak(5000);
-          logger.debug({ subject, strategy: config.strategy }, 'WorkflowDispatcher: no available instance — nacking');
-          continue;
-        }
-
-        try {
-          const js = this.nc.jetstream();
-          await js.publish(`agent.${instanceId}.inbox`, msg.data, {
-            headers: msg.headers,
-          });
-          msg.ack();
-          logger.debug({ subject, instanceId, strategy: config.strategy }, 'WorkflowDispatcher: routed message');
-        } catch (err) {
-          logger.error({ err, subject, instanceId }, 'WorkflowDispatcher: failed to route message');
-          msg.nak();
-        }
+      if (!instanceId) {
+        // No available instance — nack with delay to keep message in queue
+        msg.nak(5000);
+        logger.debug({ subject, strategy: config.strategy }, 'WorkflowDispatcher: no available instance — nacking');
+        continue;
       }
-    } catch (err) {
-      logger.error({ err, subject }, 'WorkflowDispatcher: pull loop error');
+
+      try {
+        const js = this.nc.jetstream();
+        await js.publish(`agent.${instanceId}.inbox`, msg.data, {
+          headers: msg.headers,
+        });
+        msg.ack();
+        logger.debug({ subject, instanceId, strategy: config.strategy }, 'WorkflowDispatcher: routed message');
+      } catch (err) {
+        logger.error({ err, subject, instanceId }, 'WorkflowDispatcher: failed to route message');
+        msg.nak();
+      }
+    }
+  }
+
+  /**
+   * Run an async loop function, restarting it with exponential backoff if it throws.
+   * Max delay caps at 60s. Stops only when NATS connection is closed.
+   */
+  private async runWithBackoff(fn: () => Promise<void>, label: string): Promise<void> {
+    let delay = 1000;
+    while (!this.nc.isClosed()) {
+      try {
+        await fn();
+        break; // clean exit (e.g. consumer drained) — do not restart
+      } catch (err) {
+        logger.error({ err, label, retryInMs: delay }, 'WorkflowDispatcher: loop crashed — restarting');
+        await new Promise(resolve => setTimeout(resolve, delay));
+        delay = Math.min(delay * 2, 60_000);
+      }
     }
   }
 

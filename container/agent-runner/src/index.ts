@@ -415,7 +415,8 @@ async function main(): Promise<void> {
       const processSpan = startSpan(spanLabel, traceCtx, spanAttrs);
 
       // Build prompt using the current (possibly hot-reloaded) system prompt
-      const claudeMdContent = systemPrompt || AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
+      // Use ?? so that an empty string from hot-reload clears the prompt (not falls back to previous)
+      const claudeMdContent = systemPrompt ?? AGENT_SYSTEM_PROMPT ?? (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
 
       const ghToken = (payload as Record<string, unknown>).gh_token as string | undefined;
       const payloadForPrompt = ghToken

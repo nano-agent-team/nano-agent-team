@@ -5,6 +5,10 @@
  * Providers can be Claude (native SDK), OpenAI Codex, Google Gemini, etc.
  */
 
+export type McpServerConfig =
+  | { command: string; args: string[]; env?: Record<string, string> }
+  | { type: 'http'; url: string; headers?: Record<string, string> };
+
 export type ProviderEvent =
   | { type: 'session_id'; sessionId: string }
   | { type: 'tool_call'; toolName: string }
@@ -18,7 +22,7 @@ export interface ProviderRunOptions {
   prompt: string;
   sessionId?: string;
   maxTurns?: number;
-  mcpServers?: Record<string, { command: string; args: string[]; env?: Record<string, string> }>;
+  mcpServers?: Record<string, McpServerConfig>;
   /** Extra environment variables injected into the provider subprocess (e.g. GH_TOKEN). */
   extraEnv?: Record<string, string>;
 }
