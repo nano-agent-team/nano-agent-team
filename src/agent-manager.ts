@@ -28,6 +28,7 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import type { LoadedAgent } from './agent-registry.js';
+import { resolveTopicsForAgent } from './agent-registry.js';
 import type { ConfigService, NanoConfig } from './config-service.js';
 import { codec } from './nats-client.js';
 
@@ -39,7 +40,7 @@ interface ObservabilityConfig {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type AgentStatus = 'starting' | 'running' | 'dead' | 'restarting';
+type AgentStatus = 'starting' | 'running' | 'dead' | 'restarting' | 'rolling-over';
 
 interface AgentState {
   agentId: string;
@@ -51,6 +52,9 @@ interface AgentState {
   lastHeartbeat?: Date;
   busy?: boolean;
   task?: string;
+  /** Container being rolled in (zero-downtime deployment) */
+  pendingContainerId?: string;
+  rolloverTimeout?: NodeJS.Timeout;
 }
 
 interface HeartbeatPayload {
@@ -250,7 +254,7 @@ export class AgentManager {
       // Resolve provider and model for this agent
       // Vault config override is loaded below after teamConfigBlock — read it early for model resolution
       const vaultConfigPathEarly = path.join(DATA_DIR, 'vault', 'agents', `${id}.json`);
-      let vaultConfigEarly: { model?: string } = {};
+      let vaultConfigEarly: { model?: string; subscribe_topics?: string[] } = {};
       if (fs.existsSync(vaultConfigPathEarly)) {
         try { vaultConfigEarly = JSON.parse(fs.readFileSync(vaultConfigPathEarly, 'utf8')); } catch { /* ignore */ }
       }
@@ -315,7 +319,7 @@ export class AgentManager {
       const env = [
         `NATS_URL=${this.resolveNatsUrl()}`,
         `AGENT_ID=${id}`,
-        `SUBSCRIBE_TOPICS=${agent.manifest.subscribe_topics.join(',')}`,
+        `SUBSCRIBE_TOPICS=${(Array.isArray(vaultConfigEarly.subscribe_topics) && vaultConfigEarly.subscribe_topics.length > 0 ? vaultConfigEarly.subscribe_topics : resolveTopicsForAgent(agent.manifest, agent.binding)).join(',')}`,
         `PROVIDER=${providerName}`,
         `MODEL=${model}`,
         `MODEL_EXPLICIT=${modelExplicit}`,
@@ -487,6 +491,7 @@ export class AgentManager {
     containerId?: string;
     busy?: boolean;
     task?: string;
+    rollingOver?: boolean;
   }> {
     return [...this.states.values()].map((s) => ({
       agentId: s.agentId,
@@ -497,6 +502,7 @@ export class AgentManager {
       containerId: s.containerId?.slice(0, 12),
       busy: s.busy,
       task: s.task,
+      rollingOver: s.status === 'rolling-over' || !!s.pendingContainerId,
     }));
   }
 
@@ -606,6 +612,187 @@ export class AgentManager {
     });
 
     await this.startAgent(agent);
+  }
+
+  /**
+   * Zero-downtime agent rollover (Phase 5).
+   *
+   * Sequence:
+   * 1. Start new container with WAIT_FOR_START_SIGNAL=true, name nano-agent-{id}-next
+   * 2. Wait for agent.{id}.ready signal (max 30s)
+   * 3. Send drain signal to old container: agent.{id}.drain
+   * 4. Wait for old container to exit (max 60s drain timeout)
+   * 5. Signal new container to start consuming: agent.{id}.start-consuming
+   * 6. Rename new container → nano-agent-{id} and update internal state
+   */
+  async rolloverAgent(agentId: string, newAgent?: LoadedAgent): Promise<void> {
+    const state = this.states.get(agentId);
+    if (!state) {
+      logger.warn({ agentId }, 'rolloverAgent: agent not found');
+      return;
+    }
+    if (state.pendingContainerId) {
+      logger.warn({ agentId }, 'rolloverAgent: rollover already in progress');
+      return;
+    }
+
+    const agent = newAgent ?? state.agent;
+    const nextContainerName = `nano-agent-${agentId}-next`;
+    const READY_TIMEOUT_MS = 30_000;
+    const DRAIN_TIMEOUT_MS = 60_000;
+
+    logger.info({ agentId }, 'Starting zero-downtime rollover');
+    state.status = 'rolling-over';
+
+    try {
+      // 1. Start new container in wait-for-signal mode
+      await this.removeContainerIfExists(nextContainerName);
+
+      // Build env same as startAgent but with WAIT_FOR_START_SIGNAL=true
+      const hostDataDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
+      const vaultConfigPath = path.join(DATA_DIR, 'vault', 'agents', `${agentId}.json`);
+      let vaultConfig: { model?: string; subscribe_topics?: string[] } = {};
+      if (fs.existsSync(vaultConfigPath)) {
+        try { vaultConfig = JSON.parse(fs.readFileSync(vaultConfigPath, 'utf8')); } catch { /* ignore */ }
+      }
+
+      let config = null;
+      if (this.configService) config = await this.configService.load();
+      const { provider: providerName, model: baseModel, modelExplicit } = this.resolveAgentProvider(agent, config ?? {});
+      const model = vaultConfig.model ?? baseModel;
+      const codexToken = config ? await this.resolveCodexToken(config) : undefined;
+
+      const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
+      let claudeMdContent = fs.existsSync(claudeMdPath) ? fs.readFileSync(claudeMdPath, 'utf8') : '';
+
+      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${agentId}.md`);
+      if (fs.existsSync(customInstructionsPath)) {
+        const custom = fs.readFileSync(customInstructionsPath, 'utf8').trim();
+        if (custom) claudeMdContent += `\n\n## Custom instructions\n\n${custom}`;
+      }
+
+      const env = [
+        `NATS_URL=${this.resolveNatsUrl()}`,
+        `AGENT_ID=${agentId}`,
+        `SUBSCRIBE_TOPICS=${resolveTopicsForAgent(agent.manifest, agent.binding).join(',')}`,
+        `PROVIDER=${providerName}`,
+        `MODEL=${model}`,
+        `MODEL_EXPLICIT=${modelExplicit}`,
+        `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
+        `LOG_LEVEL=info`,
+        `WAIT_FOR_START_SIGNAL=true`,
+        ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
+        ...(providerName === 'codex' && codexToken ? [
+          ...(codexToken.startsWith('sk-proj-') || codexToken.startsWith('sk-')
+            ? [`OPENAI_API_KEY=${codexToken}`]
+            : [`CODEX_OAUTH_TOKEN=${codexToken}`]
+          ),
+        ] : []),
+        ...(providerName === 'gemini' ? [
+          ...(config?.providers?.gemini?.apiKey ? [`GEMINI_API_KEY=${config.providers.gemini.apiKey}`] : []),
+          ...(process.env.GEMINI_API_KEY ? [`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`] : []),
+        ] : []),
+        `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
+        ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
+        ...await this.getObservabilityEnvVars(),
+      ];
+
+      const binds = [`${agent.dir}:/workspace/agent:ro`];
+      binds.push(`${hostDataDir}:/workspace/db:rw`);
+      const vaultDir = path.join(hostDataDir, 'vault');
+      fs.mkdirSync(vaultDir, { recursive: true });
+      binds.push(`${vaultDir}:/workspace/vault:rw`);
+      const sessionDir = path.join(hostDataDir, 'sessions', agentId);
+      fs.mkdirSync(sessionDir, { recursive: true });
+      binds.push(`${sessionDir}:/workspace/sessions:rw`);
+
+      const perAgentImage = `nano-agent-${agentId}:latest`;
+      const hasPerAgentImage = await this.imageExists(perAgentImage);
+      const image = agent.manifest.image ?? (hasPerAgentImage ? perAgentImage : AGENT_IMAGE);
+
+      const nextContainer = await this.docker.createContainer({
+        Image: image,
+        name: nextContainerName,
+        Env: env,
+        HostConfig: {
+          Binds: binds,
+          NetworkMode: DOCKER_NETWORK,
+          RestartPolicy: { Name: 'no' },
+        },
+      });
+
+      await nextContainer.start();
+      state.pendingContainerId = nextContainer.id;
+      logger.info({ agentId, containerId: nextContainer.id.slice(0, 12) }, 'Next container started (waiting for ready)');
+
+      // 2. Wait for agent.{id}.ready signal
+      const readyReceived = await Promise.race([
+        new Promise<boolean>((resolve) => {
+          const sub = this.nc.subscribe(`agent.${agentId}.ready`, { max: 1 });
+          void (async () => {
+            for await (const _msg of sub) { resolve(true); return; }
+          })();
+        }),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), READY_TIMEOUT_MS)),
+      ]);
+
+      if (!readyReceived) {
+        logger.warn({ agentId }, 'Next container did not signal ready in time — aborting rollover');
+        await this.docker.getContainer(nextContainer.id).remove({ force: true }).catch(() => {});
+        state.pendingContainerId = undefined;
+        state.status = 'running';
+        return;
+      }
+
+      logger.info({ agentId }, 'Next container ready — draining old container');
+
+      // 3. Send drain signal to old container
+      this.nc.publish(`agent.${agentId}.drain`, codec.encode(JSON.stringify({ agentId, ts: Date.now() })));
+
+      // 4. Wait for old container to exit (or timeout)
+      const oldExited = state.containerId
+        ? await Promise.race([
+          new Promise<boolean>((resolve) => {
+            const poll = setInterval(async () => {
+              try {
+                const info = await this.docker.getContainer(state.containerId!).inspect() as { State: { Running: boolean } };
+                if (!info.State.Running) { clearInterval(poll); resolve(true); }
+              } catch { clearInterval(poll); resolve(true); }
+            }, 2_000);
+          }),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), DRAIN_TIMEOUT_MS)),
+        ])
+        : true;
+
+      if (!oldExited) {
+        logger.warn({ agentId }, 'Old container drain timeout — force removing');
+        if (state.containerId) {
+          await this.docker.getContainer(state.containerId).remove({ force: true }).catch(() => {});
+        }
+      } else {
+        logger.info({ agentId }, 'Old container drained and exited');
+        if (state.containerId) {
+          await this.docker.getContainer(state.containerId).remove({ force: true }).catch(() => {});
+        }
+      }
+
+      // 5. Signal new container to start consuming
+      this.nc.publish(`agent.${agentId}.start-consuming`, codec.encode(JSON.stringify({ agentId, ts: Date.now() })));
+
+      // 6. Update internal state
+      state.containerId = nextContainer.id;
+      state.pendingContainerId = undefined;
+      state.agent = agent;
+      state.status = 'running';
+      state.startedAt = new Date();
+
+      logger.info({ agentId, containerId: nextContainer.id.slice(0, 12) }, 'Rollover complete — new container is active');
+
+    } catch (err) {
+      logger.error({ err, agentId }, 'Rollover failed');
+      state.pendingContainerId = undefined;
+      state.status = 'running'; // revert to running so health monitoring continues
+    }
   }
 
   private subscribeHeartbeats(): void {

@@ -11,6 +11,7 @@
  *   PROVIDER          — LLM provider name (default: "claude")
  *   MODEL             — Model id for the provider
  *   SESSION_TYPE      — "stateless" | "persistent" (default: stateless)
+ *   WAIT_FOR_START_SIGNAL — if "true", wait for agent.{id}.start-consuming before pulling
  *   ANTHROPIC_API_KEY / CODEX_OAUTH_TOKEN / GEMINI_API_KEY — provider-specific auth
  *   OBSERVABILITY_LEVEL          — "none" | "logging" | "full"
  *   OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP HTTP endpoint
@@ -23,10 +24,12 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { connect, StringCodec, headers as natsHeaders } from 'nats';
+import type { Consumer } from 'nats';
 import pino from 'pino';
 import { isTracingEnabled } from './tracing/init.js';
 import { extractTraceContext, startSpan, startChildSpan, injectTraceContext } from './tracing/nats-context.js';
 import { createProvider } from './providers/index.js';
+import type { Provider } from './providers/index.js';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -35,9 +38,12 @@ const AGENT_ID = process.env.AGENT_ID ?? 'unknown';
 const SUBSCRIBE_TOPICS = (process.env.SUBSCRIBE_TOPICS ?? '').split(',').filter(Boolean);
 const LOG_LEVEL = process.env.LOG_LEVEL ?? 'info';
 const PROVIDER_NAME = process.env.PROVIDER ?? 'claude';
-const MODEL = process.env.MODEL ?? 'claude-haiku-4-5-20251001';
+// Mutable for hot-reload (Phase 4)
+let MODEL = process.env.MODEL ?? 'claude-haiku-4-5-20251001';
 const MODEL_EXPLICIT = process.env.MODEL_EXPLICIT === 'true';
 const SESSION_TYPE = (process.env.SESSION_TYPE ?? 'stateless') as 'stateless' | 'persistent';
+/** If true, wait for agent.{id}.start-consuming before pulling (Phase 5 rollover) */
+const WAIT_FOR_START_SIGNAL = process.env.WAIT_FOR_START_SIGNAL === 'true';
 const CLAUDE_MD_PATH = '/workspace/agent/CLAUDE.md';
 const AGENT_SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT ?? '';
 const SESSION_FILE = '/workspace/sessions/session_id';
@@ -120,7 +126,7 @@ function saveSessionId(id: string): void {
 
 async function main(): Promise<void> {
   log.info(
-    { agentId: AGENT_ID, provider: PROVIDER_NAME, model: MODEL, natsUrl: NATS_URL, sessionType: SESSION_TYPE },
+    { agentId: AGENT_ID, provider: PROVIDER_NAME, model: MODEL, natsUrl: NATS_URL, sessionType: SESSION_TYPE, waitForStart: WAIT_FOR_START_SIGNAL },
     'Agent runner starting',
   );
 
@@ -129,7 +135,7 @@ async function main(): Promise<void> {
   }
 
   // Create provider instance
-  let provider;
+  let provider: Provider;
   try {
     provider = createProvider(PROVIDER_NAME);
     log.info({ provider: PROVIDER_NAME }, 'Provider created');
@@ -139,9 +145,8 @@ async function main(): Promise<void> {
   }
 
   // Write system prompt via provider
-  // Priority: AGENT_SYSTEM_PROMPT env var (injected by AgentManager) > file mount > fallback.
   const systemPromptContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
-  const systemPrompt = systemPromptContent || `# ${AGENT_ID}\n\nYou are ${AGENT_ID}, a helpful AI agent.\n`;
+  let systemPrompt = systemPromptContent || `# ${AGENT_ID}\n\nYou are ${AGENT_ID}, a helpful AI agent.\n`;
 
   try {
     provider.writeSystemPrompt('/workspace', systemPrompt);
@@ -158,9 +163,8 @@ async function main(): Promise<void> {
   log.info({ url: NATS_URL }, 'Connected to NATS');
 
   // ── Heartbeat (core NATS, not JetStream) ─────────────────────────────────
-  // Track current task for heartbeat reporting
-  let baseTask = '';     // task description from incoming message payload
-  let currentTask = '';  // current activity (updated on each tool call)
+  let baseTask = '';
+  let currentTask = '';
   let isBusy = false;
   let heartbeatTimer: ReturnType<typeof setInterval>;
 
@@ -180,9 +184,7 @@ async function main(): Promise<void> {
   }
 
   /** Maps a provider tool name to a short human-readable activity description. */
-  // NOTE: Update this map when adding new built-in tools
   function toolActivity(toolName: string): string {
-    // MCP tools: mcp__server__operation_name
     const mcpMatch = toolName.match(/^mcp__(\w+)__(.+)$/);
     if (mcpMatch) {
       const op = mcpMatch[2].replace(/_/g, ' ');
@@ -208,10 +210,43 @@ async function main(): Promise<void> {
     log.debug({ agentId: AGENT_ID }, 'Heartbeat sent');
   }, HEARTBEAT_INTERVAL_MS);
 
+  // ── Phase 4: Hot-reload config subscription ───────────────────────────────
+  // Subscribes to agent.{id}.config (core NATS, not JetStream) for live updates.
+  // model and systemPrompt changes take effect on the next message processed.
+  const configSub = nc.subscribe(`agent.${AGENT_ID}.config`);
+  void (async () => {
+    for await (const msg of configSub) {
+      try {
+        const update = JSON.parse(codec.decode(msg.data)) as { model?: string; systemPrompt?: string };
+        if (update.model) {
+          MODEL = update.model;
+          log.info({ agentId: AGENT_ID, model: update.model }, 'Hot-reload: model updated');
+        }
+        if (update.systemPrompt !== undefined) {
+          systemPrompt = update.systemPrompt;
+          try { provider.writeSystemPrompt('/workspace', update.systemPrompt); } catch { /* ignore */ }
+          log.info({ agentId: AGENT_ID }, 'Hot-reload: system prompt updated');
+        }
+      } catch { /* ignore malformed config messages */ }
+    }
+  })();
+
+  // ── Phase 5: Drain signal subscription ───────────────────────────────────
+  // Drain: finish current message, then exit gracefully (for zero-downtime rollover).
+  let draining = false;
+  const drainSub = nc.subscribe(`agent.${AGENT_ID}.drain`);
+  void (async () => {
+    for await (const _msg of drainSub) {
+      log.info({ agentId: AGENT_ID }, 'Drain signal received — will exit after current message');
+      draining = true;
+      return; // only need to receive once
+    }
+  })();
+
   // ── JetStream consumer pull loop ─────────────────────────────────────────
   const js = nc.jetstream();
 
-  let consumer;
+  let consumer: Consumer;
   try {
     consumer = await js.consumers.get('AGENTS', AGENT_ID);
   } catch (err) {
@@ -220,11 +255,6 @@ async function main(): Promise<void> {
     await nc.drain();
     process.exit(1);
   }
-
-  log.info(
-    { agentId: AGENT_ID, topics: SUBSCRIBE_TOPICS },
-    'Agent runner ready — waiting for messages',
-  );
 
   // Track current session for graceful shutdown
   let currentSessionId: string | undefined;
@@ -236,7 +266,6 @@ async function main(): Promise<void> {
     shuttingDown = true;
     log.info({ signal, hasSession: !!currentSessionId }, 'Shutting down agent runner');
     if (currentSessionId) {
-      // Always save on shutdown (even for stateless agents) so we can resume after restart
       try {
         fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
         fs.writeFileSync(SESSION_FILE, currentSessionId, 'utf8');
@@ -246,14 +275,18 @@ async function main(): Promise<void> {
       }
     }
     clearInterval(heartbeatTimer);
-    // Give NATS a moment to drain, then exit
     nc.drain().finally(() => process.exit(0));
-    // Force exit after 5s if drain hangs
     setTimeout(() => process.exit(0), 5000).unref();
   };
 
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  // ── Publish ready signal (Phase 5) ────────────────────────────────────────
+  // Signals AgentManager that this container is initialized and ready.
+  // In rollover mode, AgentManager waits for this before draining the old container.
+  nc.publish(`agent.${AGENT_ID}.ready`, codec.encode(JSON.stringify({ agentId: AGENT_ID, ts: Date.now() })));
+  log.info({ agentId: AGENT_ID }, 'Ready signal published');
 
   // ── Resume interrupted session on startup ────────────────────────────────
   {
@@ -297,7 +330,6 @@ async function main(): Promise<void> {
 
         log.info({ agentId: AGENT_ID, resultLength: result.length }, 'Resumed session completed');
 
-        // Publish reply
         const replySubject = `agent.${AGENT_ID}.reply`;
         const reply: ReplyPayload = { agentId: AGENT_ID, result, ts: Date.now() };
         nc.publish(replySubject, codec.encode(JSON.stringify(reply)));
@@ -308,209 +340,225 @@ async function main(): Promise<void> {
     }
   }
 
-  // Message processing loop
-  for await (const msg of await consumer.consume()) {
-    const subject = msg.subject;
-    let payload: IncomingMessage;
+  log.info(
+    { agentId: AGENT_ID, topics: SUBSCRIBE_TOPICS },
+    'Agent runner ready — waiting for messages',
+  );
 
-    try {
-      payload = JSON.parse(codec.decode(msg.data)) as IncomingMessage;
-    } catch {
-      log.warn({ subject }, 'Received non-JSON message — skipping');
-      msg.ack();
-      continue;
-    }
+  // ── Phase 5: Wait for start-consuming signal in rollover mode ─────────────
+  if (WAIT_FOR_START_SIGNAL) {
+    log.info({ agentId: AGENT_ID }, 'Rollover mode: waiting for start-consuming signal');
+    await new Promise<void>((resolve) => {
+      const startSub = nc.subscribe(`agent.${AGENT_ID}.start-consuming`, { max: 1 });
+      void (async () => {
+        for await (const _msg of startSub) {
+          log.info({ agentId: AGENT_ID }, 'Start-consuming signal received — beginning consume loop');
+          resolve();
+          return;
+        }
+      })();
+    });
+  }
 
-    // ── Mark agent as busy ────────────────────────────────────────────────
-    const ticketId = (payload as Record<string, unknown>).ticket_id as string | undefined;
-    const ticketTitle = ((payload as Record<string, unknown>).ticket as Record<string, unknown>)?.title as string | undefined
-      ?? (payload as Record<string, unknown>).title as string | undefined;
-    const chatText = (payload as Record<string, unknown>).text as string | undefined;
+  // ── Message processing loop ───────────────────────────────────────────────
 
-    // Build human-readable task description
-    if (ticketId) {
-      baseTask = ticketTitle ? `${ticketId}: ${ticketTitle}` : ticketId;
-    } else if (chatText) {
-      baseTask = chatText.length > 60 ? chatText.slice(0, 57) + '...' : chatText;
-    } else {
-      baseTask = subject.replace('agent.', '').replace('.inbox', '');
-    }
-    currentTask = baseTask;
-    isBusy = true;
-    publishHeartbeat(); // immediately notify dashboard
+  async function startConsumeLoop(): Promise<void> {
+    for await (const msg of await consumer.consume()) {
+      const subject = msg.subject;
+      let payload: IncomingMessage;
 
-    // ── Extract trace context from NATS headers ──────────────────────────
-    const headerAdapter = msg.headers ? {
-      get: (key: string) => msg.headers?.get(key),
-      set: (key: string, value: string) => { /* read-only for extraction */ },
-    } : undefined;
-    const traceCtx = headerAdapter ? extractTraceContext(headerAdapter) : null;
+      try {
+        payload = JSON.parse(codec.decode(msg.data)) as IncomingMessage;
+      } catch {
+        log.warn({ subject }, 'Received non-JSON message — skipping');
+        msg.ack();
+        continue;
+      }
 
-    // Build a human-readable span name: "pm: topic.ticket.new TICK-001"
-    const shortSubject = subject.replace('agent.', '').replace('.inbox', '');
-    const spanLabel = ticketId
-      ? `${AGENT_ID}: ${shortSubject} ${ticketId}`
-      : `${AGENT_ID}: ${shortSubject}`;
+      // ── Mark agent as busy ──────────────────────────────────────────────
+      const ticketId = (payload as Record<string, unknown>).ticket_id as string | undefined;
+      const ticketTitle = ((payload as Record<string, unknown>).ticket as Record<string, unknown>)?.title as string | undefined
+        ?? (payload as Record<string, unknown>).title as string | undefined;
+      const chatText = (payload as Record<string, unknown>).text as string | undefined;
 
-    const spanAttrs: Record<string, string> = { 'agent.id': AGENT_ID, 'nats.subject': subject };
-    if (ticketId) spanAttrs['ticket.id'] = ticketId;
-    if (ticketTitle) spanAttrs['ticket.title'] = ticketTitle;
+      if (ticketId) {
+        baseTask = ticketTitle ? `${ticketId}: ${ticketTitle}` : ticketId;
+      } else if (chatText) {
+        baseTask = chatText.length > 60 ? chatText.slice(0, 57) + '...' : chatText;
+      } else {
+        baseTask = subject.replace('agent.', '').replace('.inbox', '');
+      }
+      currentTask = baseTask;
+      isBusy = true;
+      publishHeartbeat();
 
-    const processSpan = startSpan(spanLabel, traceCtx, spanAttrs);
+      // ── Extract trace context from NATS headers ─────────────────────────
+      const headerAdapter = msg.headers ? {
+        get: (key: string) => msg.headers?.get(key),
+        set: (key: string, value: string) => { /* read-only for extraction */ },
+      } : undefined;
+      const traceCtx = headerAdapter ? extractTraceContext(headerAdapter) : null;
 
-    // Build prompt: prepend agent role context from CLAUDE.md, then the actual message
-    // Priority: AGENT_SYSTEM_PROMPT env var > file mount
-    const claudeMdContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
+      const shortSubject = subject.replace('agent.', '').replace('.inbox', '');
+      const spanLabel = ticketId
+        ? `${AGENT_ID}: ${shortSubject} ${ticketId}`
+        : `${AGENT_ID}: ${shortSubject}`;
 
-    // Extract short-lived GitHub installation token (if present) and strip from prompt
-    const ghToken = (payload as Record<string, unknown>).gh_token as string | undefined;
-    const payloadForPrompt = ghToken
-      ? Object.fromEntries(Object.entries(payload as Record<string, unknown>).filter(([k]) => k !== 'gh_token'))
-      : payload;
+      const spanAttrs: Record<string, string> = { 'agent.id': AGENT_ID, 'nats.subject': subject };
+      if (ticketId) spanAttrs['ticket.id'] = ticketId;
+      if (ticketTitle) spanAttrs['ticket.title'] = ticketTitle;
 
-    // For chat agents: use only the text field. For event agents without text: include full payload.
-    const eventContext = payloadForPrompt.text
-      ? String(payloadForPrompt.text)
-      : `Event on topic "${subject}":\n\n${JSON.stringify(payloadForPrompt, null, 2)}`;
+      const processSpan = startSpan(spanLabel, traceCtx, spanAttrs);
 
-    // Combine: role instructions (system prompt) + user message
-    const prompt: string = claudeMdContent
-      ? `${claudeMdContent}\n\n---\n\n${eventContext}`
-      : eventContext;
+      // Build prompt using the current (possibly hot-reloaded) system prompt
+      const claudeMdContent = systemPrompt || AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
 
-    log.info({ agentId: AGENT_ID, subject, promptLen: prompt.length }, 'Message received');
+      const ghToken = (payload as Record<string, unknown>).gh_token as string | undefined;
+      const payloadForPrompt = ghToken
+        ? Object.fromEntries(Object.entries(payload as Record<string, unknown>).filter(([k]) => k !== 'gh_token'))
+        : payload;
 
-    // ── Phase 3: Provider invocation ─────────────────────────────
-    const existingSessionId = loadSessionId();
+      const eventContext = payloadForPrompt.text
+        ? String(payloadForPrompt.text)
+        : `Event on topic "${subject}":\n\n${JSON.stringify(payloadForPrompt, null, 2)}`;
 
-    log.debug(
-      { agentId: AGENT_ID, provider: PROVIDER_NAME, sessionType: SESSION_TYPE, hasSession: !!existingSessionId },
-      'Invoking provider.run()',
-    );
+      const prompt: string = claudeMdContent
+        ? `${claudeMdContent}\n\n---\n\n${eventContext}`
+        : eventContext;
 
-    // Create child span for provider query
-    const querySpan = processSpan
-      ? startChildSpan(`${PROVIDER_NAME}.query`, processSpan.context, { 'provider.model': MODEL })
-      : null;
+      log.info({ agentId: AGENT_ID, subject, promptLen: prompt.length }, 'Message received');
 
-    let result = '';
-    let sessionId: string | undefined;
-    let errorSubtype: string | undefined;
+      // ── Provider invocation ───────────────────────────────────────────────
+      const existingSessionId = loadSessionId();
 
-    // Periodically call msg.working() to extend JetStream ack deadline while provider runs
-    const workingTimer = setInterval(() => {
-      try { msg.working(); } catch { /* ignore if msg already acked */ }
-    }, 30_000);
+      log.debug(
+        { agentId: AGENT_ID, provider: PROVIDER_NAME, sessionType: SESSION_TYPE, hasSession: !!existingSessionId },
+        'Invoking provider.run()',
+      );
 
-    try {
-      const providerRun = provider.run({
-        model: MODEL,
-        modelExplicit: MODEL_EXPLICIT,
-        cwd: '/workspace',
-        prompt,
-        sessionId: existingSessionId,
-        maxTurns: 50,
-        ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
-        mcpServers: {
-          tickets: {
-            command: 'node',
-            args: [TICKETS_MCP_PATH],
-            env: {
-              DB_PATH,
-              AGENT_ID,
+      // Use current MODEL (may have been hot-reloaded)
+      const querySpan = processSpan
+        ? startChildSpan(`${PROVIDER_NAME}.query`, processSpan.context, { 'provider.model': MODEL })
+        : null;
+
+      let result = '';
+      let sessionId: string | undefined;
+      let errorSubtype: string | undefined;
+
+      const workingTimer = setInterval(() => {
+        try { msg.working(); } catch { /* ignore if msg already acked */ }
+      }, 30_000);
+
+      try {
+        const providerRun = provider.run({
+          model: MODEL,
+          modelExplicit: MODEL_EXPLICIT,
+          cwd: '/workspace',
+          prompt,
+          sessionId: existingSessionId,
+          maxTurns: 50,
+          ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
+          mcpServers: {
+            tickets: {
+              command: 'node',
+              args: [TICKETS_MCP_PATH],
+              env: { DB_PATH, AGENT_ID },
             },
           },
-        },
-      });
+        });
 
-      for await (const event of providerRun) {
-        if (event.type === 'session_id') {
-          sessionId = event.sessionId;
-          currentSessionId = sessionId; // track for graceful shutdown
-        } else if (event.type === 'tool_call') {
-          // Update current activity and immediately notify dashboard
-          currentTask = baseTask ? `${baseTask} → ${toolActivity(event.toolName)}` : toolActivity(event.toolName);
-          publishHeartbeat();
-          // Record tool calls as span events
-          if (querySpan) {
-            querySpan.span.addEvent('tool_call', { 'tool.name': event.toolName });
-          }
-        } else if (event.type === 'result') {
-          result = event.result;
-          errorSubtype = event.errorSubtype;
-          if (!event.success) {
-            log.warn({ agentId: AGENT_ID, provider: PROVIDER_NAME, subtype: errorSubtype }, 'Provider returned error');
-            if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.error`, errorSubtype ?? 'unknown');
-          } else {
-            log.debug({ agentId: AGENT_ID, provider: PROVIDER_NAME, resultLength: result.length }, 'Provider succeeded');
-            if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.result_length`, result.length);
+        for await (const event of providerRun) {
+          if (event.type === 'session_id') {
+            sessionId = event.sessionId;
+            currentSessionId = sessionId;
+          } else if (event.type === 'tool_call') {
+            currentTask = baseTask ? `${baseTask} → ${toolActivity(event.toolName)}` : toolActivity(event.toolName);
+            publishHeartbeat();
+            if (querySpan) {
+              querySpan.span.addEvent('tool_call', { 'tool.name': event.toolName });
+            }
+          } else if (event.type === 'result') {
+            result = event.result;
+            errorSubtype = event.errorSubtype;
+            if (!event.success) {
+              log.warn({ agentId: AGENT_ID, provider: PROVIDER_NAME, subtype: errorSubtype }, 'Provider returned error');
+              if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.error`, errorSubtype ?? 'unknown');
+            } else {
+              log.debug({ agentId: AGENT_ID, provider: PROVIDER_NAME, resultLength: result.length }, 'Provider succeeded');
+              if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.result_length`, result.length);
+            }
           }
         }
+      } catch (err) {
+        log.error({ err, agentId: AGENT_ID, provider: PROVIDER_NAME }, 'Provider threw an exception');
+        result = `[Error: ${err instanceof Error ? err.message : String(err)}]`;
+        errorSubtype = 'exception';
+        if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.error`, 'exception');
+      } finally {
+        clearInterval(workingTimer);
       }
-    } catch (err) {
-      log.error({ err, agentId: AGENT_ID, provider: PROVIDER_NAME }, 'Provider threw an exception');
-      result = `[Error: ${err instanceof Error ? err.message : String(err)}]`;
-      errorSubtype = 'exception';
-      if (querySpan) querySpan.span.setAttribute(`${PROVIDER_NAME}.error`, 'exception');
-    } finally {
-      clearInterval(workingTimer);
-    }
 
-    querySpan?.end();
+      querySpan?.end();
 
-    if (sessionId) {
-      saveSessionId(sessionId);
-      log.debug({ agentId: AGENT_ID, sessionId }, 'Session id saved');
-    }
-    currentSessionId = undefined; // clear — task complete
+      if (sessionId) {
+        saveSessionId(sessionId);
+        log.debug({ agentId: AGENT_ID, sessionId }, 'Session id saved');
+      }
+      currentSessionId = undefined;
 
-    // ── Publish reply ─────────────────────────────────────────────────────
-    const replySubject = payload.replySubject ?? `agent.${AGENT_ID}.reply`;
-    const reply: ReplyPayload = {
-      agentId: AGENT_ID,
-      result,
-      ...(errorSubtype ? { error: true, errorSubtype } : {}),
-      ts: Date.now(),
-    };
-
-    // Create span for reply publish
-    const replySpan = processSpan
-      ? startChildSpan('nats.publish', processSpan.context, { 'nats.subject': replySubject })
-      : null;
-
-    try {
-      // Inject trace context into reply headers
-      const replyHdrs = natsHeaders();
-      const replyHeaderAdapter = {
-        get: (key: string) => replyHdrs.get(key),
-        set: (key: string, value: string) => replyHdrs.set(key, value),
+      // ── Publish reply ─────────────────────────────────────────────────────
+      const replySubject = payload.replySubject ?? `agent.${AGENT_ID}.reply`;
+      const reply: ReplyPayload = {
+        agentId: AGENT_ID,
+        result,
+        ...(errorSubtype ? { error: true, errorSubtype } : {}),
+        ts: Date.now(),
       };
-      if (processSpan) {
-        injectTraceContext(replyHeaderAdapter, traceCtx?.sessionId);
+
+      const replySpan = processSpan
+        ? startChildSpan('nats.publish', processSpan.context, { 'nats.subject': replySubject })
+        : null;
+
+      try {
+        const replyHdrs = natsHeaders();
+        const replyHeaderAdapter = {
+          get: (key: string) => replyHdrs.get(key),
+          set: (key: string, value: string) => replyHdrs.set(key, value),
+        };
+        if (processSpan) {
+          injectTraceContext(replyHeaderAdapter, traceCtx?.sessionId);
+        }
+
+        nc.publish(replySubject, codec.encode(JSON.stringify(reply)), { headers: replyHdrs });
+        log.info(
+          { agentId: AGENT_ID, replySubject, resultLength: result.length },
+          'Reply sent',
+        );
+      } catch (err) {
+        log.error({ err, replySubject }, 'Failed to publish reply');
       }
 
-      // Use core NATS publish for replies — reply subjects (chat.reply.*)
-      // are not in the JetStream stream, so js.publish would timeout.
-      nc.publish(replySubject, codec.encode(JSON.stringify(reply)), { headers: replyHdrs });
-      log.info(
-        { agentId: AGENT_ID, replySubject, resultLength: result.length },
-        'Reply sent',
-      );
-    } catch (err) {
-      log.error({ err, replySubject }, 'Failed to publish reply');
+      replySpan?.end();
+      processSpan?.end();
+
+      // Mark agent as idle
+      isBusy = false;
+      baseTask = '';
+      currentTask = '';
+      publishHeartbeat();
+
+      msg.ack();
+
+      // ── Phase 5: Exit after drain ────────────────────────────────────────
+      if (draining) {
+        log.info({ agentId: AGENT_ID }, 'Drained — exiting after current message');
+        shutdown('drain');
+        break;
+      }
     }
-
-    replySpan?.end();
-    processSpan?.end();
-
-    // Mark agent as idle
-    isBusy = false;
-    baseTask = '';
-    currentTask = '';
-    publishHeartbeat(); // immediately notify dashboard that agent is idle
-
-    msg.ack();
   }
+
+  await startConsumeLoop();
 }
 
 main().catch((err) => {

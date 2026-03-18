@@ -12,14 +12,31 @@ import path from 'path';
 
 import { logger } from './logger.js';
 
+// ─── Port definition ──────────────────────────────────────────────────────────
+
+export interface PortDefinition {
+  port: string;
+  description?: string;
+}
+
+// ─── Agent Manifest ───────────────────────────────────────────────────────────
+
 export interface AgentManifest {
   id: string;
   name: string;
   version: string;
   description?: string;
   model?: string;
-  /** NATS subjects the agent subscribes to */
-  subscribe_topics: string[];
+  /** Runtime type: deterministic (pure function) or non-deterministic (LLM) */
+  kind?: 'deterministic' | 'non-deterministic';
+  /** Agent role in the data flow */
+  role?: 'source' | 'sink' | 'processor';
+  /** Logical input ports (used with WorkflowBinding to resolve NATS subjects) */
+  inputs?: PortDefinition[];
+  /** Logical output ports (documentation only) */
+  outputs?: PortDefinition[];
+  /** NATS subjects the agent subscribes to (optional if inputs + workflow binding used) */
+  subscribe_topics?: string[];
   /** NATS subjects the agent publishes to (documentation only) */
   publish_topics?: string[];
   /** Session management mode: stateless = new session per message, persistent = remembered history */
@@ -38,13 +55,73 @@ export interface AgentManifest {
   provider?: string;
 }
 
+// ─── Workflow Binding ─────────────────────────────────────────────────────────
+
+/** Maps an agent's logical ports to concrete NATS subjects in a workflow */
+export interface WorkflowBinding {
+  /** port → NATS subject for inputs */
+  inputs?: Record<string, string>;
+  /** port → NATS subject for outputs */
+  outputs?: Record<string, string>;
+}
+
+// ─── Workflow Manifest ────────────────────────────────────────────────────────
+
+export interface WorkflowManifest {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  /** Agent IDs participating in this workflow */
+  agents: string[];
+  /** Tool IDs required by this workflow */
+  tools?: string[];
+  /** Per-agent topic bindings: agentId → WorkflowBinding */
+  bindings?: Record<string, WorkflowBinding>;
+  /** Legacy compat: pipeline.topics from team.json */
+  pipeline?: { topics?: Record<string, string> };
+}
+
+// ─── Loaded Agent ─────────────────────────────────────────────────────────────
+
 export interface LoadedAgent {
   manifest: AgentManifest;
   /** Absolute path to the agent directory */
   dir: string;
   /** Team ID when agent is loaded in team context (enables per-team container naming) */
   teamId?: string;
+  /** Workflow topic bindings resolved at load time (optional) */
+  binding?: WorkflowBinding;
 }
+
+// ─── Topic resolution ─────────────────────────────────────────────────────────
+
+/**
+ * Resolve the NATS subjects an agent should subscribe to.
+ *
+ * Resolution priority:
+ * 1. Workflow binding inputs (if provided) — port → subject mapping
+ * 2. manifest.subscribe_topics
+ * 3. Fallback: agent.{id}.inbox only (with warning)
+ */
+export function resolveTopicsForAgent(agent: AgentManifest, binding?: WorkflowBinding): string[] {
+  const inbox = `agent.${agent.id}.inbox`;
+
+  if (binding?.inputs) {
+    const boundSubjects = Object.values(binding.inputs).filter(s => s !== inbox);
+    return [inbox, ...boundSubjects];
+  }
+
+  if (agent.subscribe_topics && agent.subscribe_topics.length > 0) {
+    return agent.subscribe_topics;
+  }
+
+  // Fallback: inbox only
+  logger.warn({ agentId: agent.id }, 'No subscribe_topics or workflow binding — using inbox only');
+  return [inbox];
+}
+
+// ─── Manifest loader ──────────────────────────────────────────────────────────
 
 /**
  * Load and validate a manifest.json from the given agent directory.
@@ -74,8 +151,15 @@ export function loadManifest(agentDir: string): AgentManifest {
   if (!m.version || typeof m.version !== 'string') {
     throw new Error(`manifest.json in ${agentDir}: missing or invalid "version"`);
   }
-  if (!Array.isArray(m.subscribe_topics) || m.subscribe_topics.length === 0) {
-    throw new Error(`manifest.json in ${agentDir}: "subscribe_topics" must be a non-empty array`);
+
+  // subscribe_topics is now optional — warn if both subscribe_topics and inputs are absent
+  const hasSubscribeTopics = Array.isArray(m.subscribe_topics) && m.subscribe_topics.length > 0;
+  const hasInputPorts = Array.isArray(m.inputs) && m.inputs.length > 0;
+  if (!hasSubscribeTopics && !hasInputPorts) {
+    logger.warn(
+      { agentId: m.id, agentDir },
+      'manifest.json: neither "subscribe_topics" nor "inputs" defined — agent will use inbox only',
+    );
   }
 
   return m as AgentManifest;

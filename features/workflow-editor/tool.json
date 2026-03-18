@@ -1,0 +1,19 @@
+{
+  "id": "workflow-editor",
+  "name": "Workflow Editor",
+  "version": "1.0.0",
+  "type": "tool",
+  "provides": ["workflow"],
+  "requires": [],
+  "plugin": "./plugin.mjs",
+  "frontend": {
+    "remote": "./frontend-dist/assets/remoteEntry.js",
+    "routes": [
+      {
+        "path": "/workflow",
+        "component": "WorkflowView",
+        "nav": { "label": "Workflow", "icon": "🔀" }
+      }
+    ]
+  }
+}

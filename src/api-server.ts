@@ -5,11 +5,11 @@
  *   GET  /api/health        — agent statuses
  *   GET  /api/events        — SSE stream
  *   POST /api/chat/settings — NATS bridge for settings agent
- *   POST /internal/reload   — live reload features after setup_complete
+ *   POST /internal/reload   — live reload tools after setup_complete
  *   GET  /                  — static dashboard/dist/
  *
- * Plugin routes are registered via loadFeature() from features/{id}/plugin.mjs
- * and via loadTeamPlugins() from agents/{id}/plugin.mjs (legacy).
+ * Plugin routes are registered via loadTool() from features/{id}/plugin.mjs
+ * and via loadWorkflowPlugins() from agents/{id}/plugin.mjs (legacy).
  */
 
 import fs from 'fs';
@@ -27,11 +27,13 @@ import type { AgentManager } from './agent-manager.js';
 import type { ConfigService } from './config-service.js';
 import type { SetupMode } from './setup-detector.js';
 import { listTickets, getTicket, createTicket, updateTicket, addComment, listComments, type TicketStatus, type TicketPriority, type TicketType } from './db.js';
+import { resolveTopicsForAgent } from './agent-registry.js';
+import { loadWorkflow } from './workflow-registry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const codec = StringCodec();
 
-// ─── Plugin / Feature interface ───────────────────────────────────────────────
+// ─── Tool / Plugin interface ───────────────────────────────────────────────────
 
 interface PluginRoute { path: string; component: string; nav?: { label: string; icon: string } }
 interface PluginInfo {
@@ -41,7 +43,8 @@ interface PluginInfo {
   routes: PluginRoute[];
 }
 
-export interface TeamPlugin {
+/** Plugin interface for tools and workflow plugins */
+export interface ToolPlugin {
   /** Called once at startup to register routes and NATS listeners */
   register(
     app: express.Application,
@@ -58,6 +61,9 @@ export interface TeamPlugin {
   ): Promise<void>;
 }
 
+/** Backward-compat alias */
+export type TeamPlugin = ToolPlugin;
+
 // ─── SSE clients ─────────────────────────────────────────────────────────────
 
 const sseClients = new Set<Response>();
@@ -73,45 +79,54 @@ export function emitSseEvent(event: string, data: unknown): void {
   }
 }
 
-// ─── Feature loader ───────────────────────────────────────────────────────────
+// ─── Tool loader ──────────────────────────────────────────────────────────────
 
-const loadedFeatures = new Map<string, boolean>();
-const FEATURES_DIR = path.join(__dirname, '..', 'features');
+const loadedTools = new Map<string, boolean>();
+const TOOLS_DIR = path.join(__dirname, '..', 'features');
 
-export async function loadFeature(
-  featureId: string,
+/**
+ * Load a tool (formerly "feature") plugin.
+ * Reads tool.json first, falls back to feature.json for backward compat.
+ */
+export async function loadTool(
+  toolId: string,
   app: express.Application,
   nc: NatsConnection,
   manager: AgentManager,
   configService: ConfigService,
   reloadFeatures: () => Promise<void>,
 ): Promise<void> {
-  if (loadedFeatures.has(featureId)) return;
+  if (loadedTools.has(toolId)) return;
 
-  // Check built-in features dir first, then installed features in /data/features/
-  const builtinPath = path.join(FEATURES_DIR, featureId);
-  const installedPath = path.join(DATA_DIR, 'features', featureId);
-  const featurePath = fs.existsSync(path.join(builtinPath, 'feature.json')) ? builtinPath : installedPath;
-  const featureJsonPath = path.join(featurePath, 'feature.json');
+  // Resolve tool path: built-in tools dir first, then installed tools in /data/features/
+  const builtinPath = path.join(TOOLS_DIR, toolId);
+  const installedPath = path.join(DATA_DIR, 'features', toolId);
 
-  if (!fs.existsSync(featureJsonPath)) {
-    logger.warn({ featureId, featurePath }, 'Feature not found — skipping');
+  // Read tool.json first (new name), fall back to feature.json (compat)
+  const builtinHasTool = fs.existsSync(path.join(builtinPath, 'tool.json'));
+  const builtinHasFeature = fs.existsSync(path.join(builtinPath, 'feature.json'));
+  const toolPath = (builtinHasTool || builtinHasFeature) ? builtinPath : installedPath;
+
+  const toolJsonPath = fs.existsSync(path.join(toolPath, 'tool.json'))
+    ? path.join(toolPath, 'tool.json')
+    : path.join(toolPath, 'feature.json');
+
+  if (!fs.existsSync(toolJsonPath)) {
+    logger.warn({ toolId, toolPath }, 'Tool not found — skipping');
     return;
   }
 
-  const manifest = JSON.parse(fs.readFileSync(featureJsonPath, 'utf8')) as {
+  const manifest = JSON.parse(fs.readFileSync(toolJsonPath, 'utf8')) as {
     plugin: string;
     id: string;
   };
-  const pluginPath = path.join(featurePath, manifest.plugin);
+  const pluginPath = path.join(toolPath, manifest.plugin);
 
   try {
-    logger.info({ featureId, pluginPath }, 'Loading feature');
+    logger.info({ toolId, pluginPath }, 'Loading tool');
     // ?v= cache-buster forces Node to re-evaluate the module on each reload call.
-    // Node's ESM loader caches by full specifier, so without this a hot-reload
-    // would silently serve the old module instance.
-    const mod = await import(`${pluginPath}?v=${Date.now()}`) as { default?: TeamPlugin } | TeamPlugin;
-    const plugin = ('default' in mod ? mod.default : mod) as TeamPlugin | undefined;
+    const mod = await import(`${pluginPath}?v=${Date.now()}`) as { default?: ToolPlugin } | ToolPlugin;
+    const plugin = ('default' in mod ? mod.default : mod) as ToolPlugin | undefined;
 
     if (plugin && typeof plugin.register === 'function') {
       await plugin.register(app, nc, manager, {
@@ -121,22 +136,25 @@ export async function loadFeature(
         configService,
         reloadFeatures,
       });
-      loadedFeatures.set(featureId, true);
-      logger.info({ featureId }, 'Feature loaded');
+      loadedTools.set(toolId, true);
+      logger.info({ toolId }, 'Tool loaded');
     } else {
-      logger.warn({ featureId }, 'Feature plugin has no register() — skipping');
+      logger.warn({ toolId }, 'Tool plugin has no register() — skipping');
     }
   } catch (err) {
-    logger.error({ err, featureId }, 'Failed to load feature');
+    logger.error({ err, toolId }, 'Failed to load tool');
   }
 }
 
-// ─── Team plugin loader ──────────────────────────────────────────────────────
+/** Backward-compat alias */
+export const loadFeature = loadTool;
+
+// ─── Workflow plugin loader ────────────────────────────────────────────────────
 // Scans for plugin.mjs in:
 //   1. AGENTS_DIR/*/plugin.mjs (built-in agents)
 //   2. DATA_DIR/teams/*/agents/plugin.mjs (installed teams)
 
-async function loadTeamPlugins(
+async function loadWorkflowPlugins(
   app: express.Application,
   nc: NatsConnection,
   manager: AgentManager,
@@ -156,7 +174,6 @@ async function loadTeamPlugins(
   }
 
   // 2. Installed teams in DATA_DIR/teams/*/
-  // Check both plugin.mjs (top-level, e.g. from plugin-dist) and agents/plugin.mjs (legacy)
   const teamsDir = path.join(DATA_DIR, 'teams');
   if (fs.existsSync(teamsDir)) {
     for (const team of fs.readdirSync(teamsDir, { withFileTypes: true })) {
@@ -170,10 +187,9 @@ async function loadTeamPlugins(
 
   for (const pluginPath of pluginPaths) {
     try {
-      logger.info({ plugin: pluginPath }, 'Loading team plugin');
-      // ?v= cache-buster — same rationale as in loadFeaturePlugin above.
-      const mod = await import(`${pluginPath}?v=${Date.now()}`) as { default?: TeamPlugin } | TeamPlugin;
-      const plugin = ('default' in mod ? mod.default : mod) as TeamPlugin | undefined;
+      logger.info({ plugin: pluginPath }, 'Loading workflow plugin');
+      const mod = await import(`${pluginPath}?v=${Date.now()}`) as { default?: ToolPlugin } | ToolPlugin;
+      const plugin = ('default' in mod ? mod.default : mod) as ToolPlugin | undefined;
 
       if (plugin && typeof plugin.register === 'function') {
         await plugin.register(app, nc, manager, {
@@ -188,15 +204,18 @@ async function loadTeamPlugins(
             }
           },
         });
-        logger.info({ plugin: pluginPath }, 'Team plugin registered');
+        logger.info({ plugin: pluginPath }, 'Workflow plugin registered');
       } else {
         logger.warn({ plugin: pluginPath }, 'Plugin has no register() — skipping');
       }
     } catch (err) {
-      logger.error({ err, plugin: pluginPath }, 'Failed to load team plugin');
+      logger.error({ err, plugin: pluginPath }, 'Failed to load workflow plugin');
     }
   }
 }
+
+/** Backward-compat alias */
+const loadTeamPlugins = loadWorkflowPlugins;
 
 // ─── Plugin list for dashboard ────────────────────────────────────────────────
 
@@ -210,10 +229,13 @@ async function getPluginList(app?: express.Application): Promise<PluginInfo[]> {
     if (!fs.existsSync(dir)) return;
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
+      // Read tool.json first (new name), fall back to feature.json (compat)
+      const toolJsonPath = path.join(dir, entry.name, 'tool.json');
       const featureJsonPath = path.join(dir, entry.name, 'feature.json');
-      if (!fs.existsSync(featureJsonPath)) continue;
+      const manifestPath = fs.existsSync(toolJsonPath) ? toolJsonPath : featureJsonPath;
+      if (!fs.existsSync(manifestPath)) continue;
       try {
-        const manifest = JSON.parse(fs.readFileSync(featureJsonPath, 'utf8')) as {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
           id: string; name: string;
           frontend?: { remote: string; routes?: PluginRoute[] };
         };
@@ -224,7 +246,7 @@ async function getPluginList(app?: express.Application): Promise<PluginInfo[]> {
           ? `${urlPrefix}/${entry.name}/${manifest.frontend!.remote}`
           : null;
 
-        // Mount static files for this feature if not already done
+        // Mount static files for this tool if not already done
         if (app && !mountedStatic.has(entry.name)) {
           app.use(`${urlPrefix}/${entry.name}`, express.static(path.join(dir, entry.name)));
           mountedStatic.add(entry.name);
@@ -242,10 +264,10 @@ async function getPluginList(app?: express.Application): Promise<PluginInfo[]> {
     }
   }
 
-  scanDir(FEATURES_DIR, '/features');
+  scanDir(TOOLS_DIR, '/features');
   scanDir(path.join(DATA_DIR, 'features'), '/features/data');
 
-  // Add plugins registered by team plugins via registerPlugin()
+  // Add plugins registered by workflow plugins via registerPlugin()
   for (const p of externalPlugins) {
     if (!list.find(l => l.id === p.id)) {
       list.push(p);
@@ -275,7 +297,6 @@ export async function createApiApp(
         if (otelApi) {
           const span = otelApi.trace.getActiveSpan();
           if (span) {
-            // Will be enriched again in res.on('finish') with matched route
             span.setAttribute('http.target', req.url);
           }
         }
@@ -283,7 +304,6 @@ export async function createApiApp(
       next();
     });
 
-    // After response — set final span name from matched Express route
     app.use((req, res, next) => {
       res.on('finish', () => {
         try {
@@ -306,28 +326,32 @@ export async function createApiApp(
     const config = await configService.load();
     if (!config) return;
 
-    // Load features from config.installed.features
-    for (const featureId of config.installed.features) {
-      await loadFeature(featureId, app, nc, manager, configService, reloadFeatures);
+    // Load tools from config.installed.tools and config.installed.features (compat)
+    const toolIds = new Set<string>([
+      ...(config.installed.features ?? []),
+      ...((config.installed as { tools?: string[] }).tools ?? []),
+    ]);
+    for (const toolId of toolIds) {
+      await loadTool(toolId, app, nc, manager, configService, reloadFeatures);
     }
 
-    // Also scan /data/features/ for installed features (added by hub install)
+    // Also scan /data/features/ for installed tools (added by hub install)
     const dataFeaturesDir = path.join(DATA_DIR, 'features');
     if (fs.existsSync(dataFeaturesDir)) {
       for (const entry of fs.readdirSync(dataFeaturesDir, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
-        await loadFeature(entry.name, app, nc, manager, configService, reloadFeatures);
+        await loadTool(entry.name, app, nc, manager, configService, reloadFeatures);
       }
     }
 
-    // Start any built-in agents (AGENTS_DIR) not yet running — these are skipped
-    // at startup when setup mode is active and must be started on first reload.
+    // Start any built-in agents (AGENTS_DIR) not yet running
     const { loadAgents } = await import('./agent-registry.js');
     const builtinAgents = loadAgents(AGENTS_DIR);
     for (const agent of builtinAgents) {
       if (agent.manifest.id === 'settings') continue; // already running
       if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
-        await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
+        const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
+        await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
         await manager.startAgent(agent);
       }
     }
@@ -357,13 +381,14 @@ export async function createApiApp(
       for (const agent of installedAgents) {
         if (teamManagedAgentIds.has(agent.manifest.id)) continue;
         if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
-          await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
+          const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
+          await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
           await manager.startAgent(agent);
         }
       }
     }
 
-    // Scan /data/teams/*/ — load agents via team.json with root fallback.
+    // Scan /data/teams/*/ — load agents via team.json with root fallback and workflow bindings.
     // Root fallback: if an agent is listed in team.json but has no team-specific manifest,
     // the definition is resolved from DATA_DIR/agents/{agentId}/ (shared root).
     // Agents loaded here carry teamId → container name = nano-agent-{teamId}-{agentId}.
@@ -372,21 +397,30 @@ export async function createApiApp(
       for (const teamEntry of fs.readdirSync(dataTeamsDir, { withFileTypes: true })) {
         if (!teamEntry.isDirectory()) continue;
         const teamDir = path.join(dataTeamsDir, teamEntry.name);
+
+        // Load workflow for this team (workflow.json → team.json fallback)
+        const workflow = loadWorkflow(teamDir);
+
         const teamAgents = loadTeamAgentsWithFallback(teamEntry.name, teamDir, dataAgentsDir);
         for (const agent of teamAgents) {
+          // Enrich agent with workflow binding
+          if (workflow?.bindings?.[agent.manifest.id]) {
+            agent.binding = workflow.bindings[agent.manifest.id];
+          }
           if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
-            await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
+            const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
+            await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
             await manager.startAgent(agent);
           }
         }
       }
     }
 
-    // Load team plugins (routes registered by installed teams)
-    await loadTeamPlugins(app, nc, manager, configService, reloadFeatures);
+    // Load workflow plugins (routes registered by installed teams)
+    await loadWorkflowPlugins(app, nc, manager, configService, reloadFeatures);
   };
 
-  // ── Plugin list registered FIRST — must not be overridden by team plugins ──
+  // ── Plugin list registered FIRST — must not be overridden by workflow plugins ──
 
   app.get('/api/plugins', async (_req: Request, res: Response) => {
     try {
@@ -470,7 +504,7 @@ export async function createApiApp(
         customConfig?: { model?: string };
       };
 
-      // Validate model name format if provided (prevent invalid values from crashing the agent)
+      // Validate model name format if provided
       if (customConfig?.model !== undefined && customConfig.model !== '') {
         if (typeof customConfig.model !== 'string' || !/^[a-zA-Z0-9._-]+$/.test(customConfig.model)) {
           return res.status(400).json({ error: 'Invalid model name format' });
@@ -494,6 +528,18 @@ export async function createApiApp(
       }
       if (customConfig !== undefined) {
         fs.writeFileSync(path.join(vaultAgentsDir, `${agentId}.json`), JSON.stringify(customConfig, null, 2), 'utf8');
+      }
+
+      // Phase 4: Hot-reload — notify running agent via core NATS (no restart needed)
+      const configUpdate: Record<string, unknown> = {};
+      if (customConfig?.model !== undefined) configUpdate.model = customConfig.model;
+      if (customInstructions !== undefined) configUpdate.systemPrompt = customInstructions;
+
+      if (Object.keys(configUpdate).length > 0) {
+        try {
+          nc.publish(`agent.${agentId}.config`, codec.encode(JSON.stringify(configUpdate)));
+          logger.debug({ agentId }, 'Config update published to running agent');
+        } catch { /* agent may not be running — vault persists for next start */ }
       }
 
       res.json({ ok: true });
@@ -521,6 +567,25 @@ export async function createApiApp(
       res.json({ ok: true });
     } catch (err) {
       logger.error({ err }, 'POST /api/agents/:agentId/restart error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Phase 5: Zero-downtime deploy ─────────────────────────────────────────
+
+  app.post('/api/agents/:agentId/deploy', async (req: Request, res: Response) => {
+    try {
+      const agentId = req.params.agentId;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+
+      const agent = manager.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+      // Kick off rollover in background — returns immediately
+      void manager.rolloverAgent(agentId);
+      res.json({ ok: true, message: 'Rollover started' });
+    } catch (err) {
+      logger.error({ err }, 'POST /api/agents/:agentId/deploy error');
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -649,7 +714,6 @@ export async function createApiApp(
     try {
       const sub = nc.subscribe(replySubject, { max: 1, timeout: 30_000 });
 
-      // Use JetStream publish (traced) so chat messages appear in observability
       await publish(nc, 'agent.settings.inbox',
         JSON.stringify({ content: message, sessionId: sid, replySubject }),
       );
@@ -669,7 +733,7 @@ export async function createApiApp(
 
   app.post('/internal/reload', async (_req: Request, res: Response) => {
     try {
-      await reloadFeatures(); // includes loadTeamPlugins
+      await reloadFeatures(); // includes loadWorkflowPlugins
       const plugins = await getPluginList();
       emitSseEvent('system', { type: 'plugins-updated', plugins });
       logger.info('Live reload completed');
@@ -680,16 +744,18 @@ export async function createApiApp(
     }
   });
 
-  // ── Static files for features (must be before catch-all) ────────────────────
-  app.use('/features/settings', express.static(path.join(FEATURES_DIR, 'settings')));
-  app.use('/features/simple-chat', express.static(path.join(FEATURES_DIR, 'simple-chat')));
-  app.use('/features/observability', express.static(path.join(FEATURES_DIR, 'observability')));
+  // ── Static files for tools (must be before catch-all) ────────────────────
+  app.use('/features/settings', express.static(path.join(TOOLS_DIR, 'settings')));
+  app.use('/features/simple-chat', express.static(path.join(TOOLS_DIR, 'simple-chat')));
+  app.use('/features/observability', express.static(path.join(TOOLS_DIR, 'observability')));
+  app.use('/features/workflow-editor', express.static(path.join(TOOLS_DIR, 'workflow-editor')));
   app.use('/features/data', express.static(path.join(DATA_DIR, 'features')));
 
-  // ── Load features and team plugins (after core API routes) ──────────────────
-  await loadFeature('settings', app, nc, manager, configService, reloadFeatures);
-  await loadFeature('simple-chat', app, nc, manager, configService, reloadFeatures);
-  await loadFeature('observability', app, nc, manager, configService, reloadFeatures);
+  // ── Load tools and workflow plugins (after core API routes) ──────────────
+  await loadTool('settings', app, nc, manager, configService, reloadFeatures);
+  await loadTool('simple-chat', app, nc, manager, configService, reloadFeatures);
+  await loadTool('observability', app, nc, manager, configService, reloadFeatures);
+  await loadTool('workflow-editor', app, nc, manager, configService, reloadFeatures);
 
   if (opts.setupMode === 'ready') {
     await reloadFeatures();

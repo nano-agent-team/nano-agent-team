@@ -27,6 +27,8 @@ export interface NanoConfig {
   providers?: Record<string, ProviderConfig>;
   installed: {
     features: string[];
+    /** New name for features — read both keys for backward compat */
+    tools?: string[];
     teams: string[];
   };
   meta: {

@@ -19,7 +19,7 @@ import { DATA_DIR, NATS_URL, AGENTS_DIR } from './config.js';
 import { logger } from './logger.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { connectNats, ensureStream, ensureConsumer, closeNats, publish } from './nats-client.js';
-import { loadAgents, loadManifest } from './agent-registry.js';
+import { loadAgents, loadManifest, resolveTopicsForAgent } from './agent-registry.js';
 import { AgentManager } from './agent-manager.js';
 import { startApiServer } from './api-server.js';
 import { detectSetupMode, isSetupRequired } from './setup-detector.js';
@@ -59,8 +59,9 @@ async function main(): Promise<void> {
   try {
     const manifest = loadManifest(settingsAgentDir);
     settingsAgent = { manifest, dir: settingsAgentDir };
-    await ensureConsumer(nc, 'AGENTS', manifest.id, manifest.subscribe_topics);
-    logger.info({ id: manifest.id, topics: manifest.subscribe_topics }, 'Settings agent consumer ready');
+    const settingsTopics = resolveTopicsForAgent(manifest);
+    await ensureConsumer(nc, 'AGENTS', manifest.id, settingsTopics);
+    logger.info({ id: manifest.id, topics: settingsTopics }, 'Settings agent consumer ready');
   } catch (err) {
     logger.warn({ err }, 'Settings agent manifest not found — setup UI will use form-only mode');
   }
@@ -96,8 +97,9 @@ async function main(): Promise<void> {
     }
 
     for (const agent of agents) {
-      await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
-      logger.info({ id: agent.manifest.id, topics: agent.manifest.subscribe_topics }, 'Agent consumer ready');
+      const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
+      await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
+      logger.info({ id: agent.manifest.id, topics }, 'Agent consumer ready');
     }
 
     await manager.startAll(agents);
