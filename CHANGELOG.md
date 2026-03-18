@@ -24,12 +24,18 @@ All notable changes to this project will be documented in this file.
 - Native PKCE OAuth flow for Claude — JSON body + state param ([`a0f9f91`](https://github.com/nano-agent-team/nano-agent-team/commit/a0f9f91f457661da1dac7931152b2aff7281e2e5))
 - Handle code#state format in Claude OAuth callback ([`8e24b88`](https://github.com/nano-agent-team/nano-agent-team/commit/8e24b881a0bf0cd04eb1bb7b36901cfc667ac1ca))
 - Load team plugins on every reloadFeatures call ([`e061fae`](https://github.com/nano-agent-team/nano-agent-team/commit/e061fae1cb8a9e9d1e768355614ac9ccb35740c1))
+- **api:** Pass instanceId to resolveTopicsForAgent + add CONSUMER_NAME env ([`5147b8c`](https://github.com/nano-agent-team/nano-agent-team/commit/5147b8cbbf2f5b0d5b980c63262399cd9d435eb7))
+- **api:** Make WorkflowDispatcher idempotent; fix removeFromStates race condition ([`7cddac2`](https://github.com/nano-agent-team/nano-agent-team/commit/7cddac24cb9ac7ba23903b6fa3839b106bdcdc8e))
+- **api:** Address PR #18 review comments ([`6410ac1`](https://github.com/nano-agent-team/nano-agent-team/commit/6410ac1863b79238bbe44d2210fbe2d1cb5f208e))
+- **ci:** Expose MCP port 3003 and use bind mount for multi-instance tests ([`d00c01b`](https://github.com/nano-agent-team/nano-agent-team/commit/d00c01bbfb60cf78943154c4409beed5373eefed))
+- **agent-runner:** Add 60s timeout to WAIT_FOR_START_SIGNAL rollover wait ([`7b9d6b8`](https://github.com/nano-agent-team/nano-agent-team/commit/7b9d6b8d404f5157fbdc539b8760651fde185033))
 
 ### Documentation
 
 - **ci:** Update CHANGELOG [skip ci] ([`ab1f505`](https://github.com/nano-agent-team/nano-agent-team/commit/ab1f50512f2b3a6ff34a1396b7c686c084b82147))
 - **ci:** Update CHANGELOG [skip ci] ([`8657415`](https://github.com/nano-agent-team/nano-agent-team/commit/8657415788dbd7577e695a49d88ba65dedf4840b))
 - **ci:** Update CHANGELOG [skip ci] ([`ac4bbfc`](https://github.com/nano-agent-team/nano-agent-team/commit/ac4bbfc797c8217d9f8f48953af54a7355008891))
+- **ci:** Update CHANGELOG [skip ci] ([`2a229f5`](https://github.com/nano-agent-team/nano-agent-team/commit/2a229f517fee5d20ed31c706ac97d0db4a1f279c))
 
 ### Features
 
@@ -56,15 +62,28 @@ All notable changes to this project will be documented in this file.
 - **agent-runner:** Show real-time activity on agent cards (#15) ([`b096198`](https://github.com/nano-agent-team/nano-agent-team/commit/b096198126152e42a699b84766af144ef424d3c1))
 - Root agent definitions — shared agents with team fallback (#16) ([`8f18092`](https://github.com/nano-agent-team/nano-agent-team/commit/8f18092d1f235f0deb0fce65cf07b96f2aedd09b))
 - **github-team:** Product Owner agent + self-learning for all agents (#17) ([`3b49624`](https://github.com/nano-agent-team/nano-agent-team/commit/3b496247ce6835e936e28ec1f9338ea89481a58c))
+- **api:** Entity responsibility separation — Agent/Tool/Workflow ([`805ebf5`](https://github.com/nano-agent-team/nano-agent-team/commit/805ebf5e1e793dc1c2f37593d699f5c2340df65e))
+- **api:** Add instanceId for multi-instance agent support ([`7a50401`](https://github.com/nano-agent-team/nano-agent-team/commit/7a50401f2dda18afa3f46a3429ed5e2ce2a16463))
+- **api:** Add expandInstances — competing pools and named clones ([`26b88c9`](https://github.com/nano-agent-team/nano-agent-team/commit/26b88c9b147d127b4ebceb24bacb81561886c5c5))
+- **api:** Add WorkflowDispatcher — least-busy and round-robin routing ([`2415dc2`](https://github.com/nano-agent-team/nano-agent-team/commit/2415dc2dc9ee766a24e1938d229957cef4cd9498))
+- **api:** Add named entrypoints — entrypoint route binding ([`8de0ec2`](https://github.com/nano-agent-team/nano-agent-team/commit/8de0ec245cdb01aaf04745315c2f667e9b981d8f))
+- **api:** Add TicketProvider abstraction with Local, GitHub, Proxy and Registry ([`874541e`](https://github.com/nano-agent-team/nano-agent-team/commit/874541e37827c4f14f6c37703d4c2b25c87add0c))
+- **api:** Add HTTP MCP Gateway with per-agent ACL ([`1481884`](https://github.com/nano-agent-team/nano-agent-team/commit/1481884fdefcb46d23436ad3b9b8d523935c2937))
+- **api:** Add tickets feature plugin with Kanban board frontend (Phase 5) ([`8f1dbcf`](https://github.com/nano-agent-team/nano-agent-team/commit/8f1dbcfbcdc171627e26938af1ec42a99a9410cd))
+- **core:** Entity separation, multi-instance agents, dispatch strategies ([`59ad709`](https://github.com/nano-agent-team/nano-agent-team/commit/59ad70989d9193a581b68f0b13efcd6c80c672fa))
 
 ### Miscellaneous
 
 - Enforce coding standards — commitlint, husky, English-only (#11) ([`900af92`](https://github.com/nano-agent-team/nano-agent-team/commit/900af929ddcda89d1dbacd7fe021ae386b906106))
+- **docker:** Expose NATS port 4222 for integration tests ([`996409c`](https://github.com/nano-agent-team/nano-agent-team/commit/996409c975bbb4e335ca18c54693042d7f553009))
+- Add test-results/ to .gitignore ([`c563feb`](https://github.com/nano-agent-team/nano-agent-team/commit/c563feb1053a9445d3fa6b61971842e0d8c6304f))
 
 ### Tests
 
 - Přidej automatické E2E testy (Vitest + Playwright) + GHA workflow ([`3a66c15`](https://github.com/nano-agent-team/nano-agent-team/commit/3a66c156c4df84fc23eaca14c515b3ecb6bfcbee))
 - Implementuj B (tickets REST API), C (NATS/SSE), E (MockProvider pipeline) ([`2697a96`](https://github.com/nano-agent-team/nano-agent-team/commit/2697a96cde7462f28cd48313828f063cc0374867))
+- **api:** Add multi-instance dispatch integration tests ([`fe31052`](https://github.com/nano-agent-team/nano-agent-team/commit/fe31052336b0f877acfd7560243bd51fd8fe786f))
+- **ci:** Add deterministic ticket-pipeline tests + fix @mcp/sdk dependency ([`9e716ea`](https://github.com/nano-agent-team/nano-agent-team/commit/9e716eaafedfb2039323a45b9333a2be1dd8f891))
 
 ### Repo
 
