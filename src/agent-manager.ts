@@ -27,10 +27,11 @@ import {
   NATS_URL,
 } from './config.js';
 import { logger } from './logger.js';
-import type { LoadedAgent } from './agent-registry.js';
-import { resolveTopicsForAgent } from './agent-registry.js';
+import type { LoadedAgent, DispatchConfig } from './agent-registry.js';
+import { resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
 import type { ConfigService, NanoConfig } from './config-service.js';
 import { codec } from './nats-client.js';
+import { WorkflowDispatcher } from './workflow-dispatcher.js';
 
 interface ObservabilityConfig {
   level?: string;
@@ -71,6 +72,7 @@ export class AgentManager {
   private docker: Dockerode;
   private healthTimer?: NodeJS.Timeout;
   private proxyHost: string | null = null;
+  private dispatcher: WorkflowDispatcher;
 
   constructor(
     private readonly nc: NatsConnection,
@@ -78,6 +80,7 @@ export class AgentManager {
   ) {
     // Default: connects via /var/run/docker.sock on Linux
     this.docker = new Dockerode();
+    this.dispatcher = new WorkflowDispatcher(nc, () => this.getInstanceHeartbeats());
   }
 
   /** Returns true when credentials.json exists → use proxy mode */
@@ -218,7 +221,7 @@ export class AgentManager {
   }
 
   async startAgent(agent: LoadedAgent): Promise<void> {
-    const { id } = agent.manifest;
+    const id = getInstanceId(agent);
     // When an agent is loaded in team context (root fallback), use team-scoped name
     // to prevent conflicts if multiple teams share the same root agent definition.
     const containerName = agent.teamId ? `nano-agent-${agent.teamId}-${id}` : `nano-agent-${id}`;
@@ -253,7 +256,8 @@ export class AgentManager {
 
       // Resolve provider and model for this agent
       // Vault config override is loaded below after teamConfigBlock — read it early for model resolution
-      const vaultConfigPathEarly = path.join(DATA_DIR, 'vault', 'agents', `${id}.json`);
+      const vaultId = agent.vaultId ?? id;
+      const vaultConfigPathEarly = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.json`);
       let vaultConfigEarly: { model?: string; subscribe_topics?: string[] } = {};
       if (fs.existsSync(vaultConfigPathEarly)) {
         try { vaultConfigEarly = JSON.parse(fs.readFileSync(vaultConfigPathEarly, 'utf8')); } catch { /* ignore */ }
@@ -308,7 +312,7 @@ export class AgentManager {
       }
 
       // Load vault custom instructions (appended after base CLAUDE.md + team config)
-      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${id}.md`);
+      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.md`);
       if (fs.existsSync(customInstructionsPath)) {
         const customContent = fs.readFileSync(customInstructionsPath, 'utf8').trim();
         if (customContent) {
@@ -895,5 +899,29 @@ export class AgentManager {
       '127.0.0.1',
       'host.docker.internal',
     );
+  }
+
+  /**
+   * Returns a map of instanceId → heartbeat data for use by WorkflowDispatcher.
+   */
+  getInstanceHeartbeats(): Map<string, { busy: boolean; lastSeen: Date }> {
+    const result = new Map<string, { busy: boolean; lastSeen: Date }>();
+    for (const [instanceId, state] of this.states.entries()) {
+      if (state.lastHeartbeat) {
+        result.set(instanceId, {
+          busy: state.busy ?? false,
+          lastSeen: state.lastHeartbeat,
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Register a dispatch rule for a NATS subject.
+   * Delegates to WorkflowDispatcher which manages the pull loop.
+   */
+  async registerDispatch(subject: string, config: DispatchConfig): Promise<void> {
+    await this.dispatcher.register(subject, config);
   }
 }

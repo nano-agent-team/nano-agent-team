@@ -27,8 +27,8 @@ import type { AgentManager } from './agent-manager.js';
 import type { ConfigService } from './config-service.js';
 import type { SetupMode } from './setup-detector.js';
 import { listTickets, getTicket, createTicket, updateTicket, addComment, listComments, type TicketStatus, type TicketPriority, type TicketType } from './db.js';
-import { resolveTopicsForAgent } from './agent-registry.js';
-import { loadWorkflow } from './workflow-registry.js';
+import { resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
+import { loadWorkflow, expandInstances } from './workflow-registry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const codec = StringCodec();
@@ -388,29 +388,45 @@ export async function createApiApp(
       }
     }
 
-    // Scan /data/teams/*/ — load agents via team.json with root fallback and workflow bindings.
-    // Root fallback: if an agent is listed in team.json but has no team-specific manifest,
-    // the definition is resolved from DATA_DIR/agents/{agentId}/ (shared root).
-    // Agents loaded here carry teamId → container name = nano-agent-{teamId}-{agentId}.
+    // Scan /data/teams/*/ — expand instances from workflow.json (multi-instance + dispatch support).
+    // Falls back to team.json agents list when no workflow.json instances block is present.
     if (fs.existsSync(dataTeamsDir)) {
-      const { loadTeamAgentsWithFallback } = await import('./agent-registry.js');
       for (const teamEntry of fs.readdirSync(dataTeamsDir, { withFileTypes: true })) {
         if (!teamEntry.isDirectory()) continue;
         const teamDir = path.join(dataTeamsDir, teamEntry.name);
+        const teamAgentsDir = path.join(teamDir, 'agents');
 
         // Load workflow for this team (workflow.json → team.json fallback)
         const workflow = loadWorkflow(teamDir);
 
-        const teamAgents = loadTeamAgentsWithFallback(teamEntry.name, teamDir, dataAgentsDir);
-        for (const agent of teamAgents) {
-          // Enrich agent with workflow binding
-          if (workflow?.bindings?.[agent.manifest.id]) {
-            agent.binding = workflow.bindings[agent.manifest.id];
-          }
-          if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
+        // Expand instances: workflow.instances block (if present) or fallback to agents list
+        const instances = workflow
+          ? expandInstances(workflow, teamAgentsDir, dataAgentsDir)
+          : [];
+
+        // If no workflow, fall back to legacy team agent loading with root fallback
+        if (!workflow) {
+          const { loadTeamAgentsWithFallback } = await import('./agent-registry.js');
+          const legacyAgents = loadTeamAgentsWithFallback(teamEntry.name, teamDir, dataAgentsDir);
+          instances.push(...legacyAgents);
+        }
+
+        for (const agent of instances) {
+          const instanceId = getInstanceId(agent);
+          const consumerName = agent.consumerName ?? instanceId;
+          if (!manager.getStates().find(s => s.agentId === instanceId)) {
             const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
-            await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
+            await ensureConsumer(nc, 'AGENTS', consumerName, topics);
             await manager.startAgent(agent);
+          }
+        }
+
+        // Register non-broadcast dispatch rules
+        if (workflow?.dispatch) {
+          for (const [subject, dispatchConfig] of Object.entries(workflow.dispatch)) {
+            if (dispatchConfig.strategy !== 'broadcast') {
+              await manager.registerDispatch(subject, dispatchConfig);
+            }
           }
         }
       }

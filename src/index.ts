@@ -19,7 +19,7 @@ import { DATA_DIR, NATS_URL, AGENTS_DIR } from './config.js';
 import { logger } from './logger.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { connectNats, ensureStream, ensureConsumer, closeNats, publish } from './nats-client.js';
-import { loadAgents, loadManifest, resolveTopicsForAgent } from './agent-registry.js';
+import { loadAgents, loadManifest, resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
 import { AgentManager } from './agent-manager.js';
 import { startApiServer } from './api-server.js';
 import { detectSetupMode, isSetupRequired } from './setup-detector.js';
@@ -98,8 +98,8 @@ async function main(): Promise<void> {
 
     for (const agent of agents) {
       const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
-      await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
-      logger.info({ id: agent.manifest.id, topics }, 'Agent consumer ready');
+      await ensureConsumer(nc, 'AGENTS', getInstanceId(agent), topics);
+      logger.info({ id: getInstanceId(agent), topics }, 'Agent consumer ready');
     }
 
     await manager.startAll(agents);
