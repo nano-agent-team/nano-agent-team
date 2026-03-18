@@ -176,6 +176,15 @@ async function loadWorkflowPlugins(
     }
   }
 
+  // Ensure team plugins can resolve packages installed in the app container.
+  // ESM bare-specifier resolution walks up from the plugin file's location.
+  // Symlinking /data/node_modules → /app/node_modules makes all app deps
+  // available to any plugin loaded from /data/.
+  const dataNmLink = path.join(DATA_DIR, 'node_modules');
+  if (!fs.existsSync(dataNmLink)) {
+    try { fs.symlinkSync('/app/node_modules', dataNmLink); } catch { /* ignore */ }
+  }
+
   // 2. Installed teams in DATA_DIR/teams/*/
   const teamsDir = path.join(DATA_DIR, 'teams');
   if (fs.existsSync(teamsDir)) {
