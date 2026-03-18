@@ -28,11 +28,26 @@ export class TicketProxy implements TicketProvider {
   readonly displayName = 'Ticket Proxy';
 
   private prefixes = new Map<string, TicketProvider>();
+  private providers = new Map<string, TicketProvider>();
+  /** ID of the primary provider used for createTicket when no backend is specified. */
+  private primaryId: string;
 
-  constructor(private readonly defaultProvider: TicketProvider) {}
+  constructor(private readonly defaultProvider: TicketProvider) {
+    this.primaryId = defaultProvider.id;
+    this.providers.set(defaultProvider.id, defaultProvider);
+  }
 
   registerPrefix(prefix: string, provider: TicketProvider): void {
     this.prefixes.set(prefix.toUpperCase(), provider);
+    this.providers.set(provider.id, provider);
+  }
+
+  /**
+   * Set the primary backend for createTicket.
+   * Must match a registered provider id (e.g. "local", "github").
+   */
+  setPrimary(providerId: string): void {
+    this.primaryId = providerId;
   }
 
   private route(ticketId: string): TicketProvider {
@@ -45,9 +60,20 @@ export class TicketProxy implements TicketProvider {
     return this.defaultProvider;
   }
 
-  // createTicket always goes to default provider
+  /**
+   * Create a ticket.
+   * - If data.backend is specified, route to that provider explicitly.
+   * - Otherwise use the configured primary provider.
+   */
   async createTicket(data: CreateTicketData): Promise<Ticket> {
-    return this.defaultProvider.createTicket(data);
+    const { backend, ...rest } = data;
+    if (backend) {
+      const provider = this.providers.get(backend);
+      if (!provider) throw new Error(`TicketProxy: unknown backend '${backend}'`);
+      return provider.createTicket(rest);
+    }
+    const primary = this.providers.get(this.primaryId) ?? this.defaultProvider;
+    return primary.createTicket(rest);
   }
 
   async getTicket(id: string): Promise<Ticket | null> {

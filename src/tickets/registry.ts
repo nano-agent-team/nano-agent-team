@@ -16,6 +16,7 @@ import type { NatsConnection } from 'nats';
 import { logger } from '../logger.js';
 import { codec } from '../nats-client.js';
 import type { TicketProvider } from './provider.js';
+import { TicketProxy } from './proxy.js';
 import type {
   Ticket,
   TicketComment,
@@ -39,6 +40,31 @@ export class TicketRegistry {
   registerTeam(teamId: string, provider: TicketProvider): void {
     this.teams.set(teamId, provider);
     logger.info({ teamId, providerId: provider.id }, 'TicketRegistry: team provider registered');
+  }
+
+  /**
+   * Register a prefix-routed provider on the global TicketProxy.
+   * The global provider must be a TicketProxy instance.
+   * Example: registerPrefix('GH', githubProvider) — routes GH-42 → GitHub Issues
+   */
+  registerPrefix(prefix: string, provider: TicketProvider): void {
+    if (!(this.global instanceof TicketProxy)) {
+      throw new Error('TicketRegistry.registerPrefix: global provider must be a TicketProxy');
+    }
+    this.global.registerPrefix(prefix, provider);
+    logger.info({ prefix, providerId: provider.id }, 'TicketRegistry: prefix provider registered');
+  }
+
+  /**
+   * Set the primary backend for createTicket on the global TicketProxy.
+   * Example: setPrimary('github') — new tickets go to GitHub Issues by default
+   */
+  setPrimary(providerId: string): void {
+    if (!(this.global instanceof TicketProxy)) {
+      throw new Error('TicketRegistry.setPrimary: global provider must be a TicketProxy');
+    }
+    this.global.setPrimary(providerId);
+    logger.info({ providerId }, 'TicketRegistry: primary backend set');
   }
 
   getProvider(teamId?: string): TicketProvider {

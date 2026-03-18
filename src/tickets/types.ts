@@ -58,6 +58,12 @@ export interface CreateTicketData {
   assignee?: string;
   labels?: string[];
   parentId?: string;
+  /**
+   * Explicit backend to create the ticket in.
+   * If omitted, TicketProxy uses the configured primary backend.
+   * Examples: "local", "github", "jira"
+   */
+  backend?: string;
 }
 
 export interface UpdateTicketData {

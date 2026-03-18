@@ -61,12 +61,22 @@ export interface AgentManifest {
   /** LLM provider: provider name or 'auto' (default: 'auto' = use primaryProvider) */
   provider?: string;
   /**
-   * MCP Gateway permissions — which tool operations this agent may call.
+   * MCP Gateway permissions — which built-in tool operations this agent may call.
    * Key: MCP namespace (e.g. "tickets"). Value: array of allowed operations or "*" for all.
-   * If omitted, all tools are available (backward compat).
+   * If omitted, all built-in tools are available (backward compat).
    * Example: { "tickets": ["get", "list", "comment", "approve"] }
    */
   mcp_permissions?: Record<string, string[] | '*'>;
+  /**
+   * MCP Federation access — which external MCP servers and actions this agent may use.
+   * Key: MCP server ID (e.g. "github"). Value: array of action names or "*" for all.
+   * Actions map to tool names via McpServerRegistry.
+   * Example: { "github": ["pr.read", "pr.comment"] }
+   *          { "github": "*" }
+   */
+  mcp_access?: Record<string, string[] | '*'>;
+  /** Path to MCP config JSON file (e.g. /app/mcp/config-mcp.json) with mcpServers definitions */
+  mcp_config?: string;
 }
 
 // ─── Workflow Binding ─────────────────────────────────────────────────────────

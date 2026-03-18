@@ -26,6 +26,8 @@ services:
       # For SSH-based remotes, configure SSH agent forwarding on the host instead.
       # Claude Code credentials — shared with host so OAuth tokens persist
       - ~/.claude:/root/.claude
+      # Claude Code 2.x auth file (OAuth token stored here, not inside .claude/)
+      - ~/.claude.json:/root/.claude.json
       # Codex credentials — shared with host for subscription auth
       - ~/.codex:/root/.codex
     environment:
@@ -33,7 +35,9 @@ services:
       HOST_DATA_DIR: ${PWD}/data
       LOG_LEVEL: info
       API_PORT: 3002
+      MCP_GATEWAY_PORT: 3004
       HOST_CODEX_DIR: ${HOME}/.codex
+      HOST_CLAUDE_JSON: ${HOME}/.claude.json
       SKIP_DOCKERD: "true"   # dev mode: use host Docker socket instead of internal dockerd
       # Embedded NATS (default — no NATS_URL needed)
       # To use external NATS: set NATS_URL=nats://nats:4222 and NATS_EMBEDDED=false

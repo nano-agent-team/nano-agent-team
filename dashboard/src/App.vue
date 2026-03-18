@@ -15,6 +15,7 @@ import AppSidebar from './components/AppSidebar.vue'
 .app-layout {
   display: flex;
   flex-direction: row;
+  width: 100%;
   height: 100vh;
   overflow: hidden;
 }

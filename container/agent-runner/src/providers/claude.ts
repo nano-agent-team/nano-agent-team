@@ -18,12 +18,15 @@ export class ClaudeProvider implements Provider {
   }
 
   async *run(options: ProviderRunOptions): AsyncGenerator<ProviderEvent> {
+    // Build per-namespace MCP tool patterns (mcp__* glob doesn't match across __ delimiters)
+    const mcpToolPatterns = Object.keys(options.mcpServers ?? {}).map((name) => `mcp__${name}__*`);
     const sdkOptions: Record<string, unknown> = {
       model: options.model,
       cwd: options.cwd,
       permissionMode: 'acceptEdits',
-      allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', 'mcp__tickets__*'],
+      allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns],
       maxTurns: options.maxTurns ?? 50,
+      includePartialMessages: true,
     };
 
     // Add MCP servers if provided
@@ -56,6 +59,17 @@ export class ClaudeProvider implements Provider {
         if (!sessionId && typeof msg['session_id'] === 'string') {
           sessionId = msg['session_id'];
           yield { type: 'session_id', sessionId };
+        }
+
+        // Stream text deltas from partial assistant messages
+        if (msg['type'] === 'stream_event') {
+          const event = msg['event'] as Record<string, unknown> | undefined;
+          if (event?.['type'] === 'content_block_delta') {
+            const delta = event['delta'] as Record<string, unknown> | undefined;
+            if (delta?.['type'] === 'text_delta' && typeof delta['text'] === 'string' && delta['text']) {
+              yield { type: 'text', text: delta['text'] };
+            }
+          }
         }
 
         // Record tool calls
