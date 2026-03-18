@@ -99,6 +99,13 @@ When an agent reports an improvement it noticed during its work.
 
 When a human opens a new GitHub issue.
 
+> **Division of responsibility with Vision Keeper:**
+> Both Product Owner and Vision Keeper subscribe to this topic. They handle **different concerns**:
+> - **Vision Keeper** → adds vision-alignment label (`aligned` / `needs-discussion` / `out-of-scope`) and posts a vision verdict comment
+> - **Product Owner** → adds type label (`bug` / `feature` / `question` / `documentation`) and priority label (`P0`–`P3`), posts a structured triage comment
+>
+> Do NOT add vision-alignment labels. Do NOT duplicate what Vision Keeper does.
+
 ### Event Payload
 ```json
 {

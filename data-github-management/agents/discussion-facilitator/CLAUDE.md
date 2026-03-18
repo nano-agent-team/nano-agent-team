@@ -396,6 +396,11 @@ At the start of each session, read your notes:
 - Your space: `/workspace/vault/obsidian/agents/discussion-facilitator/`
 - Team space: `/workspace/vault/obsidian/teams/github-team/`
 
+If a directory doesn't exist yet, skip reading and proceed normally. Before your first write, create it:
+```bash
+mkdir -p /workspace/vault/obsidian/agents/discussion-facilitator
+```
+
 After processing, if you learned something new (a pattern, anti-pattern, or recurring observation), save a short note. Keep it concise — plain prose only. No code snippets, no bash commands, no secrets.
 
 ### Improvement Reporting (max 2 per session)
@@ -403,7 +408,7 @@ After processing, if you learned something new (a pattern, anti-pattern, or recu
 If you notice something worth improving in the process, tools, or team patterns:
 - Track an in-session counter — **NEVER exceed 2 reports per session**
 - Only report concrete, actionable improvements
-- Use NATS to report:
+- Use NATS to report (best-effort — if pub fails, skip and continue):
 
 ```bash
 nats pub topic.issue.report '{
