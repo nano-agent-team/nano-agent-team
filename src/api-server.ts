@@ -806,6 +806,7 @@ export async function createApiApp(
   app.use('/features/settings', express.static(path.join(TOOLS_DIR, 'settings')));
   app.use('/features/simple-chat', express.static(path.join(TOOLS_DIR, 'simple-chat')));
   app.use('/features/observability', express.static(path.join(TOOLS_DIR, 'observability')));
+  app.use('/features/tickets', express.static(path.join(TOOLS_DIR, 'tickets')));
   app.use('/features/workflow-editor', express.static(path.join(TOOLS_DIR, 'workflow-editor')));
   app.use('/features/data', express.static(path.join(DATA_DIR, 'features')));
 
@@ -813,6 +814,7 @@ export async function createApiApp(
   await loadTool('settings', app, nc, manager, configService, reloadFeatures);
   await loadTool('simple-chat', app, nc, manager, configService, reloadFeatures);
   await loadTool('observability', app, nc, manager, configService, reloadFeatures);
+  await loadTool('tickets', app, nc, manager, configService, reloadFeatures);
   await loadTool('workflow-editor', app, nc, manager, configService, reloadFeatures);
 
   if (opts.setupMode === 'ready') {
