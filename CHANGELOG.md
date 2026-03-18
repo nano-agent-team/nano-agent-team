@@ -40,6 +40,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`2a229f5`](https://github.com/nano-agent-team/nano-agent-team/commit/2a229f517fee5d20ed31c706ac97d0db4a1f279c))
 - **ci:** Update CHANGELOG [skip ci] ([`6cf9844`](https://github.com/nano-agent-team/nano-agent-team/commit/6cf98449d1af8afb60b44669e875bcb781d115fa))
 - **ci:** Update CHANGELOG [skip ci] ([`1a5fe1c`](https://github.com/nano-agent-team/nano-agent-team/commit/1a5fe1c6e8bfdb5b243143c9e151d786c39356ed))
+- **ci:** Update CHANGELOG [skip ci] ([`99ebc1b`](https://github.com/nano-agent-team/nano-agent-team/commit/99ebc1b1bbb028a35543a5aa346a93866696f313))
 
 ### Features
 
@@ -75,6 +76,7 @@ All notable changes to this project will be documented in this file.
 - **api:** Add HTTP MCP Gateway with per-agent ACL ([`1481884`](https://github.com/nano-agent-team/nano-agent-team/commit/1481884fdefcb46d23436ad3b9b8d523935c2937))
 - **api:** Add tickets feature plugin with Kanban board frontend (Phase 5) ([`8f1dbcf`](https://github.com/nano-agent-team/nano-agent-team/commit/8f1dbcfbcdc171627e26938af1ec42a99a9410cd))
 - **core:** Entity separation, multi-instance agents, dispatch strategies ([`59ad709`](https://github.com/nano-agent-team/nano-agent-team/commit/59ad70989d9193a581b68f0b13efcd6c80c672fa))
+- **settings:** Settings Agent with MCP gateway, chat UI, and real-time streaming (#22) ([`eec7888`](https://github.com/nano-agent-team/nano-agent-team/commit/eec7888f5e19f018c3bdc41fa923e139764cfe3f))
 
 ### Miscellaneous
 
