@@ -67,16 +67,41 @@ export interface WorkflowBinding {
 
 // ─── Workflow Manifest ────────────────────────────────────────────────────────
 
+// ─── Multi-instance types ─────────────────────────────────────────────────────
+
+/** Declaration of a single agent instance (or competing pool) in a workflow */
+export interface WorkflowInstance {
+  /** manifest.id (agent type) — which agent definition to use */
+  manifest: string;
+  /** Competing pool size: N containers share a single JetStream consumer (default 1) */
+  count?: number;
+  /** Vault config id override (defaults to instanceId) */
+  vault?: string;
+}
+
+/** Dispatch routing rule for a NATS subject */
+export interface DispatchConfig {
+  strategy: 'competing' | 'broadcast' | 'least-busy' | 'round-robin';
+  /** instanceIds participating in this dispatch group */
+  to: string[];
+}
+
+// ─── Workflow Manifest ────────────────────────────────────────────────────────
+
 export interface WorkflowManifest {
   id: string;
   name: string;
   version: string;
   description?: string;
-  /** Agent IDs participating in this workflow */
+  /** Agent IDs participating in this workflow (legacy — use instances instead) */
   agents: string[];
   /** Tool IDs required by this workflow */
   tools?: string[];
-  /** Per-agent topic bindings: agentId → WorkflowBinding */
+  /** Instance declarations: instanceId → WorkflowInstance config */
+  instances?: Record<string, WorkflowInstance>;
+  /** Dispatch rules: NATS subject → DispatchConfig */
+  dispatch?: Record<string, DispatchConfig>;
+  /** Per-agent topic bindings: instanceId → WorkflowBinding */
   bindings?: Record<string, WorkflowBinding>;
   /** Legacy compat: pipeline.topics from team.json */
   pipeline?: { topics?: Record<string, string> };
@@ -92,6 +117,20 @@ export interface LoadedAgent {
   teamId?: string;
   /** Workflow topic bindings resolved at load time (optional) */
   binding?: WorkflowBinding;
+  /** Instance ID — unique per running container (defaults to manifest.id) */
+  instanceId?: string;
+  /** JetStream consumer name override (competing pools share manifest.id consumer) */
+  consumerName?: string;
+  /** Vault config id for per-instance overrides (defaults to instanceId) */
+  vaultId?: string;
+}
+
+/**
+ * Get the effective instance ID for an agent.
+ * Falls back to manifest.id when no explicit instanceId is set.
+ */
+export function getInstanceId(agent: LoadedAgent): string {
+  return agent.instanceId ?? agent.manifest.id;
 }
 
 // ─── Topic resolution ─────────────────────────────────────────────────────────
