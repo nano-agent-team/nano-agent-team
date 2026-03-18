@@ -339,6 +339,28 @@ export async function createApiApp(
     });
   }
 
+  // ── Persistent routes helpers ─────────────────────────────────────────────
+  const ROUTES_PATH = path.join(DATA_DIR, 'routes.json');
+
+  interface PersistedRoute {
+    from_topic: string;
+    to_agent_id: string;
+    to_entrypoint: string;
+  }
+
+  function loadRoutes(): PersistedRoute[] {
+    try {
+      return JSON.parse(fs.readFileSync(ROUTES_PATH, 'utf8')) as PersistedRoute[];
+    } catch {
+      return [];
+    }
+  }
+
+  function saveRoutes(routes: PersistedRoute[]): void {
+    fs.mkdirSync(path.dirname(ROUTES_PATH), { recursive: true });
+    fs.writeFileSync(ROUTES_PATH, JSON.stringify(routes, null, 2));
+  }
+
   // Closure for re-use in /internal/reload
   const reloadFeatures = async (): Promise<void> => {
     const config = await configService.load();
@@ -374,78 +396,36 @@ export async function createApiApp(
       }
     }
 
-    // Collect agent IDs managed by teams — root scan must skip these so that
-    // team scan can start them with proper teamId context (for correct container naming).
+    // All agents live in /data/agents/ — flat structure.
+    // /data/teams/{id}/ contains only workflow.json + team.json (no agents subdir).
     const dataTeamsDir = path.join(DATA_DIR, 'teams');
     const dataAgentsDir = path.join(DATA_DIR, 'agents');
-    const teamManagedAgentIds = new Set<string>();
-    if (fs.existsSync(dataTeamsDir)) {
-      for (const teamEntry of fs.readdirSync(dataTeamsDir, { withFileTypes: true })) {
-        if (!teamEntry.isDirectory()) continue;
-        const teamJsonPath = path.join(dataTeamsDir, teamEntry.name, 'team.json');
-        if (!fs.existsSync(teamJsonPath)) continue;
-        try {
-          const team = JSON.parse(fs.readFileSync(teamJsonPath, 'utf8')) as { agents?: string[] };
-          if (Array.isArray(team.agents)) {
-            for (const agentId of team.agents) teamManagedAgentIds.add(agentId);
-          }
-        } catch { /* ignore malformed team.json */ }
-      }
-    }
 
-    // Scan /data/agents/ — skip agents managed by a team (they start in team scan with teamId)
-    if (fs.existsSync(dataAgentsDir)) {
-      const installedAgents = loadAgents(dataAgentsDir);
-      for (const agent of installedAgents) {
-        if (teamManagedAgentIds.has(agent.manifest.id)) continue;
-        if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
-          const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
-          await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
-          await manager.startAgent(agent);
-        }
-      }
-    }
-
-    // Scan /data/teams/*/ — expand instances from workflow.json (multi-instance + dispatch support).
-    // Falls back to team.json agents list when no workflow.json instances block is present.
+    // First pass: process team workflows — start agents with their bindings.
+    // Agents referenced by a workflow are started here; the second pass skips already-running ones.
     if (fs.existsSync(dataTeamsDir)) {
       for (const teamEntry of fs.readdirSync(dataTeamsDir, { withFileTypes: true })) {
         if (!teamEntry.isDirectory()) continue;
         const teamDir = path.join(dataTeamsDir, teamEntry.name);
-        const teamAgentsDir = path.join(teamDir, 'agents');
 
-        // Load workflow for this team (workflow.json → team.json fallback)
         const workflow = loadWorkflow(teamDir);
+        if (!workflow) continue;
 
-        // Expand instances: workflow.instances block (if present) or fallback to agents list
-        const instances = workflow
-          ? expandInstances(workflow, teamAgentsDir, dataAgentsDir)
-          : [];
-
-        // If no workflow, fall back to legacy team agent loading with root fallback
-        if (!workflow) {
-          const { loadTeamAgentsWithFallback } = await import('./agent-registry.js');
-          const legacyAgents = loadTeamAgentsWithFallback(teamEntry.name, teamDir, dataAgentsDir);
-          instances.push(...legacyAgents);
-        }
+        const instances = expandInstances(workflow, dataAgentsDir, dataAgentsDir);
 
         for (const agent of instances) {
           const instanceId = getInstanceId(agent);
           const consumerName = agent.consumerName ?? instanceId;
           const existing = manager.getStates().find(s => s.agentId === instanceId);
           if (!existing || existing.status === 'dead') {
-            // Dead agents (max restarts reached) are reset and restarted on explicit reload
-            if (existing?.status === 'dead') {
-              manager.removeFromStates(instanceId);
-            }
+            if (existing?.status === 'dead') manager.removeFromStates(instanceId);
             const topics = resolveTopicsForAgent(agent.manifest, agent.binding, instanceId);
             await ensureConsumer(nc, 'AGENTS', consumerName, topics);
             await manager.startAgent(agent);
           }
         }
 
-        // Register non-broadcast dispatch rules
-        if (workflow?.dispatch) {
+        if (workflow.dispatch) {
           for (const [subject, dispatchConfig] of Object.entries(workflow.dispatch)) {
             if (dispatchConfig.strategy !== 'broadcast') {
               await manager.registerDispatch(subject, dispatchConfig);
@@ -453,8 +433,6 @@ export async function createApiApp(
           }
         }
 
-        // Register entrypoint routes for { from, to } binding inputs
-        // Dispatcher bridges external topic → agent.{instanceId}.{portName}
         for (const agent of instances) {
           const instanceId = getInstanceId(agent);
           for (const input of Object.values(agent.binding?.inputs ?? {})) {
@@ -464,6 +442,23 @@ export async function createApiApp(
           }
         }
       }
+    }
+
+    // Second pass: start any agents in /data/agents/ not yet running (no workflow binding).
+    if (fs.existsSync(dataAgentsDir)) {
+      for (const agent of loadAgents(dataAgentsDir)) {
+        if (!manager.getStates().find(s => s.agentId === agent.manifest.id)) {
+          const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
+          await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
+          await manager.startAgent(agent);
+        }
+      }
+    }
+
+    // Load persistent routes from /data/routes.json
+    for (const route of loadRoutes()) {
+      const toSubject = `agent.${route.to_agent_id}.${route.to_entrypoint}`;
+      await manager.registerEntrypointRoute(route.from_topic, toSubject);
     }
 
     // Load workflow plugins (routes registered by installed teams)
@@ -875,6 +870,137 @@ export async function createApiApp(
       res.json({ ok: true, serverId });
     } catch (err) {
       logger.error({ err }, 'POST /internal/mcp-servers/:serverId/restart error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.post('/internal/agents/:agentId/build', async (req: Request, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+      const logs = await manager.buildAgentImage(agentId);
+      logger.info({ agentId }, 'Agent image built via internal API');
+      res.json({ ok: true, agentId, image: `nano-agent-${agentId}:latest`, logs });
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/agents/:agentId/build error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get('/internal/agents/:agentId/definition', async (req: Request, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+
+      const agentDir = path.join(DATA_DIR, 'agents', agentId);
+      if (!fs.existsSync(agentDir)) {
+        return res.status(404).json({ error: `Agent "${agentId}" not found in /data/agents/` });
+      }
+
+      const manifestPath = path.join(agentDir, 'manifest.json');
+      const claudeMdPath = path.join(agentDir, 'CLAUDE.md');
+      const dockerfilePath = path.join(agentDir, 'Dockerfile');
+
+      res.json({
+        agent_id: agentId,
+        manifest: fs.existsSync(manifestPath)
+          ? JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+          : null,
+        claude_md: fs.existsSync(claudeMdPath)
+          ? fs.readFileSync(claudeMdPath, 'utf8')
+          : null,
+        dockerfile: fs.existsSync(dockerfilePath)
+          ? fs.readFileSync(dockerfilePath, 'utf8')
+          : null,
+      });
+    } catch (err) {
+      logger.error({ err }, 'GET /internal/agents/:agentId/definition error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.put('/internal/agents/:agentId/definition', async (req: Request, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+
+      const { manifest, claude_md, dockerfile } = req.body as {
+        manifest?: Record<string, unknown>;
+        claude_md?: string;
+        dockerfile?: string | null;
+      };
+
+      const agentDir = path.join(DATA_DIR, 'agents', agentId);
+      fs.mkdirSync(agentDir, { recursive: true });
+
+      if (manifest !== undefined) {
+        fs.writeFileSync(path.join(agentDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
+      }
+      if (claude_md !== undefined) {
+        fs.writeFileSync(path.join(agentDir, 'CLAUDE.md'), claude_md);
+      }
+      if (dockerfile !== undefined) {
+        if (dockerfile === null) {
+          // Remove Dockerfile if explicitly set to null
+          const p = path.join(agentDir, 'Dockerfile');
+          if (fs.existsSync(p)) fs.unlinkSync(p);
+        } else {
+          fs.writeFileSync(path.join(agentDir, 'Dockerfile'), dockerfile);
+        }
+      }
+
+      logger.info({ agentId }, 'Agent definition saved via internal API');
+      res.json({ ok: true, agentId, path: agentDir });
+    } catch (err) {
+      logger.error({ err }, 'PUT /internal/agents/:agentId/definition error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.get('/internal/routes', (_req: Request, res: Response) => {
+    res.json(loadRoutes());
+  });
+
+  app.post('/internal/routes', async (req: Request, res: Response) => {
+    try {
+      const { from_topic, to_agent_id, to_entrypoint = 'inbox' } = req.body as {
+        from_topic: string;
+        to_agent_id: string;
+        to_entrypoint?: string;
+      };
+
+      if (!/^[a-z0-9._-]+$/.test(from_topic)) return res.status(400).json({ error: 'Invalid from_topic' });
+      if (!isValidAgentId(to_agent_id)) return res.status(400).json({ error: 'Invalid to_agent_id' });
+      if (!/^[a-z0-9_-]+$/.test(to_entrypoint)) return res.status(400).json({ error: 'Invalid to_entrypoint' });
+
+      const routes = loadRoutes().filter(r => r.from_topic !== from_topic); // replace if exists
+      routes.push({ from_topic, to_agent_id, to_entrypoint });
+      saveRoutes(routes);
+
+      const toSubject = `agent.${to_agent_id}.${to_entrypoint}`;
+      await manager.registerEntrypointRoute(from_topic, toSubject);
+
+      logger.info({ from_topic, to_agent_id, to_entrypoint }, 'Persistent route created');
+      res.json({ ok: true, from_topic, to_agent_id, to_entrypoint });
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/routes error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  app.delete('/internal/routes/:fromTopic', (req: Request, res: Response) => {
+    try {
+      const fromTopic = decodeURIComponent(req.params.fromTopic);
+      const routes = loadRoutes();
+      const filtered = routes.filter(r => r.from_topic !== fromTopic);
+      if (filtered.length === routes.length) {
+        return res.status(404).json({ error: `Route "${fromTopic}" not found` });
+      }
+      saveRoutes(filtered);
+      logger.info({ fromTopic }, 'Persistent route deleted (takes effect after reload)');
+      res.json({ ok: true, from_topic: fromTopic, note: 'Route removed; active subscription ends on next reload' });
+    } catch (err) {
+      logger.error({ err }, 'DELETE /internal/routes/:fromTopic error');
       res.status(500).json({ error: String(err) });
     }
   });

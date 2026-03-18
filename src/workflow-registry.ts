@@ -177,11 +177,10 @@ export function expandInstances(
 
 function resolveAgentDir(
   manifestId: string,
-  teamAgentsDir: string,
+  _teamAgentsDir: string,
   rootAgentsDir?: string,
 ): string | null {
-  const teamDir = path.join(teamAgentsDir, manifestId);
-  if (fs.existsSync(path.join(teamDir, 'manifest.json'))) return teamDir;
+  // All agents live in /data/agents/ (rootAgentsDir) — no per-team agents subdir.
   if (rootAgentsDir) {
     const rootDir = path.join(rootAgentsDir, manifestId);
     if (fs.existsSync(path.join(rootDir, 'manifest.json'))) return rootDir;

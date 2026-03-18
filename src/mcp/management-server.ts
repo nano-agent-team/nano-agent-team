@@ -1,18 +1,25 @@
 /**
- * Management MCP Server — system control + hub catalog browsing
+ * Management MCP Server — system control + hub catalog browsing + agent authoring
  *
  * Runs as a child process inside the settings agent container (stdio transport).
  * Communicates with the control plane via internal HTTP API.
  *
  * Tools:
- *   get_system_status     — running agents + MCP servers + setup mode
- *   start_agent           — start a stopped/dead agent
- *   stop_agent            — stop a running agent
- *   restart_mcp_server    — restart an MCP server (picks up updated secrets)
- *   fetch_hub             — git clone/pull hub catalog to /tmp/hub
- *   list_hub_teams        — list teams available in hub
- *   get_hub_team          — team details: agents, required secrets, description
- *   install_team          — install team from hub + trigger reload
+ *   get_system_status      — running agents + MCP servers + setup mode
+ *   start_agent            — start a stopped/dead agent
+ *   stop_agent             — stop a running agent
+ *   restart_mcp_server     — restart an MCP server (picks up updated secrets)
+ *   fetch_hub              — git clone/pull hub catalog to /tmp/hub
+ *   list_hub_teams         — list teams available in hub
+ *   get_hub_team           — team details: agents, required secrets, description
+ *   install_team           — install team from hub + trigger reload
+ *   install_agent          — install standalone agent from hub + trigger reload
+ *   get_agent_definition   — read manifest, CLAUDE.md, Dockerfile for an agent in /data/agents/
+ *   save_agent_definition  — write/update manifest, CLAUDE.md, Dockerfile for an agent
+ *   build_agent_image      — build Docker image from agent's Dockerfile
+ *   list_routes            — list persistent topic→agent routes from /data/routes.json
+ *   create_route           — add a persistent route: topic → agent entrypoint
+ *   delete_route           — remove a persistent route by from_topic
  */
 
 import { execFileSync } from 'child_process';
@@ -229,6 +236,87 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
         },
       },
     },
+    {
+      name: 'install_agent',
+      description: 'Install a standalone agent from hub catalog into /data/agents/, triggers reload.',
+      inputSchema: {
+        type: 'object',
+        required: ['agent_id'],
+        properties: {
+          agent_id: { type: 'string', description: 'Agent ID from hub/agents/, e.g. "agent-creator"' },
+        },
+      },
+    },
+    {
+      name: 'get_agent_definition',
+      description: 'Read the definition files (manifest.json, CLAUDE.md, Dockerfile) of an agent in /data/agents/.',
+      inputSchema: {
+        type: 'object',
+        required: ['agent_id'],
+        properties: {
+          agent_id: { type: 'string', description: 'Agent ID' },
+        },
+      },
+    },
+    {
+      name: 'save_agent_definition',
+      description: 'Create or update an agent definition in /data/agents/{id}/. Pass only the fields you want to write/overwrite. Set dockerfile to null to remove it.',
+      inputSchema: {
+        type: 'object',
+        required: ['agent_id'],
+        properties: {
+          agent_id: { type: 'string', description: 'Agent ID (kebab-case, e.g. "my-agent")' },
+          manifest: {
+            type: 'object',
+            description: 'Agent manifest (id, name, model, session_type, entrypoints, …)',
+          },
+          claude_md: { type: 'string', description: 'CLAUDE.md system prompt content' },
+          dockerfile: {
+            description: 'Dockerfile content as string, or null to remove it',
+          },
+        },
+      },
+    },
+    {
+      name: 'build_agent_image',
+      description: 'Build a Docker image from /data/agents/{id}/Dockerfile. Tags as nano-agent-{id}:latest.',
+      inputSchema: {
+        type: 'object',
+        required: ['agent_id'],
+        properties: {
+          agent_id: { type: 'string', description: 'Agent ID' },
+        },
+      },
+    },
+    {
+      name: 'list_routes',
+      description: 'List all persistent topic→agent routes defined in /data/routes.json.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'create_route',
+      description: 'Create a persistent route: messages published to from_topic are forwarded to the agent\'s entrypoint. Stored in /data/routes.json, activated immediately.',
+      inputSchema: {
+        type: 'object',
+        required: ['from_topic', 'to_agent_id'],
+        properties: {
+          from_topic: { type: 'string', description: 'NATS topic to listen on, e.g. "topic.github.pr.finding"' },
+          to_agent_id: { type: 'string', description: 'Target agent ID, e.g. "product-owner"' },
+          to_entrypoint: { type: 'string', description: 'Target entrypoint: "inbox" (default) or "event"' },
+        },
+      },
+    },
+    {
+      name: 'delete_route',
+      description: 'Remove a persistent route by its from_topic.',
+      inputSchema: {
+        type: 'object',
+        required: ['from_topic'],
+        properties: {
+          from_topic: { type: 'string', description: 'The from_topic of the route to remove' },
+        },
+      },
+    },
   ],
 }));
 
@@ -377,10 +465,29 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
-      // Copy team files to /data/teams/{teamId}
-      const destDir = path.join(DATA_DIR, 'teams', teamId);
-      fs.mkdirSync(destDir, { recursive: true });
-      execFileSync('cp', ['-r', `${teamDir}/.`, destDir], { timeout: 10_000 });
+      // Copy team descriptor files (team.json, workflow.json, setup.json, src/, config/, shared/, …)
+      // to /data/teams/{teamId}/ — but NOT the agents/ subdir (agents go to /data/agents/).
+      const teamDestDir = path.join(DATA_DIR, 'teams', teamId);
+      fs.mkdirSync(teamDestDir, { recursive: true });
+      for (const entry of fs.readdirSync(teamDir, { withFileTypes: true })) {
+        if (entry.name === 'agents') continue; // agents go to /data/agents/ instead
+        const src = path.join(teamDir, entry.name);
+        const dest = path.join(teamDestDir, entry.name);
+        execFileSync('cp', ['-r', src, dest], { timeout: 10_000 });
+      }
+
+      // Copy each agent to /data/agents/{agentId}/
+      const hubAgentsDir = path.join(teamDir, 'agents');
+      const installedAgents: string[] = [];
+      if (fs.existsSync(hubAgentsDir)) {
+        for (const entry of fs.readdirSync(hubAgentsDir, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue;
+          const agentDest = path.join(DATA_DIR, 'agents', entry.name);
+          fs.mkdirSync(agentDest, { recursive: true });
+          execFileSync('cp', ['-r', `${path.join(hubAgentsDir, entry.name)}/.`, agentDest], { timeout: 10_000 });
+          installedAgents.push(entry.name);
+        }
+      }
 
       // Update config.json
       const config = loadConfig();
@@ -400,8 +507,92 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       await callInternal('POST', '/internal/reload');
 
       return {
-        content: [{ type: 'text', text: JSON.stringify({ ok: true, team_id: teamId, installed_to: destDir }) }],
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ ok: true, team_id: teamId, team_dir: teamDestDir, agents: installedAgents }),
+        }],
       };
+    }
+
+    case 'install_agent': {
+      const agentId = a.agent_id as string;
+      if (!/^[a-z0-9_-]+$/.test(agentId)) {
+        return { content: [{ type: 'text', text: 'Invalid agent_id format.' }], isError: true };
+      }
+      const srcDir = path.join(HUB_DIR, 'agents', agentId);
+      if (!fs.existsSync(srcDir)) {
+        return {
+          content: [{ type: 'text', text: `Agent "${agentId}" not found in hub. Call fetch_hub first.` }],
+          isError: true,
+        };
+      }
+      const destDir = path.join(DATA_DIR, 'agents', agentId);
+      fs.mkdirSync(destDir, { recursive: true });
+      execFileSync('cp', ['-r', `${srcDir}/.`, destDir], { timeout: 10_000 });
+      await callInternal('POST', '/internal/reload');
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: true, agent_id: agentId, installed_to: destDir }) }],
+      };
+    }
+
+    case 'get_agent_definition': {
+      const agentId = a.agent_id as string;
+      if (!/^[a-z0-9_-]+$/.test(agentId)) {
+        return { content: [{ type: 'text', text: 'Invalid agent_id format.' }], isError: true };
+      }
+      const result = await callInternal('GET', `/internal/agents/${agentId}/definition`);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'save_agent_definition': {
+      const agentId = a.agent_id as string;
+      if (!/^[a-z0-9_-]+$/.test(agentId)) {
+        return { content: [{ type: 'text', text: 'Invalid agent_id format.' }], isError: true };
+      }
+      const body: Record<string, unknown> = {};
+      if (a.manifest !== undefined) body.manifest = a.manifest;
+      if (a.claude_md !== undefined) body.claude_md = a.claude_md;
+      if (a.dockerfile !== undefined) body.dockerfile = a.dockerfile;
+      const result = await callInternal('PUT', `/internal/agents/${agentId}/definition`, body);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+
+
+    case 'build_agent_image': {
+      const agentId = a.agent_id as string;
+      if (!/^[a-z0-9_-]+$/.test(agentId)) {
+        return { content: [{ type: 'text', text: 'Invalid agent_id format.' }], isError: true };
+      }
+      const result = await callInternal('POST', `/internal/agents/${agentId}/build`);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+
+    case 'list_routes': {
+      const result = await callInternal('GET', '/internal/routes');
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    }
+
+    case 'create_route': {
+      const fromTopic = a.from_topic as string;
+      const toAgentId = a.to_agent_id as string;
+      const toEntrypoint = (a.to_entrypoint as string | undefined) ?? 'inbox';
+      if (!/^[a-z0-9._-]+$/.test(fromTopic)) {
+        return { content: [{ type: 'text', text: 'Invalid from_topic format.' }], isError: true };
+      }
+      if (!/^[a-z0-9_-]+$/.test(toAgentId)) {
+        return { content: [{ type: 'text', text: 'Invalid to_agent_id format.' }], isError: true };
+      }
+      const result = await callInternal('POST', '/internal/routes', { from_topic: fromTopic, to_agent_id: toAgentId, to_entrypoint: toEntrypoint });
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+
+    case 'delete_route': {
+      const fromTopic = a.from_topic as string;
+      if (!/^[a-z0-9._-]+$/.test(fromTopic)) {
+        return { content: [{ type: 'text', text: 'Invalid from_topic format.' }], isError: true };
+      }
+      const result = await callInternal('DELETE', `/internal/routes/${encodeURIComponent(fromTopic)}`);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
 
     default:

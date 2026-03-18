@@ -1000,4 +1000,42 @@ export class AgentManager {
   async registerEntrypointRoute(from: string, toSubject: string): Promise<void> {
     await this.dispatcher.registerEntrypointRoute(from, toSubject);
   }
+
+  /**
+   * Build a Docker image from /data/agents/{agentId}/Dockerfile.
+   * Tags the image as nano-agent-{agentId}:latest.
+   * Returns streamed build logs as a string.
+   */
+  async buildAgentImage(agentId: string): Promise<string> {
+    const agentDir = path.join(DATA_DIR, 'agents', agentId);
+    const dockerfilePath = path.join(agentDir, 'Dockerfile');
+
+    if (!fs.existsSync(dockerfilePath)) {
+      throw new Error(`Dockerfile not found at ${dockerfilePath}`);
+    }
+
+    const tag = `nano-agent-${agentId}:latest`;
+    logger.info({ agentId, tag, agentDir }, 'Building agent Docker image');
+
+    const buildStream = await this.docker.buildImage(
+      { context: agentDir, src: ['Dockerfile'] },
+      { t: tag },
+    ) as NodeJS.ReadableStream;
+
+    return new Promise<string>((resolve, reject) => {
+      const logs: string[] = [];
+      this.docker.modem.followProgress(
+        buildStream,
+        (err: Error | null, output: Array<{ stream?: string; error?: string }>) => {
+          if (err) return reject(err);
+          const errorLine = output.find((o) => o.error);
+          if (errorLine?.error) return reject(new Error(errorLine.error));
+          resolve(logs.join(''));
+        },
+        (event: { stream?: string; error?: string }) => {
+          if (event.stream) logs.push(event.stream);
+        },
+      );
+    });
+  }
 }
