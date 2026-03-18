@@ -26,7 +26,10 @@ import { isTracingEnabled } from './tracing/init.js';
 import type { AgentManager } from './agent-manager.js';
 import type { ConfigService } from './config-service.js';
 import type { SetupMode } from './setup-detector.js';
-import { listTickets, getTicket, createTicket, updateTicket, addComment, listComments, type TicketStatus, type TicketPriority, type TicketType } from './db.js';
+import { listTickets, getTicket, createTicket, addComment, listComments, type TicketStatus, type TicketPriority, type TicketType } from './db.js';
+import { TicketRegistry } from './tickets/registry.js';
+import { LocalTicketProvider } from './tickets/local-provider.js';
+import type { AbstractStatus, TicketPriority as TP } from './tickets/types.js';
 import { resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
 import { loadWorkflow, expandInstances } from './workflow-registry.js';
 
@@ -288,6 +291,10 @@ export async function createApiApp(
   const app = express();
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
+
+  // ── Ticket registry (global provider: Local/SQLite) ───────────────────────
+  const ticketRegistry = new TicketRegistry(nc);
+  ticketRegistry.registerGlobal(new LocalTicketProvider());
 
   // OTel span enrichment — give spans meaningful names after Express routing
   if (isTracingEnabled()) {
@@ -692,11 +699,30 @@ export async function createApiApp(
     }
   });
 
-  app.patch('/api/tickets/:id', (req: Request, res: Response) => {
+  app.patch('/api/tickets/:id', async (req: Request, res: Response) => {
     try {
-      const ticket = getTicket(req.params.id);
-      if (!ticket) return res.status(404).json({ error: 'Ticket not found' });
-      const updated = updateTicket(req.params.id, req.body as Parameters<typeof updateTicket>[1], req.body.changed_by);
+      const existing = getTicket(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Ticket not found' });
+
+      const body = req.body as {
+        title?: string; body?: string; status?: string; priority?: string;
+        assigned_to?: string; labels?: string; changed_by?: string;
+      };
+
+      // Map snake_case API body → UpdateTicketData (abstract model)
+      const updateData = {
+        ...(body.title !== undefined && { title: body.title }),
+        ...(body.body !== undefined && { body: body.body }),
+        ...(body.status !== undefined && { status: body.status as AbstractStatus }),
+        ...(body.priority !== undefined && { priority: body.priority as TP }),
+        ...(body.assigned_to !== undefined && { assignee: body.assigned_to }),
+        ...(body.labels !== undefined && { labels: body.labels ? body.labels.split(',').map(l => l.trim()) : [] }),
+      };
+
+      // registry.updateTicket fires NATS pipeline events on status transitions
+      await ticketRegistry.updateTicket(req.params.id, updateData, body.changed_by);
+
+      const updated = getTicket(req.params.id);
       if (!updated) return res.status(404).json({ error: 'Ticket not found' });
       emitSseEvent('ticket_updated', { ticket: updated });
       res.json(updated);
