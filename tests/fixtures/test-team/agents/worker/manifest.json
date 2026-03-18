@@ -1,0 +1,7 @@
+{
+  "id": "worker",
+  "name": "Test Worker Agent",
+  "version": "0.1.0",
+  "description": "Deterministic test agent — no LLM",
+  "image": "nano-test-agent:latest"
+}

@@ -1,0 +1,30 @@
+{
+  "id": "test-dispatch-team",
+  "name": "Test Dispatch Team",
+  "version": "0.1.0",
+  "agents": ["worker"],
+  "instances": {
+    "worker-a": { "manifest": "worker" },
+    "worker-b": { "manifest": "worker" },
+    "pool-worker": { "manifest": "worker", "count": 2 }
+  },
+  "dispatch": {
+    "topic.test.least-busy": {
+      "strategy": "least-busy",
+      "to": ["worker-a", "worker-b"]
+    },
+    "topic.test.round-robin": {
+      "strategy": "round-robin",
+      "to": ["worker-a", "worker-b"]
+    },
+    "topic.test.broadcast": {
+      "strategy": "broadcast",
+      "to": ["worker-a", "worker-b"]
+    }
+  },
+  "bindings": {
+    "worker-a": { "inputs": { "work": "topic.test.direct-a" } },
+    "worker-b": { "inputs": { "work": "topic.test.direct-b" } },
+    "pool-worker": { "inputs": { "work": "topic.test.pool" } }
+  }
+}

@@ -6,7 +6,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     testTimeout: 70_000,
-    hookTimeout: 15_000,
+    hookTimeout: 200_000,
     env: {
       BASE_URL: process.env.BASE_URL ?? 'http://localhost:3001',
       NATS_URL: process.env.NATS_URL ?? 'nats://localhost:4222',
