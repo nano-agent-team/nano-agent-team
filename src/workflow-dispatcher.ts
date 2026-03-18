@@ -18,6 +18,8 @@ interface InstanceHeartbeat {
 
 export class WorkflowDispatcher {
   private roundRobinCounters = new Map<string, number>();
+  private registeredRoutes = new Set<string>();
+  private registeredDispatches = new Set<string>();
 
   constructor(
     private nc: NatsConnection,
@@ -28,8 +30,12 @@ export class WorkflowDispatcher {
    * Register a 1-to-1 entrypoint route: external subject → agent entrypoint subject.
    * Creates a durable JetStream consumer on `from` and forwards every message to `toSubject`.
    * Used for { from, to } binding inputs — agent subscribes to toSubject, not to `from`.
+   * Idempotent: repeated calls with the same from/toSubject pair are no-ops.
    */
   async registerEntrypointRoute(from: string, toSubject: string): Promise<void> {
+    const key = `${from}=>${toSubject}`;
+    if (this.registeredRoutes.has(key)) return;
+    this.registeredRoutes.add(key);
     const js = this.nc.jetstream();
     const jsm = await this.nc.jetstreamManager();
 
@@ -79,8 +85,11 @@ export class WorkflowDispatcher {
    * Register a dispatch rule for a NATS subject.
    * Creates a durable JetStream consumer and starts an async pull loop.
    * Each message is routed to an instance picked by the configured strategy.
+   * Idempotent: repeated calls for the same subject are no-ops.
    */
   async register(subject: string, config: DispatchConfig): Promise<void> {
+    if (this.registeredDispatches.has(subject)) return;
+    this.registeredDispatches.add(subject);
     const js = this.nc.jetstream();
     const jsm = await this.nc.jetstreamManager();
 

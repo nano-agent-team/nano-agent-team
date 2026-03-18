@@ -56,6 +56,8 @@ interface AgentState {
   /** Container being rolled in (zero-downtime deployment) */
   pendingContainerId?: string;
   rolloverTimeout?: NodeJS.Timeout;
+  /** Marked for removal on next reload; health monitor skips these entries */
+  pendingRemoval?: boolean;
 }
 
 interface HeartbeatPayload {
@@ -485,11 +487,13 @@ export class AgentManager {
   }
 
   /**
-   * Remove an agent from the in-memory state map.
-   * Used by reloadFeatures to allow dead agents to be restarted on next reload.
+   * Mark an agent for removal from the in-memory state map.
+   * Uses a flag instead of immediate delete to avoid races with the health monitor loop.
+   * The state is overwritten by the next startAgent call for the same agentId.
    */
   removeFromStates(agentId: string): void {
-    this.states.delete(agentId);
+    const state = this.states.get(agentId);
+    if (state) state.pendingRemoval = true;
   }
 
   /**
@@ -547,6 +551,7 @@ export class AgentManager {
 
   private async checkHealth(): Promise<void> {
     for (const [agentId, state] of this.states.entries()) {
+      if (state.pendingRemoval) continue;
       if (state.status !== 'running') continue;
       if (!state.containerId) continue;
 
