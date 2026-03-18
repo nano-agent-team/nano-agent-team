@@ -17,6 +17,7 @@ services:
     ports:
       - "${PORT:-3001}:3001"
       - "${NATS_PORT:-4222}:4222"
+      - "${MCP_GATEWAY_PORT:-3003}:3003"
     volumes:
       - ${DATA_DIR:-./data}:/data  # persistentní data (sessions, vault, workspaces, DB)
       - ~/.claude:/root/.claude  # Claude Code credentials (dir auto-created by Docker if missing — run claude auth login to populate)
