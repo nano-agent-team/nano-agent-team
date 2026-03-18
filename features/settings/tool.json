@@ -1,0 +1,24 @@
+{
+  "id": "settings",
+  "name": "Settings & Setup",
+  "version": "1.0.0",
+  "type": "tool",
+  "provides": ["settings"],
+  "requires": [],
+  "plugin": "./plugin.mjs",
+  "frontend": {
+    "remote": "./frontend-dist/assets/remoteEntry.js",
+    "routes": [
+      {
+        "path": "/hub",
+        "component": "SettingsView",
+        "nav": { "label": "Hub", "icon": "🛒" }
+      },
+      {
+        "path": "/settings",
+        "component": "SettingsView",
+        "nav": { "label": "Settings", "icon": "⚙️" }
+      }
+    ]
+  }
+}

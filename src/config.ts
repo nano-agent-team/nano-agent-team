@@ -40,6 +40,7 @@ function resolveAnthropicApiKey(): string {
 
 export const ANTHROPIC_API_KEY = resolveAnthropicApiKey();
 export const API_PORT = parseInt(process.env.API_PORT ?? '3001', 10);
+export const MCP_GATEWAY_PORT = parseInt(process.env.MCP_GATEWAY_PORT ?? '3003', 10);
 export const DB_PATH =
   process.env.DB_PATH ?? path.join(DATA_DIR, 'nano-agent-team.db');
 export const AGENT_RESTART_MAX = parseInt(process.env.AGENT_RESTART_MAX ?? '3', 10);

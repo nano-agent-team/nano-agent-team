@@ -1,0 +1,19 @@
+{
+  "id": "tickets",
+  "name": "Tickets",
+  "version": "1.0.0",
+  "type": "tool",
+  "provides": ["tickets"],
+  "requires": [],
+  "plugin": "./plugin.mjs",
+  "frontend": {
+    "remote": "./frontend-dist/assets/remoteEntry.js",
+    "routes": [
+      {
+        "path": "/tickets",
+        "component": "TicketsView",
+        "nav": { "label": "Tickets", "icon": "🎫" }
+      }
+    ]
+  }
+}

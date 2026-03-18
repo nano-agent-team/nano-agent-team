@@ -6,7 +6,8 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     testTimeout: 70_000,
-    hookTimeout: 15_000,
+    // 60s: beforeAll polls for agent container readiness via docker exec (OrbStack volume sync lag)
+    hookTimeout: 60_000,
     env: {
       BASE_URL: process.env.BASE_URL ?? 'http://localhost:3001',
       NATS_URL: process.env.NATS_URL ?? 'nats://localhost:4222',

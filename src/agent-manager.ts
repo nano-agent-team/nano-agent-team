@@ -25,11 +25,14 @@ import {
   DOCKER_NETWORK,
   HEALTH_CHECK_INTERVAL_MS,
   NATS_URL,
+  MCP_GATEWAY_PORT,
 } from './config.js';
 import { logger } from './logger.js';
-import type { LoadedAgent } from './agent-registry.js';
+import type { LoadedAgent, DispatchConfig } from './agent-registry.js';
+import { resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
 import type { ConfigService, NanoConfig } from './config-service.js';
 import { codec } from './nats-client.js';
+import { WorkflowDispatcher } from './workflow-dispatcher.js';
 
 interface ObservabilityConfig {
   level?: string;
@@ -39,7 +42,7 @@ interface ObservabilityConfig {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
-type AgentStatus = 'starting' | 'running' | 'dead' | 'restarting';
+type AgentStatus = 'starting' | 'running' | 'dead' | 'restarting' | 'rolling-over';
 
 interface AgentState {
   agentId: string;
@@ -51,6 +54,11 @@ interface AgentState {
   lastHeartbeat?: Date;
   busy?: boolean;
   task?: string;
+  /** Container being rolled in (zero-downtime deployment) */
+  pendingContainerId?: string;
+  rolloverTimeout?: NodeJS.Timeout;
+  /** Marked for removal on next reload; health monitor skips these entries */
+  pendingRemoval?: boolean;
 }
 
 interface HeartbeatPayload {
@@ -67,6 +75,7 @@ export class AgentManager {
   private docker: Dockerode;
   private healthTimer?: NodeJS.Timeout;
   private proxyHost: string | null = null;
+  private dispatcher: WorkflowDispatcher;
 
   constructor(
     private readonly nc: NatsConnection,
@@ -74,6 +83,7 @@ export class AgentManager {
   ) {
     // Default: connects via /var/run/docker.sock on Linux
     this.docker = new Dockerode();
+    this.dispatcher = new WorkflowDispatcher(nc, () => this.getInstanceHeartbeats());
   }
 
   /** Returns true when credentials.json exists → use proxy mode */
@@ -214,7 +224,7 @@ export class AgentManager {
   }
 
   async startAgent(agent: LoadedAgent): Promise<void> {
-    const { id } = agent.manifest;
+    const id = getInstanceId(agent);
     // When an agent is loaded in team context (root fallback), use team-scoped name
     // to prevent conflicts if multiple teams share the same root agent definition.
     const containerName = agent.teamId ? `nano-agent-${agent.teamId}-${id}` : `nano-agent-${id}`;
@@ -249,8 +259,9 @@ export class AgentManager {
 
       // Resolve provider and model for this agent
       // Vault config override is loaded below after teamConfigBlock — read it early for model resolution
-      const vaultConfigPathEarly = path.join(DATA_DIR, 'vault', 'agents', `${id}.json`);
-      let vaultConfigEarly: { model?: string } = {};
+      const vaultId = agent.vaultId ?? id;
+      const vaultConfigPathEarly = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.json`);
+      let vaultConfigEarly: { model?: string; subscribe_topics?: string[] } = {};
       if (fs.existsSync(vaultConfigPathEarly)) {
         try { vaultConfigEarly = JSON.parse(fs.readFileSync(vaultConfigPathEarly, 'utf8')); } catch { /* ignore */ }
       }
@@ -304,7 +315,7 @@ export class AgentManager {
       }
 
       // Load vault custom instructions (appended after base CLAUDE.md + team config)
-      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${id}.md`);
+      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.md`);
       if (fs.existsSync(customInstructionsPath)) {
         const customContent = fs.readFileSync(customInstructionsPath, 'utf8').trim();
         if (customContent) {
@@ -315,12 +326,15 @@ export class AgentManager {
       const env = [
         `NATS_URL=${this.resolveNatsUrl()}`,
         `AGENT_ID=${id}`,
-        `SUBSCRIBE_TOPICS=${agent.manifest.subscribe_topics.join(',')}`,
+        `CONSUMER_NAME=${agent.consumerName ?? id}`,
+        `SUBSCRIBE_TOPICS=${(Array.isArray(vaultConfigEarly.subscribe_topics) && vaultConfigEarly.subscribe_topics.length > 0 ? vaultConfigEarly.subscribe_topics : resolveTopicsForAgent(agent.manifest, agent.binding, id)).join(',')}`,
         `PROVIDER=${providerName}`,
         `MODEL=${model}`,
         `MODEL_EXPLICIT=${modelExplicit}`,
         `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
         `LOG_LEVEL=info`,
+        // MCP Gateway — HTTP MCP server in nate, accessible from DinD via host.docker.internal
+        `MCP_GATEWAY_URL=http://${this.resolveMcpGatewayHost()}:${MCP_GATEWAY_PORT}/mcp`,
         // Provider-specific auth tokens
         ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
         ...(providerName === 'codex' && codexToken ? [
@@ -476,6 +490,16 @@ export class AgentManager {
   }
 
   /**
+   * Mark an agent for removal from the in-memory state map.
+   * Uses a flag instead of immediate delete to avoid races with the health monitor loop.
+   * The state is overwritten by the next startAgent call for the same agentId.
+   */
+  removeFromStates(agentId: string): void {
+    const state = this.states.get(agentId);
+    if (state) state.pendingRemoval = true;
+  }
+
+  /**
    * Return current agent states snapshot (for health API).
    */
   getStates(): Array<{
@@ -487,6 +511,7 @@ export class AgentManager {
     containerId?: string;
     busy?: boolean;
     task?: string;
+    rollingOver?: boolean;
   }> {
     return [...this.states.values()].map((s) => ({
       agentId: s.agentId,
@@ -497,6 +522,7 @@ export class AgentManager {
       containerId: s.containerId?.slice(0, 12),
       busy: s.busy,
       task: s.task,
+      rollingOver: s.status === 'rolling-over' || !!s.pendingContainerId,
     }));
   }
 
@@ -528,6 +554,7 @@ export class AgentManager {
 
   private async checkHealth(): Promise<void> {
     for (const [agentId, state] of this.states.entries()) {
+      if (state.pendingRemoval) continue;
       if (state.status !== 'running') continue;
       if (!state.containerId) continue;
 
@@ -606,6 +633,213 @@ export class AgentManager {
     });
 
     await this.startAgent(agent);
+  }
+
+  /**
+   * Zero-downtime agent rollover (Phase 5).
+   *
+   * Sequence:
+   * 1. Start new container with WAIT_FOR_START_SIGNAL=true, name nano-agent-{id}-next
+   * 2. Wait for agent.{id}.ready signal (max 30s)
+   * 3. Send drain signal to old container: agent.{id}.drain
+   * 4. Wait for old container to exit (max 60s drain timeout)
+   * 5. Signal new container to start consuming: agent.{id}.start-consuming
+   * 6. Rename new container → nano-agent-{id} and update internal state
+   */
+  async rolloverAgent(agentId: string, newAgent?: LoadedAgent): Promise<void> {
+    const state = this.states.get(agentId);
+    if (!state) {
+      logger.warn({ agentId }, 'rolloverAgent: agent not found');
+      return;
+    }
+    if (state.pendingContainerId) {
+      logger.warn({ agentId }, 'rolloverAgent: rollover already in progress');
+      return;
+    }
+
+    const agent = newAgent ?? state.agent;
+    const nextContainerName = `nano-agent-${agentId}-next`;
+    const READY_TIMEOUT_MS = 30_000;
+    const DRAIN_TIMEOUT_MS = 60_000;
+
+    logger.info({ agentId }, 'Starting zero-downtime rollover');
+    state.status = 'rolling-over';
+
+    try {
+      // 1. Start new container in wait-for-signal mode
+      await this.removeContainerIfExists(nextContainerName);
+
+      // Build env — SYNC with startAgent() env block
+      const hostDataDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
+      const vaultId = agent.vaultId ?? agentId;
+      const vaultConfigPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.json`);
+      let vaultConfig: { model?: string; subscribe_topics?: string[] } = {};
+      if (fs.existsSync(vaultConfigPath)) {
+        try { vaultConfig = JSON.parse(fs.readFileSync(vaultConfigPath, 'utf8')); } catch { /* ignore */ }
+      }
+
+      let config = null;
+      if (this.configService) config = await this.configService.load();
+      const { provider: providerName, model: baseModel, modelExplicit } = this.resolveAgentProvider(agent, config ?? {});
+      const model = vaultConfig.model ?? baseModel;
+      const codexToken = config ? await this.resolveCodexToken(config) : undefined;
+
+      const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
+      let claudeMdContent = fs.existsSync(claudeMdPath) ? fs.readFileSync(claudeMdPath, 'utf8') : '';
+
+      // Resolve team config from config.json (set during team install)
+      let teamConfigBlock = '';
+      if (config) {
+        try {
+          const raw = config as unknown as Record<string, unknown>;
+          const teams = raw?.teams as Record<string, { config?: Record<string, unknown> }> | undefined;
+          if (teams) {
+            for (const [teamId, team] of Object.entries(teams)) {
+              const tc = team.config;
+              if (tc) {
+                const lines = Object.entries(tc)
+                  .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+                  .filter(([k]) => k !== 'github_token')
+                  .map(([k, v]) => `- ${k}: ${v}`);
+                if (lines.length > 0) {
+                  teamConfigBlock = `\n\n## Konfigurace týmu (${teamId})\n\n${lines.join('\n')}\n`;
+                }
+              }
+            }
+          }
+        } catch { /* ignore */ }
+      }
+      if (teamConfigBlock && claudeMdContent) claudeMdContent += teamConfigBlock;
+
+      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.md`);
+      if (fs.existsSync(customInstructionsPath)) {
+        const custom = fs.readFileSync(customInstructionsPath, 'utf8').trim();
+        if (custom) claudeMdContent += `\n\n## Custom instructions\n\n${custom}`;
+      }
+
+      const env = [
+        `NATS_URL=${this.resolveNatsUrl()}`,
+        `AGENT_ID=${agentId}`,
+        `CONSUMER_NAME=${agent.consumerName ?? agentId}`,
+        `SUBSCRIBE_TOPICS=${resolveTopicsForAgent(agent.manifest, agent.binding, agentId).join(',')}`,
+        `PROVIDER=${providerName}`,
+        `MODEL=${model}`,
+        `MODEL_EXPLICIT=${modelExplicit}`,
+        `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
+        `LOG_LEVEL=info`,
+        `WAIT_FOR_START_SIGNAL=true`,
+        ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
+        ...(providerName === 'codex' && codexToken ? [
+          ...(codexToken.startsWith('sk-proj-') || codexToken.startsWith('sk-')
+            ? [`OPENAI_API_KEY=${codexToken}`]
+            : [`CODEX_OAUTH_TOKEN=${codexToken}`]
+          ),
+        ] : []),
+        ...(providerName === 'gemini' ? [
+          ...(config?.providers?.gemini?.apiKey ? [`GEMINI_API_KEY=${config.providers.gemini.apiKey}`] : []),
+          ...(process.env.GEMINI_API_KEY ? [`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`] : []),
+        ] : []),
+        `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
+        ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
+        ...await this.getObservabilityEnvVars(),
+      ];
+
+      const binds = [`${agent.dir}:/workspace/agent:ro`];
+      binds.push(`${hostDataDir}:/workspace/db:rw`);
+      const vaultDir = path.join(hostDataDir, 'vault');
+      fs.mkdirSync(vaultDir, { recursive: true });
+      binds.push(`${vaultDir}:/workspace/vault:rw`);
+      const sessionDir = path.join(hostDataDir, 'sessions', agentId);
+      fs.mkdirSync(sessionDir, { recursive: true });
+      binds.push(`${sessionDir}:/workspace/sessions:rw`);
+
+      const perAgentImage = `nano-agent-${agentId}:latest`;
+      const hasPerAgentImage = await this.imageExists(perAgentImage);
+      const image = agent.manifest.image ?? (hasPerAgentImage ? perAgentImage : AGENT_IMAGE);
+
+      const nextContainer = await this.docker.createContainer({
+        Image: image,
+        name: nextContainerName,
+        Env: env,
+        HostConfig: {
+          Binds: binds,
+          NetworkMode: DOCKER_NETWORK,
+          RestartPolicy: { Name: 'no' },
+        },
+      });
+
+      await nextContainer.start();
+      state.pendingContainerId = nextContainer.id;
+      logger.info({ agentId, containerId: nextContainer.id.slice(0, 12) }, 'Next container started (waiting for ready)');
+
+      // 2. Wait for agent.{id}.ready signal
+      const readyReceived = await Promise.race([
+        new Promise<boolean>((resolve) => {
+          const sub = this.nc.subscribe(`agent.${agentId}.ready`, { max: 1 });
+          void (async () => {
+            for await (const _msg of sub) { resolve(true); return; }
+          })();
+        }),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), READY_TIMEOUT_MS)),
+      ]);
+
+      if (!readyReceived) {
+        logger.warn({ agentId }, 'Next container did not signal ready in time — aborting rollover');
+        await this.docker.getContainer(nextContainer.id).remove({ force: true }).catch(() => {});
+        state.pendingContainerId = undefined;
+        state.status = 'running';
+        return;
+      }
+
+      logger.info({ agentId }, 'Next container ready — draining old container');
+
+      // 3. Send drain signal to old container
+      this.nc.publish(`agent.${agentId}.drain`, codec.encode(JSON.stringify({ agentId, ts: Date.now() })));
+
+      // 4. Wait for old container to exit (or timeout)
+      const oldExited = state.containerId
+        ? await Promise.race([
+          new Promise<boolean>((resolve) => {
+            const poll = setInterval(async () => {
+              try {
+                const info = await this.docker.getContainer(state.containerId!).inspect() as { State: { Running: boolean } };
+                if (!info.State.Running) { clearInterval(poll); resolve(true); }
+              } catch { clearInterval(poll); resolve(true); }
+            }, 2_000);
+          }),
+          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), DRAIN_TIMEOUT_MS)),
+        ])
+        : true;
+
+      if (!oldExited) {
+        logger.warn({ agentId }, 'Old container drain timeout — force removing');
+        if (state.containerId) {
+          await this.docker.getContainer(state.containerId).remove({ force: true }).catch(() => {});
+        }
+      } else {
+        logger.info({ agentId }, 'Old container drained and exited');
+        if (state.containerId) {
+          await this.docker.getContainer(state.containerId).remove({ force: true }).catch(() => {});
+        }
+      }
+
+      // 5. Signal new container to start consuming
+      this.nc.publish(`agent.${agentId}.start-consuming`, codec.encode(JSON.stringify({ agentId, ts: Date.now() })));
+
+      // 6. Update internal state
+      state.containerId = nextContainer.id;
+      state.pendingContainerId = undefined;
+      state.agent = agent;
+      state.status = 'running';
+      state.startedAt = new Date();
+
+      logger.info({ agentId, containerId: nextContainer.id.slice(0, 12) }, 'Rollover complete — new container is active');
+
+    } catch (err) {
+      logger.error({ err, agentId }, 'Rollover failed');
+      state.pendingContainerId = undefined;
+      state.status = 'running'; // revert to running so health monitoring continues
+    }
   }
 
   private subscribeHeartbeats(): void {
@@ -708,5 +942,42 @@ export class AgentManager {
       '127.0.0.1',
       'host.docker.internal',
     );
+  }
+
+  /** Returns the hostname agent containers should use to reach nate services (MCP Gateway etc.) */
+  private resolveMcpGatewayHost(): string {
+    return DOCKER_NETWORK === 'host' ? 'localhost' : 'host.docker.internal';
+  }
+
+  /**
+   * Returns a map of instanceId → heartbeat data for use by WorkflowDispatcher.
+   */
+  getInstanceHeartbeats(): Map<string, { busy: boolean; lastSeen: Date }> {
+    const result = new Map<string, { busy: boolean; lastSeen: Date }>();
+    for (const [instanceId, state] of this.states.entries()) {
+      if (state.lastHeartbeat) {
+        result.set(instanceId, {
+          busy: state.busy ?? false,
+          lastSeen: state.lastHeartbeat,
+        });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Register a dispatch rule for a NATS subject.
+   * Delegates to WorkflowDispatcher which manages the pull loop.
+   */
+  async registerDispatch(subject: string, config: DispatchConfig): Promise<void> {
+    await this.dispatcher.register(subject, config);
+  }
+
+  /**
+   * Register a 1-to-1 entrypoint route: external subject → agent entrypoint subject.
+   * Delegates to WorkflowDispatcher.
+   */
+  async registerEntrypointRoute(from: string, toSubject: string): Promise<void> {
+    await this.dispatcher.registerEntrypointRoute(from, toSubject);
   }
 }

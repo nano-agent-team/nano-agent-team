@@ -41,11 +41,20 @@ export class CodexProvider implements Provider {
       const lines: string[] = [];
       for (const [name, srv] of Object.entries(options.mcpServers)) {
         lines.push(`[mcp_servers.${name}]`);
-        lines.push(`command = "${tomlStr(srv.command)}"`);
-        if (srv.args?.length) lines.push(`args = [${srv.args.map(a => `"${tomlStr(a)}"`).join(', ')}]`);
-        if (srv.env) {
-          lines.push(`[mcp_servers.${name}.env]`);
-          for (const [k, v] of Object.entries(srv.env)) lines.push(`${k} = "${tomlStr(v)}"`);
+        if ('url' in srv) {
+          // HTTP MCP server — codex TOML format uses url key
+          lines.push(`url = "${tomlStr(srv.url)}"`);
+          if (srv.headers) {
+            lines.push(`[mcp_servers.${name}.headers]`);
+            for (const [k, v] of Object.entries(srv.headers)) lines.push(`${k} = "${tomlStr(v)}"`);
+          }
+        } else {
+          lines.push(`command = "${tomlStr(srv.command)}"`);
+          if (srv.args?.length) lines.push(`args = [${srv.args.map((a: string) => `"${tomlStr(a)}"`).join(', ')}]`);
+          if (srv.env) {
+            lines.push(`[mcp_servers.${name}.env]`);
+            for (const [k, v] of Object.entries(srv.env)) lines.push(`${k} = "${tomlStr(v)}"`);
+          }
         }
         lines.push('');
       }

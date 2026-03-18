@@ -15,13 +15,16 @@ import fs from 'fs';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { DATA_DIR, NATS_URL, AGENTS_DIR } from './config.js';
+import { DATA_DIR, NATS_URL, AGENTS_DIR, MCP_GATEWAY_PORT } from './config.js';
 import { logger } from './logger.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { connectNats, ensureStream, ensureConsumer, closeNats, publish } from './nats-client.js';
-import { loadAgents, loadManifest } from './agent-registry.js';
+import { loadAgents, loadManifest, resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
 import { AgentManager } from './agent-manager.js';
 import { startApiServer } from './api-server.js';
+import { McpGateway } from './mcp-gateway.js';
+import { TicketRegistry } from './tickets/registry.js';
+import { LocalTicketProvider } from './tickets/local-provider.js';
 import { detectSetupMode, isSetupRequired } from './setup-detector.js';
 import { ConfigService } from './config-service.js';
 import { startEmbeddedNats, stopEmbeddedNats } from './nats-embedded.js';
@@ -59,14 +62,25 @@ async function main(): Promise<void> {
   try {
     const manifest = loadManifest(settingsAgentDir);
     settingsAgent = { manifest, dir: settingsAgentDir };
-    await ensureConsumer(nc, 'AGENTS', manifest.id, manifest.subscribe_topics);
-    logger.info({ id: manifest.id, topics: manifest.subscribe_topics }, 'Settings agent consumer ready');
+    const settingsTopics = resolveTopicsForAgent(manifest);
+    await ensureConsumer(nc, 'AGENTS', manifest.id, settingsTopics);
+    logger.info({ id: manifest.id, topics: settingsTopics }, 'Settings agent consumer ready');
   } catch (err) {
     logger.warn({ err }, 'Settings agent manifest not found — setup UI will use form-only mode');
   }
 
   const configService = new ConfigService(DATA_DIR);
   const manager = new AgentManager(nc, configService);
+
+  // ── MCP Gateway ─────────────────────────────────────────────────────────────
+  const ticketRegistry = new TicketRegistry(nc);
+  ticketRegistry.registerGlobal(new LocalTicketProvider());
+
+  const mcpGateway = new McpGateway(ticketRegistry, (agentId) => {
+    const agent = manager.getAgent(agentId);
+    return agent?.manifest.mcp_permissions ?? {};
+  });
+  mcpGateway.start(MCP_GATEWAY_PORT);
 
   if (isSetupRequired(setupMode)) {
     // ── 5a. Setup mode ─────────────────────────────────────────────────────────
@@ -96,8 +110,9 @@ async function main(): Promise<void> {
     }
 
     for (const agent of agents) {
-      await ensureConsumer(nc, 'AGENTS', agent.manifest.id, agent.manifest.subscribe_topics);
-      logger.info({ id: agent.manifest.id, topics: agent.manifest.subscribe_topics }, 'Agent consumer ready');
+      const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
+      await ensureConsumer(nc, 'AGENTS', getInstanceId(agent), topics);
+      logger.info({ id: getInstanceId(agent), topics }, 'Agent consumer ready');
     }
 
     await manager.startAll(agents);
@@ -131,6 +146,7 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutting down...');
     proxyServer?.close();
+    mcpGateway.stop();
     await manager.stopAll();
     await closeNats(nc);
     stopEmbeddedNats();
