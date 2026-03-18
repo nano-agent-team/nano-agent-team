@@ -1,0 +1,17 @@
+{
+  "id": "product-owner",
+  "name": "Product Owner",
+  "version": "0.1.0",
+  "description": "Validates agent improvement proposals and triages new GitHub issues",
+  "model": "claude-sonnet-4-6",
+  "session_type": "stateless",
+  "workspace": false,
+  "ssh_mount": false,
+  "subscribe_topics": [
+    "topic.issue.report",
+    "topic.github.issue.opened"
+  ],
+  "publish_topics": [
+    "topic.issue.triaged"
+  ]
+}
