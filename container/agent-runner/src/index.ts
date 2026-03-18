@@ -352,16 +352,24 @@ async function main(): Promise<void> {
   // ── Phase 5: Wait for start-consuming signal in rollover mode ─────────────
   if (WAIT_FOR_START_SIGNAL) {
     log.info({ agentId: AGENT_ID }, 'Rollover mode: waiting for start-consuming signal');
-    await new Promise<void>((resolve) => {
-      const startSub = nc.subscribe(`agent.${AGENT_ID}.start-consuming`, { max: 1 });
-      void (async () => {
-        for await (const _msg of startSub) {
-          log.info({ agentId: AGENT_ID }, 'Start-consuming signal received — beginning consume loop');
-          resolve();
-          return;
-        }
-      })();
-    });
+    const signalReceived = await Promise.race([
+      new Promise<boolean>((resolve) => {
+        const startSub = nc.subscribe(`agent.${AGENT_ID}.start-consuming`, { max: 1 });
+        void (async () => {
+          for await (const _msg of startSub) {
+            log.info({ agentId: AGENT_ID }, 'Start-consuming signal received — beginning consume loop');
+            resolve(true);
+            return;
+          }
+        })();
+      }),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 60_000)),
+    ]);
+
+    if (!signalReceived) {
+      // AgentManager may have crashed between steps 1 and 5 — start consuming anyway to avoid permanent hang.
+      log.warn({ agentId: AGENT_ID }, 'start-consuming timeout (60s) — starting consume loop without signal');
+    }
   }
 
   // ── Message processing loop ───────────────────────────────────────────────

@@ -669,9 +669,10 @@ export class AgentManager {
       // 1. Start new container in wait-for-signal mode
       await this.removeContainerIfExists(nextContainerName);
 
-      // Build env same as startAgent but with WAIT_FOR_START_SIGNAL=true
+      // Build env — SYNC with startAgent() env block
       const hostDataDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
-      const vaultConfigPath = path.join(DATA_DIR, 'vault', 'agents', `${agentId}.json`);
+      const vaultId = agent.vaultId ?? agentId;
+      const vaultConfigPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.json`);
       let vaultConfig: { model?: string; subscribe_topics?: string[] } = {};
       if (fs.existsSync(vaultConfigPath)) {
         try { vaultConfig = JSON.parse(fs.readFileSync(vaultConfigPath, 'utf8')); } catch { /* ignore */ }
@@ -686,7 +687,31 @@ export class AgentManager {
       const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
       let claudeMdContent = fs.existsSync(claudeMdPath) ? fs.readFileSync(claudeMdPath, 'utf8') : '';
 
-      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${agentId}.md`);
+      // Resolve team config from config.json (set during team install)
+      let teamConfigBlock = '';
+      if (config) {
+        try {
+          const raw = config as unknown as Record<string, unknown>;
+          const teams = raw?.teams as Record<string, { config?: Record<string, unknown> }> | undefined;
+          if (teams) {
+            for (const [teamId, team] of Object.entries(teams)) {
+              const tc = team.config;
+              if (tc) {
+                const lines = Object.entries(tc)
+                  .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+                  .filter(([k]) => k !== 'github_token')
+                  .map(([k, v]) => `- ${k}: ${v}`);
+                if (lines.length > 0) {
+                  teamConfigBlock = `\n\n## Konfigurace týmu (${teamId})\n\n${lines.join('\n')}\n`;
+                }
+              }
+            }
+          }
+        } catch { /* ignore */ }
+      }
+      if (teamConfigBlock && claudeMdContent) claudeMdContent += teamConfigBlock;
+
+      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.md`);
       if (fs.existsSync(customInstructionsPath)) {
         const custom = fs.readFileSync(customInstructionsPath, 'utf8').trim();
         if (custom) claudeMdContent += `\n\n## Custom instructions\n\n${custom}`;
