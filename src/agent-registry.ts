@@ -146,15 +146,20 @@ export function loadTeamAgentsWithFallback(
     const rootAgentDir = path.join(rootAgentsDir, agentId);
 
     const hasTeamManifest = fs.existsSync(path.join(teamAgentDir, 'manifest.json'));
+    const hasRootManifest = fs.existsSync(path.join(rootAgentDir, 'manifest.json'));
+
+    if (!hasTeamManifest && !hasRootManifest) {
+      logger.warn({ agentId, teamId }, 'Skipping team agent — manifest not found in team dir or root agents dir');
+      continue;
+    }
+
     const agentDir = hasTeamManifest ? teamAgentDir : rootAgentDir;
+    const source = hasTeamManifest ? 'team' : 'root';
 
     try {
       const manifest = loadManifest(agentDir);
       agents.push({ manifest, dir: agentDir, teamId });
-      logger.debug(
-        { id: manifest.id, dir: agentDir, teamId, source: hasTeamManifest ? 'team' : 'root' },
-        'Team agent resolved',
-      );
+      logger.debug({ id: manifest.id, dir: agentDir, teamId, source }, 'Team agent resolved');
     } catch (err) {
       logger.warn({ err, agentId, teamId }, 'Skipping team agent — cannot load manifest');
     }
