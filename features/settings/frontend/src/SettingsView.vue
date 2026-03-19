@@ -931,6 +931,7 @@ async function sendMessage() {
           const event = JSON.parse(line.slice(6)) as { type: string; text?: string; result?: string; error?: string }
           if (event.type === 'chunk' && event.text) {
             messages.value[msgIndex].text += event.text
+            await nextTick()
             await scrollToBottom()
           } else if (event.type === 'done') {
             break

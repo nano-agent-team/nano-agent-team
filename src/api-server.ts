@@ -797,12 +797,13 @@ export async function createApiApp(
       const sub = nc.subscribe(streamSubject);
       // Clean up subscription if client disconnects before done
       res.on('close', () => sub.unsubscribe());
+      // Safety net: unsubscribe after 90s even if agent never sends 'done'
+      const timeoutHandle = setTimeout(() => sub.unsubscribe(), 90_000);
 
       logger.debug({ streamSubject }, 'Chat/settings: subscribed, publishing to agent');
 
-      nc.publish('agent.settings.inbox', codec.encode(
-        JSON.stringify({ content: message, sessionId: sid, replySubject, streamSubject }),
-      ));
+      // Use JetStream publish for at-least-once delivery guarantee + OTel tracing
+      await publish(nc, 'agent.settings.inbox', JSON.stringify({ content: message, sessionId: sid, replySubject, streamSubject }));
 
       logger.debug({ streamSubject }, 'Chat/settings: published, entering for-await');
 
@@ -813,6 +814,7 @@ export async function createApiApp(
         if (event.type === 'done' || event.type === 'error') break;
       }
 
+      clearTimeout(timeoutHandle);
       logger.debug({ streamSubject }, 'Chat/settings: for-await exited');
     } catch (err) {
       logger.error({ err }, 'Chat settings error');
