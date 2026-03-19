@@ -1,7 +1,7 @@
 /**
  * Management MCP Server — system control + hub catalog browsing
  *
- * Runs as a child process inside the settings agent container (stdio transport).
+ * Runs as a child process inside an agent container (stdio transport).
  * Communicates with the control plane via internal HTTP API.
  *
  * Tools:
@@ -10,8 +10,10 @@
  *   stop_agent            — stop a running agent
  *   restart_mcp_server    — restart an MCP server (picks up updated secrets)
  *   fetch_hub             — git clone/pull hub catalog to /tmp/hub
+ *   list_hub_agents       — list standalone agents available in hub
  *   list_hub_teams        — list teams available in hub
  *   get_hub_team          — team details: agents, required secrets, description
+ *   install_agent         — install standalone agent from hub + trigger reload
  *   install_team          — install team from hub + trigger reload
  */
 
@@ -80,6 +82,10 @@ async function callInternal(
 
 function hubTeamPath(teamId: string): string {
   return path.join(HUB_DIR, 'teams', teamId);
+}
+
+function hubAgentPath(agentId: string): string {
+  return path.join(HUB_DIR, 'agents', agentId);
 }
 
 function readJson<T>(filePath: string): T | null {
@@ -203,6 +209,11 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
       },
     },
     {
+      name: 'list_hub_agents',
+      description: 'List standalone agents available in the hub catalog. Call fetch_hub first.',
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
       name: 'list_hub_teams',
       description: 'List all teams available in the hub catalog. Call fetch_hub first.',
       inputSchema: { type: 'object', properties: {} },
@@ -215,6 +226,17 @@ server.setRequestHandler(ListToolsRequestSchema, () => ({
         required: ['team_id'],
         properties: {
           team_id: { type: 'string', description: 'Team ID, e.g. "github-team"' },
+        },
+      },
+    },
+    {
+      name: 'install_agent',
+      description: 'Install a standalone agent from hub: copies files to /data/agents, triggers reload.',
+      inputSchema: {
+        type: 'object',
+        required: ['agent_id'],
+        properties: {
+          agent_id: { type: 'string', description: 'Agent ID to install, e.g. "foreman"' },
         },
       },
     },
@@ -293,6 +315,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
     }
 
+    case 'list_hub_agents': {
+      const agentsDir = path.join(HUB_DIR, 'agents');
+      if (!fs.existsSync(agentsDir)) {
+        return { content: [{ type: 'text', text: 'Hub not fetched. Call fetch_hub first.' }], isError: true };
+      }
+      const agents: Array<{ id: string; name: string; description?: string }> = [];
+      for (const entry of fs.readdirSync(agentsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const manifest = readJson<AgentManifest>(
+          path.join(agentsDir, entry.name, 'manifest.json'),
+        );
+        if (!manifest) continue;
+        agents.push({ id: manifest.id, name: manifest.name, description: manifest.description });
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(agents, null, 2) }] };
+    }
+
     case 'list_hub_teams': {
       const teamsDir = path.join(HUB_DIR, 'teams');
       if (!fs.existsSync(teamsDir)) {
@@ -360,6 +399,32 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           type: 'text',
           text: JSON.stringify({ ...manifest, agents, required_secrets: secretStatus }, null, 2),
         }],
+      };
+    }
+
+    case 'install_agent': {
+      const agentId = a.agent_id as string;
+      if (!/^[a-z0-9_-]+$/.test(agentId)) {
+        return { content: [{ type: 'text', text: 'Invalid agent_id format.' }], isError: true };
+      }
+      const agentHubDir = hubAgentPath(agentId);
+      if (!fs.existsSync(agentHubDir)) {
+        return {
+          content: [{ type: 'text', text: `Agent "${agentId}" not found in hub. Call fetch_hub first.` }],
+          isError: true,
+        };
+      }
+
+      // Copy agent files to /data/agents/{agentId}
+      const destDir = path.join(DATA_DIR, 'agents', agentId);
+      fs.mkdirSync(destDir, { recursive: true });
+      execFileSync('cp', ['-r', `${agentHubDir}/.`, destDir], { timeout: 10_000 });
+
+      // Trigger live reload
+      await callInternal('POST', '/internal/reload');
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ ok: true, agent_id: agentId, installed_to: destDir }) }],
       };
     }
 
