@@ -909,15 +909,40 @@ async function sendMessage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message: text, sessionId }),
     })
-    if (res.ok) {
-      const data = await res.json() as { reply: unknown }
-      const replyText = typeof data.reply === 'string' ? data.reply : JSON.stringify(data.reply)
-      messages.value.push({ role: 'assistant', text: replyText })
-      await loadConfig()
-      await loadStatus()
-    } else {
+    if (!res.ok || !res.body) {
       messages.value.push({ role: 'assistant', text: '(Asistent není dostupný)' })
+      return
     }
+    // SSE streaming
+    const msgIndex = messages.value.length
+    messages.value.push({ role: 'assistant', text: '' })
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const event = JSON.parse(line.slice(6)) as { type: string; text?: string; result?: string; error?: string }
+          if (event.type === 'chunk' && event.text) {
+            messages.value[msgIndex].text += event.text
+            await nextTick()
+            await scrollToBottom()
+          } else if (event.type === 'done') {
+            break
+          } else if (event.type === 'error') {
+            messages.value[msgIndex].text = event.error ?? '(Chyba)'
+          }
+        } catch { /* ignore malformed events */ }
+      }
+    }
+    await loadConfig()
+    await loadStatus()
   } catch {
     messages.value.push({ role: 'assistant', text: '(Chyba připojení)' })
   } finally {
