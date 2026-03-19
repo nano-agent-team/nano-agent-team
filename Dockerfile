@@ -102,9 +102,6 @@ COPY --from=ts-builder /app/dist/ ./dist/
 # OTel register hook (plain .mjs, not compiled by tsc)
 COPY src/tracing/register.mjs ./dist/tracing/register.mjs
 
-# Static agents (settings agent + blank-agent)
-COPY agents/ ./agents/
-
 # Features backend
 COPY features/ ./features/
 

@@ -803,7 +803,7 @@ export async function createApiApp(
       logger.debug({ streamSubject }, 'Chat/settings: subscribed, publishing to agent');
 
       // Use JetStream publish for at-least-once delivery guarantee + OTel tracing
-      await publish(nc, 'agent.settings.inbox', JSON.stringify({ content: message, sessionId: sid, replySubject, streamSubject }));
+      await publish(nc, 'agent.foreman.inbox', JSON.stringify({ content: message, sessionId: sid, replySubject, streamSubject }));
 
       logger.debug({ streamSubject }, 'Chat/settings: published, entering for-await');
 

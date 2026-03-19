@@ -21,9 +21,18 @@ export default {
     const { publishNats } = opts;
 
     // ── POST /api/chat/simple-chat ────────────────────────────────────────────
+    // agentId in body overrides default; fallback: first running stateful agent or 'foreman'
     app.post('/api/chat/simple-chat', async (req, res) => {
-      const { message, sessionId } = req.body ?? {};
+      const { message, sessionId, agentId: bodyAgentId } = req.body ?? {};
       if (!message) return res.status(400).json({ error: '"message" required' });
+
+      // Resolve target agent: explicit > first running inbox agent > foreman
+      let targetAgent = bodyAgentId;
+      if (!targetAgent) {
+        const states = _manager.getStates?.() ?? [];
+        const running = states.find(s => s.status === 'running');
+        targetAgent = running?.agentId ?? 'foreman';
+      }
 
       const sid = sessionId ?? 'default';
       const replySubject = `chat.reply.${sid}.${Date.now()}`;
@@ -31,20 +40,18 @@ export default {
       try {
         const sub = nc.subscribe(replySubject, { max: 1, timeout: 30_000 });
 
-        // Use publishNats (JetStream + traced) so chat appears in observability
-        await publishNats('agent.simple-chat.inbox',
+        await publishNats(`agent.${targetAgent}.inbox`,
           JSON.stringify({ text: message, sessionId: sid, replySubject }),
         );
 
         for await (const msg of sub) {
           const data = JSON.parse(codec.decode(msg.data));
-          // data is a ReplyPayload: { agentId, result, error?, ts }
           const reply = typeof data?.result === 'string' ? data.result : JSON.stringify(data);
-          res.json({ reply });
+          res.json({ reply, agentId: targetAgent });
           break;
         }
       } catch (err) {
-        res.status(503).json({ error: 'Simple chat agent not responding', detail: String(err) });
+        res.status(503).json({ error: `Agent ${targetAgent} not responding`, detail: String(err) });
       }
     });
 

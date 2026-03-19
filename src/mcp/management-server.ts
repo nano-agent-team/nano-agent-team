@@ -447,6 +447,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       fs.mkdirSync(destDir, { recursive: true });
       execFileSync('cp', ['-r', `${teamDir}/.`, destDir], { timeout: 10_000 });
 
+      // Auto-install agents referenced in team.json from hub/agents/
+      const teamJson = readJson<TeamManifest>(path.join(teamDir, 'team.json'));
+      const installedAgents: string[] = [];
+      const skippedAgents: string[] = [];
+      if (teamJson?.agents && Array.isArray(teamJson.agents)) {
+        for (const agentId of teamJson.agents) {
+          const agentHubDir = hubAgentPath(agentId);
+          if (!fs.existsSync(path.join(agentHubDir, 'manifest.json'))) {
+            skippedAgents.push(agentId);
+            continue;
+          }
+          const agentDestDir = path.join(DATA_DIR, 'agents', agentId);
+          fs.mkdirSync(agentDestDir, { recursive: true });
+          execFileSync('cp', ['-r', `${agentHubDir}/.`, agentDestDir], { timeout: 10_000 });
+          installedAgents.push(agentId);
+        }
+      }
+
       // Update config.json
       const config = loadConfig();
       const installed = (config.installed as { features: string[]; teams: string[] } | undefined)
@@ -465,7 +483,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       await callInternal('POST', '/internal/reload');
 
       return {
-        content: [{ type: 'text', text: JSON.stringify({ ok: true, team_id: teamId, installed_to: destDir }) }],
+        content: [{ type: 'text', text: JSON.stringify({ ok: true, team_id: teamId, installed_to: destDir, agents_installed: installedAgents, agents_skipped: skippedAgents }) }],
       };
     }
 
