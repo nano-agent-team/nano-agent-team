@@ -794,19 +794,26 @@ export async function createApiApp(
     const streamSubject = `chat.stream.${sid}.${Date.now()}`;
 
     try {
-      const sub = nc.subscribe(streamSubject, { timeout: 90_000 });
+      const sub = nc.subscribe(streamSubject);
       // Clean up subscription if client disconnects before done
-      req.on('close', () => sub.unsubscribe());
+      res.on('close', () => sub.unsubscribe());
 
-      await publish(nc, 'agent.settings.inbox',
+      logger.debug({ streamSubject }, 'Chat/settings: subscribed, publishing to agent');
+
+      nc.publish('agent.settings.inbox', codec.encode(
         JSON.stringify({ content: message, sessionId: sid, replySubject, streamSubject }),
-      );
+      ));
+
+      logger.debug({ streamSubject }, 'Chat/settings: published, entering for-await');
 
       for await (const msg of sub) {
         const event = JSON.parse(codec.decode(msg.data)) as { type: string; text?: string; error?: string };
+        logger.debug({ type: event.type }, 'Chat/settings: stream event received');
         sse(event);
         if (event.type === 'done' || event.type === 'error') break;
       }
+
+      logger.debug({ streamSubject }, 'Chat/settings: for-await exited');
     } catch (err) {
       logger.error({ err }, 'Chat settings error');
       sse({ type: 'error', error: 'Settings agent not responding' });
