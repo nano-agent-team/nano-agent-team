@@ -31,6 +31,7 @@ All notable changes to this project will be documented in this file.
 - **agent-runner:** Add 60s timeout to WAIT_FOR_START_SIGNAL rollover wait ([`7b9d6b8`](https://github.com/nano-agent-team/nano-agent-team/commit/7b9d6b8d404f5157fbdc539b8760651fde185033))
 - **api:** Add missing plugin.mjs stub for workflow-editor tool ([`f0aa88b`](https://github.com/nano-agent-team/nano-agent-team/commit/f0aa88b9393598fc3b2619094ae9341040d4c67c))
 - **api:** Symlink /data/node_modules for team plugin dep resolution ([`42f2c37`](https://github.com/nano-agent-team/nano-agent-team/commit/42f2c37f52631f6671a8ea47a350f69d1f09f21a))
+- **settings:** Fix SSE streaming in settings chat (#24) ([`f043019`](https://github.com/nano-agent-team/nano-agent-team/commit/f043019d4e8dfb115c4265b1719d7348dcd5aa83))
 
 ### Documentation
 
@@ -41,6 +42,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`6cf9844`](https://github.com/nano-agent-team/nano-agent-team/commit/6cf98449d1af8afb60b44669e875bcb781d115fa))
 - **ci:** Update CHANGELOG [skip ci] ([`1a5fe1c`](https://github.com/nano-agent-team/nano-agent-team/commit/1a5fe1c6e8bfdb5b243143c9e151d786c39356ed))
 - **ci:** Update CHANGELOG [skip ci] ([`99ebc1b`](https://github.com/nano-agent-team/nano-agent-team/commit/99ebc1b1bbb028a35543a5aa346a93866696f313))
+- **ci:** Update CHANGELOG [skip ci] ([`22b8bee`](https://github.com/nano-agent-team/nano-agent-team/commit/22b8bee7853a968534717f776dc1add872dbea33))
 
 ### Features
 
