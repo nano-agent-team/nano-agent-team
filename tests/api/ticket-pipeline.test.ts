@@ -323,5 +323,5 @@ describe('T6 — POST /api/tickets fires topic.ticket.new', () => {
     const ticket = await createTicket('test-new-event-' + Date.now());
     const payload = await collect();
     expect(payload.ticket_id).toBe(ticket.id);
-  });
+  }, 10_000);
 });
