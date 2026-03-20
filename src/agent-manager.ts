@@ -945,4 +945,34 @@ export class AgentManager {
   async registerEntrypointRoute(from: string, toSubject: string): Promise<void> {
     await this.dispatcher.registerEntrypointRoute(from, toSubject);
   }
+
+  /**
+   * Stop and remove a specific entrypoint route loop.
+   * Allows re-registration with the same key after this call.
+   */
+  async unregisterEntrypointRoute(from: string, toSubject: string): Promise<void> {
+    await this.dispatcher.unregisterEntrypointRoute(from, toSubject);
+  }
+
+  /**
+   * Stop and remove a specific dispatch rule loop.
+   * Allows re-registration with the same subject after this call.
+   */
+  async unregisterDispatch(subject: string): Promise<void> {
+    await this.dispatcher.unregisterDispatch(subject);
+  }
+
+  /**
+   * Stop all dispatcher loops cleanly (routes + dispatches).
+   */
+  async stopAllDispatches(): Promise<void> {
+    await this.dispatcher.stopAll();
+  }
+
+  /**
+   * Returns the keys of all currently active dispatcher loops.
+   */
+  get activeDispatcherRoutes(): string[] {
+    return this.dispatcher.activeRouteKeys;
+  }
 }
