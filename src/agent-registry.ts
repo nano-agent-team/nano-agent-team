@@ -348,6 +348,24 @@ export function loadTeamAgentsWithFallback(
   return agents;
 }
 
+/**
+ * Find the workflow binding for an agent by scanning team workflow.json files.
+ * Used by reload endpoint to resolve bindings that were originally set at startup.
+ */
+export function findBindingForAgent(agentId: string, teamsDir: string): WorkflowBinding | undefined {
+  if (!fs.existsSync(teamsDir)) return undefined;
+  for (const entry of fs.readdirSync(teamsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const wfPath = path.join(teamsDir, entry.name, 'workflow.json');
+    if (!fs.existsSync(wfPath)) continue;
+    try {
+      const wf = JSON.parse(fs.readFileSync(wfPath, 'utf8')) as WorkflowManifest;
+      if (wf.bindings?.[agentId]) return wf.bindings[agentId];
+    } catch { /* skip */ }
+  }
+  return undefined;
+}
+
 function scanDirectory(dir: string, agents: LoadedAgent[], depth = 0): void {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
 

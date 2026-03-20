@@ -874,11 +874,12 @@ export async function createApiApp(
     try {
       const { agentId } = req.params;
       if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
-      const { loadManifest } = await import('./agent-registry.js');
+      const { loadManifest, findBindingForAgent } = await import('./agent-registry.js');
       const agentDir = path.join(DATA_DIR, 'agents', agentId);
       const manifest = loadManifest(agentDir);
-      const agent = { manifest, dir: agentDir };
-      const topics = resolveTopicsForAgent(manifest);
+      const binding = findBindingForAgent(agentId, path.join(DATA_DIR, 'teams'));
+      const agent = { manifest, dir: agentDir, binding };
+      const topics = resolveTopicsForAgent(manifest, binding);
       // Stop existing container if running
       if (manager.getAgent(agentId)) {
         await manager.stopAgent(agentId);
