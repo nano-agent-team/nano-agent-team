@@ -45,6 +45,8 @@ export interface AgentManifest {
   workspace?: boolean;
   /** Absolute host path to mount as /workspace/repo (for git-based workflows) */
   repo_path?: string;
+  /** Mount project root to /workspace/repo (for self-dev agents that edit the project itself) */
+  project_workspace?: boolean;
   /** Docker image to use for this agent. Defaults to AGENT_IMAGE (nano-agent:latest) */
   image?: string;
   /**

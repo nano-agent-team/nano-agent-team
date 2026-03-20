@@ -450,6 +450,13 @@ export class AgentManager {
         logger.debug({ id, repo_path: agent.manifest.repo_path }, 'Mounting repo workspace');
       }
 
+      // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
+      if (agent.manifest.project_workspace) {
+        const projectRoot = path.resolve(hostDataDir, '..', '..');
+        binds.push(`${projectRoot}:/workspace/repo:rw`);
+        logger.debug({ id, projectRoot }, 'Mounting project workspace');
+      }
+
       // Use per-agent image if specified in manifest.
       // Convention: if agents/{id}/Dockerfile exists, image is nano-agent-{id}:latest
       // Otherwise fall back to default AGENT_IMAGE.
