@@ -24,6 +24,8 @@ export interface ProviderRunOptions {
   sessionId?: string;
   maxTurns?: number;
   mcpServers?: Record<string, McpServerConfig>;
+  /** System prompt passed directly to the provider, overrides the default Claude Code identity. */
+  systemPrompt?: string;
   /** Extra environment variables injected into the provider subprocess (e.g. GH_TOKEN). */
   extraEnv?: Record<string, string>;
 }

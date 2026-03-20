@@ -42,7 +42,11 @@ const PROVIDER_NAME = process.env.PROVIDER ?? 'claude';
 // Mutable for hot-reload (Phase 4)
 let MODEL = process.env.MODEL ?? 'claude-haiku-4-5-20251001';
 const MODEL_EXPLICIT = process.env.MODEL_EXPLICIT === 'true';
-const SESSION_TYPE = (process.env.SESSION_TYPE ?? 'stateless') as 'stateless' | 'persistent';
+// 'stateful' is an alias for 'persistent' (manifest uses 'stateful', runner uses 'persistent')
+const SESSION_TYPE = (() => {
+  const raw = process.env.SESSION_TYPE ?? 'stateless';
+  return raw === 'stateful' ? 'persistent' : raw;
+})() as 'stateless' | 'persistent';
 /** If true, wait for agent.{id}.start-consuming before pulling (Phase 5 rollover) */
 const WAIT_FOR_START_SIGNAL = process.env.WAIT_FOR_START_SIGNAL === 'true';
 const CLAUDE_MD_PATH = '/workspace/agent/CLAUDE.md';
@@ -310,49 +314,15 @@ async function main(): Promise<void> {
   nc.publish(`agent.${AGENT_ID}.ready`, codec.encode(JSON.stringify({ agentId: AGENT_ID, ts: Date.now() })));
   log.info({ agentId: AGENT_ID }, 'Ready signal published');
 
-  // ── Resume interrupted session on startup ────────────────────────────────
+  // ── Load saved session ID on startup ─────────────────────────────────────
+  // For persistent agents: restore the session ID so the first message continues
+  // the previous conversation. We do NOT run a resume query on startup — that
+  // caused confused state and phantom responses. The saved session ID will be
+  // picked up by loadSessionId() when the first message arrives.
   {
-    let savedSessionId: string | undefined;
-    try {
-      const saved = fs.readFileSync(SESSION_FILE, 'utf8').trim();
-      if (saved) savedSessionId = saved;
-    } catch { /* no saved session */ }
-
-    if (savedSessionId) {
-      log.info({ agentId: AGENT_ID, sessionId: savedSessionId }, 'Found interrupted session — resuming immediately');
-      fs.unlinkSync(SESSION_FILE);
-      currentSessionId = savedSessionId;
-
-      try {
-        let result = '';
-        const providerRun = provider.run({
-          model: MODEL,
-          modelExplicit: MODEL_EXPLICIT,
-          cwd: '/workspace',
-          prompt: '',
-          sessionId: savedSessionId,
-          maxTurns: 50,
-          mcpServers: allMcpServers,
-        });
-
-        for await (const event of providerRun) {
-          if (event.type === 'session_id') {
-            currentSessionId = event.sessionId;
-          } else if (event.type === 'result') {
-            result = event.result;
-            break;
-          }
-        }
-
-        log.info({ agentId: AGENT_ID, resultLength: result.length }, 'Resumed session completed');
-
-        const replySubject = `agent.${AGENT_ID}.reply`;
-        const reply: ReplyPayload = { agentId: AGENT_ID, result, ts: Date.now() };
-        nc.publish(replySubject, codec.encode(JSON.stringify(reply)));
-      } catch (err) {
-        log.error({ err, agentId: AGENT_ID }, 'Failed to resume interrupted session');
-      }
-      currentSessionId = undefined;
+    const saved = loadSessionId();
+    if (saved) {
+      log.info({ agentId: AGENT_ID, sessionId: saved }, 'Loaded saved session ID — will resume on first message');
     }
   }
 
@@ -447,14 +417,15 @@ async function main(): Promise<void> {
         ? String(payloadForPrompt.text)
         : `Event on topic "${subject}":\n\n${JSON.stringify(payloadForPrompt, null, 2)}`;
 
-      const prompt: string = claudeMdContent
-        ? `${claudeMdContent}\n\n---\n\n${eventContext}`
-        : eventContext;
-
-      log.info({ agentId: AGENT_ID, subject, promptLen: prompt.length }, 'Message received');
-
       // ── Provider invocation ───────────────────────────────────────────────
       const existingSessionId = loadSessionId();
+
+      // CLAUDE.md is written to /workspace/CLAUDE.md at startup and read automatically by Claude Code.
+      // Never prepend it to the prompt — it would re-inject instructions as a user message,
+      // breaking session continuity on resumed turns.
+      const prompt: string = eventContext;
+
+      log.info({ agentId: AGENT_ID, subject, promptLen: prompt.length, resuming: !!existingSessionId }, 'Message received');
 
       log.debug(
         { agentId: AGENT_ID, provider: PROVIDER_NAME, sessionType: SESSION_TYPE, hasSession: !!existingSessionId },
@@ -482,7 +453,8 @@ async function main(): Promise<void> {
           cwd: '/workspace',
           prompt,
           sessionId: existingSessionId,
-          maxTurns: 50,
+          maxTurns: 200,
+          systemPrompt: claudeMdContent || undefined,
           ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
           mcpServers: allMcpServers,
         });

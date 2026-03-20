@@ -39,6 +39,11 @@ export class ClaudeProvider implements Provider {
       sdkOptions.resume = options.sessionId;
     }
 
+    // Pass system prompt directly to override the default "You are Claude Code" identity
+    if (options.systemPrompt) {
+      sdkOptions.systemPrompt = options.systemPrompt;
+    }
+
     // Inject extra env vars (e.g. GH_TOKEN) without mutating process.env
     if (options.extraEnv && Object.keys(options.extraEnv).length > 0) {
       sdkOptions.env = { ...process.env, ...options.extraEnv };

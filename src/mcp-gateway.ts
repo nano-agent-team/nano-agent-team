@@ -83,7 +83,9 @@ function canCallBuiltin(permissions: PermissionMap, namespace: string, toolName:
   const ns = permissions[namespace];
   if (ns === undefined) return true; // no restriction → allow all
   if (ns === '*') return true;
-  const required = TICKET_TOOL_PERMISSIONS[toolName];
+  // For tickets namespace, use the short permission name (e.g. 'tickets_list' → 'list')
+  // For all other namespaces, use the tool name directly as the permission string
+  const required = TICKET_TOOL_PERMISSIONS[toolName] ?? toolName;
   return Array.isArray(ns) && (ns.includes(required) || ns.includes('*'));
 }
 
@@ -393,80 +395,88 @@ function buildMcpServer(
     const configPath = path.join(opts.dataDir, 'config.json');
     const secretsPath = path.join(opts.dataDir, 'secrets.json');
 
-    server.tool('config_get', 'Read current config or a specific value (secrets masked).', { key: z.string().optional() }, async ({ key }) => {
-      const cfg = cfgLoad(configPath);
-      const value = key ? cfgGetNested(cfg, key.split('.')) : cfgMaskSecrets(cfg);
-      return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
-    });
-
-    server.tool('config_set', 'Write a config value at a dot-path.', { key: z.string(), value: z.unknown() }, async ({ key, value }) => {
-      const cfg = cfgLoad(configPath);
-      cfgSetNested(cfg, key.split('.'), value);
-      cfgSave(configPath, cfg);
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, key }) }] };
-    });
-
-    server.tool('config_status', 'Check what is missing for setup to complete.', {}, async () => {
-      const cfg = cfgLoad(configPath);
-      const missing = cfgMissing(cfg);
-      const setupCompleted = cfg.setupCompleted === true;
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ complete: setupCompleted && missing.length === 0, setupCompleted, missing }) }] };
-    });
-
-    server.tool('setup_complete', 'Mark setup as done and trigger live reload.', { install: z.array(z.string()).optional() }, async ({ install }) => {
-      const ids = install ?? [];
-      const cfg = cfgLoad(configPath);
-      const teams = ids.filter((id) => fs.existsSync(path.join(opts.teamsDir, id, 'team.json')));
-      const features = ids.filter((id) => !teams.includes(id));
-      cfg.setupCompleted = true;
-      const installed = (cfg.installed as { features: string[]; teams: string[] } | undefined) ?? { features: [], teams: [] };
-      installed.features = [...new Set([...installed.features, ...features])];
-      installed.teams = [...new Set([...installed.teams, ...teams])];
-      cfg.installed = installed;
-      (cfg.meta as Record<string, unknown> | undefined ?? (cfg.meta = {}))['setupCompletedAt'] = new Date().toISOString();
-      cfgSave(configPath, cfg);
-      try { await fetch(`http://localhost:${opts.apiPort}/internal/reload`, { method: 'POST' }); } catch { /* best effort */ }
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, installed }) }] };
-    });
-
-    server.tool('list_available', 'List installable teams and features.', {}, async () => {
-      const teams = cfgScanManifests(opts.teamsDir, 'team.json');
-      const features = cfgScanManifests(opts.featuresDir, 'feature.json');
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ teams, features }) }] };
-    });
-
-    server.tool('list_secrets', 'List all secret keys and whether they are set (values never exposed).', {}, async () => {
-      const secrets = cfgLoadSecrets(secretsPath);
-      const mcpServers = cfgScanMcpServers(opts.mcpServersDir);
-      const keys = Object.keys(secrets);
-      const result = keys.map((k) => ({ key: k, is_set: true }));
-      const known = new Set(keys);
-      for (const srv of mcpServers) {
-        for (const reqKey of srv.required_secrets) {
-          if (!known.has(reqKey)) { result.push({ key: reqKey, is_set: false }); known.add(reqKey); }
-        }
-      }
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    });
-
-    server.tool('set_secret', 'Store a secret value in data/secrets.json (mode 0600).', { key: z.string(), value: z.string() }, async ({ key, value }) => {
-      const secrets = cfgLoadSecrets(secretsPath);
-      secrets[key] = value;
-      cfgSaveSecrets(secretsPath, secrets);
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, key }) }] };
-    });
-
-    server.tool('check_secrets', 'Check which required secrets are missing for given MCP server IDs.', { server_ids: z.array(z.string()) }, async ({ server_ids }) => {
-      const secrets = cfgLoadSecrets(secretsPath);
-      const mcpServers = cfgScanMcpServers(opts.mcpServersDir);
-      const result = server_ids.map((id) => {
-        const srv = mcpServers.find((s) => s.id === id);
-        if (!srv) return { server_id: id, missing: [], ready: false };
-        const missing = srv.required_secrets.filter((k) => !secrets[k]);
-        return { server_id: id, missing, ready: missing.length === 0 };
+    if (canCallBuiltin(permissions, 'config', 'config_get'))
+      server.tool('config_get', 'Read current config or a specific value (secrets masked).', { key: z.string().optional() }, async ({ key }) => {
+        const cfg = cfgLoad(configPath);
+        const value = key ? cfgGetNested(cfg, key.split('.')) : cfgMaskSecrets(cfg);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }] };
       });
-      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
-    });
+
+    if (canCallBuiltin(permissions, 'config', 'config_set'))
+      server.tool('config_set', 'Write a config value at a dot-path.', { key: z.string(), value: z.unknown() }, async ({ key, value }) => {
+        const cfg = cfgLoad(configPath);
+        cfgSetNested(cfg, key.split('.'), value);
+        cfgSave(configPath, cfg);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, key }) }] };
+      });
+
+    if (canCallBuiltin(permissions, 'config', 'config_status'))
+      server.tool('config_status', 'Check what is missing for setup to complete.', {}, async () => {
+        const cfg = cfgLoad(configPath);
+        const missing = cfgMissing(cfg);
+        const setupCompleted = cfg.setupCompleted === true;
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ complete: setupCompleted && missing.length === 0, setupCompleted, missing }) }] };
+      });
+
+    if (canCallBuiltin(permissions, 'config', 'setup_complete'))
+      server.tool('setup_complete', 'Mark setup as done and trigger live reload.', { install: z.array(z.string()).optional() }, async ({ install }) => {
+        const ids = install ?? [];
+        const cfg = cfgLoad(configPath);
+        const teams = ids.filter((id) => fs.existsSync(path.join(opts.teamsDir, id, 'team.json')));
+        const features = ids.filter((id) => !teams.includes(id));
+        cfg.setupCompleted = true;
+        const installed = (cfg.installed as { features: string[]; teams: string[] } | undefined) ?? { features: [], teams: [] };
+        installed.features = [...new Set([...installed.features, ...features])];
+        installed.teams = [...new Set([...installed.teams, ...teams])];
+        cfg.installed = installed;
+        (cfg.meta as Record<string, unknown> | undefined ?? (cfg.meta = {}))['setupCompletedAt'] = new Date().toISOString();
+        cfgSave(configPath, cfg);
+        try { await fetch(`http://localhost:${opts.apiPort}/internal/reload`, { method: 'POST' }); } catch { /* best effort */ }
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, installed }) }] };
+      });
+
+    if (canCallBuiltin(permissions, 'config', 'list_available'))
+      server.tool('list_available', 'List installable teams and features.', {}, async () => {
+        const teams = cfgScanManifests(opts.teamsDir, 'team.json');
+        const features = cfgScanManifests(opts.featuresDir, 'feature.json');
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ teams, features }) }] };
+      });
+
+    if (canCallBuiltin(permissions, 'config', 'list_secrets'))
+      server.tool('list_secrets', 'List all secret keys and whether they are set (values never exposed).', {}, async () => {
+        const secrets = cfgLoadSecrets(secretsPath);
+        const mcpServers = cfgScanMcpServers(opts.mcpServersDir);
+        const keys = Object.keys(secrets);
+        const result = keys.map((k) => ({ key: k, is_set: true }));
+        const known = new Set(keys);
+        for (const srv of mcpServers) {
+          for (const reqKey of srv.required_secrets) {
+            if (!known.has(reqKey)) { result.push({ key: reqKey, is_set: false }); known.add(reqKey); }
+          }
+        }
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      });
+
+    if (canCallBuiltin(permissions, 'config', 'set_secret'))
+      server.tool('set_secret', 'Store a secret value in data/secrets.json (mode 0600).', { key: z.string(), value: z.string() }, async ({ key, value }) => {
+        const secrets = cfgLoadSecrets(secretsPath);
+        secrets[key] = value;
+        cfgSaveSecrets(secretsPath, secrets);
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, key }) }] };
+      });
+
+    if (canCallBuiltin(permissions, 'config', 'check_secrets'))
+      server.tool('check_secrets', 'Check which required secrets are missing for given MCP server IDs.', { server_ids: z.array(z.string()) }, async ({ server_ids }) => {
+        const secrets = cfgLoadSecrets(secretsPath);
+        const mcpServers = cfgScanMcpServers(opts.mcpServersDir);
+        const result = server_ids.map((id) => {
+          const srv = mcpServers.find((s) => s.id === id);
+          if (!srv) return { server_id: id, missing: [], ready: false };
+          const missing = srv.required_secrets.filter((k) => !secrets[k]);
+          return { server_id: id, missing, ready: missing.length === 0 };
+        });
+        return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+      });
   }
 
   // ── Built-in: management (settings agent only) ────────────────────────────────
@@ -514,12 +524,24 @@ function buildMcpServer(
         return ghToken && u.includes('github.com') ? u.replace('https://', `https://oauth2:${ghToken}@`) : u;
       })();
       try {
-        if (fs.existsSync(path.join(HUB_DIR, '.git'))) {
-          execFileSync('git', ['pull', '--ff-only'], { cwd: HUB_DIR, env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/root', GIT_TERMINAL_PROMPT: '0' }, timeout: 30_000 });
+        const gitEnv = { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/root', GIT_TERMINAL_PROMPT: '0' };
+        // Check if existing clone matches the configured URL (re-clone if stale/wrong remote)
+        const existingGit = path.join(HUB_DIR, '.git');
+        if (fs.existsSync(existingGit)) {
+          let existingRemote = '';
+          try { existingRemote = execSync('git remote get-url origin', { cwd: HUB_DIR, env: gitEnv, encoding: 'utf8' }).trim(); } catch { /* no remote */ }
+          const normalizeUrl = (u: string) => u.replace(/\/+$/, '');
+          if (normalizeUrl(existingRemote) !== normalizeUrl(cloneUrl)) {
+            // Stale clone from wrong URL — nuke and re-clone
+            fs.rmSync(HUB_DIR, { recursive: true, force: true });
+          }
+        }
+        if (fs.existsSync(existingGit)) {
+          execFileSync('git', ['pull', '--ff-only'], { cwd: HUB_DIR, env: gitEnv, timeout: 30_000 });
           return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, action: 'pulled', dir: HUB_DIR }) }] };
         } else {
           if (fs.existsSync(HUB_DIR)) fs.rmSync(HUB_DIR, { recursive: true, force: true });
-          execFileSync('git', ['clone', '--depth', '1', cloneUrl, HUB_DIR], { env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/root', GIT_TERMINAL_PROMPT: '0' }, timeout: 60_000 });
+          execFileSync('git', ['clone', '--depth', '1', cloneUrl, HUB_DIR], { env: gitEnv, timeout: 60_000 });
           return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, action: 'cloned', dir: HUB_DIR }) }] };
         }
       } catch (err) {
@@ -560,21 +582,64 @@ function buildMcpServer(
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ...manifest, agents, required_secrets: secretStatus }, null, 2) }] };
     });
 
-    server.tool('install_team', 'Install a team from hub: copy to /data/teams, update config, trigger reload.', { team_id: z.string() }, async ({ team_id }) => {
+    server.tool('install_team', 'Install a team from hub: copy to /data/teams and /data/agents, start new agents.', { team_id: z.string() }, async ({ team_id }) => {
       if (!/^[a-z0-9_-]+$/.test(team_id)) return { content: [{ type: 'text' as const, text: 'Invalid team_id format.' }] };
       const teamDir = path.join(HUB_DIR, 'teams', team_id);
       if (!fs.existsSync(teamDir)) return { content: [{ type: 'text' as const, text: `Team "${team_id}" not found. Call fetch_hub first.` }] };
       const destDir = path.join(opts.dataDir, 'teams', team_id);
       fs.mkdirSync(destDir, { recursive: true });
       execFileSync('cp', ['-r', `${teamDir}/.`, destDir], { timeout: 10_000 });
+
+      // Auto-install agents referenced in team.json from hub/agents/
+      const teamJson = hubReadJson<{ agents?: string[] }>(path.join(teamDir, 'team.json'));
+      const installedAgents: string[] = [];
+      const skippedAgents: string[] = [];
+      if (Array.isArray(teamJson?.agents)) {
+        for (const agentId of teamJson.agents) {
+          const agentHubDir = path.join(HUB_DIR, 'agents', agentId);
+          if (!fs.existsSync(path.join(agentHubDir, 'manifest.json'))) { skippedAgents.push(agentId); continue; }
+          const agentDestDir = path.join(opts.dataDir, 'agents', agentId);
+          fs.mkdirSync(agentDestDir, { recursive: true });
+          execFileSync('cp', ['-r', `${agentHubDir}/.`, agentDestDir], { timeout: 10_000 });
+          installedAgents.push(agentId);
+        }
+      }
+
       const cfg = cfgLoad(configPath);
       const installed = (cfg.installed as { features: string[]; teams: string[] } | undefined) ?? { features: [], teams: [] };
       installed.teams = [...new Set([...installed.teams, team_id])];
       cfg.installed = installed;
       if (!cfg.setupCompleted) { cfg.setupCompleted = true; (cfg.meta as Record<string, unknown> | undefined ?? (cfg.meta = {}))['setupCompletedAt'] = new Date().toISOString(); }
       cfgSave(configPath, cfg);
-      await callInternal('POST', '/internal/reload');
-      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, team_id, installed_to: destDir }) }] };
+
+      // Start each newly installed agent without triggering a full reload
+      const startedAgents: string[] = [];
+      for (const agentId of installedAgents) {
+        try { await callInternal('POST', `/internal/agents/${agentId}/start-installed`); startedAgents.push(agentId); } catch (err) { logger.warn({ agentId, err: String(err) }, 'start-installed failed (best effort)'); }
+      }
+
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, team_id, installed_to: destDir, agents_installed: installedAgents, agents_skipped: skippedAgents, agents_started: startedAgents }) }] };
+    });
+
+    server.tool('install_agent', 'Install a standalone agent from hub into /data/agents and start it.', { agent_id: z.string() }, async ({ agent_id }) => {
+      if (!/^[a-z0-9_-]+$/.test(agent_id)) return { content: [{ type: 'text' as const, text: 'Invalid agent_id format.' }] };
+      const agentHubDir = path.join(HUB_DIR, 'agents', agent_id);
+      if (!fs.existsSync(path.join(agentHubDir, 'manifest.json'))) return { content: [{ type: 'text' as const, text: `Agent "${agent_id}" not found in hub. Call fetch_hub first.` }] };
+      const agentDestDir = path.join(opts.dataDir, 'agents', agent_id);
+      fs.mkdirSync(agentDestDir, { recursive: true });
+      execFileSync('cp', ['-r', `${agentHubDir}/.`, agentDestDir], { timeout: 10_000 });
+      try { await callInternal('POST', `/internal/agents/${agent_id}/start-installed`); } catch (err) { logger.warn({ agent_id, err: String(err) }, 'start-installed failed (best effort)'); }
+      return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, agent_id, installed_to: agentDestDir }) }] };
+    });
+
+    server.tool('list_hub_agents', 'List standalone agents available in the hub catalog. Call fetch_hub first.', {}, async () => {
+      const agentsDir = path.join(HUB_DIR, 'agents');
+      if (!fs.existsSync(agentsDir)) return { content: [{ type: 'text' as const, text: 'Hub not fetched yet. Call fetch_hub first.' }] };
+      const agents = fs.readdirSync(agentsDir).filter((d) => fs.existsSync(path.join(agentsDir, d, 'manifest.json'))).map((d) => {
+        const m = hubReadJson<{ id?: string; name?: string; description?: string }>(path.join(agentsDir, d, 'manifest.json'));
+        return { id: d, name: m?.name ?? d, description: m?.description ?? '' };
+      });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(agents, null, 2) }] };
     });
   }
 
@@ -813,14 +878,22 @@ export class McpGateway {
     }
 
     if (this.gatewayOpts && permissions['config'] !== undefined) {
-      tools.push({ name: 'config_get', description: 'Read current config or a specific value (secrets masked).', inputSchema: { type: 'object', properties: { key: { type: 'string' } } } });
-      tools.push({ name: 'config_set', description: 'Write a config value at a dot-path.', inputSchema: { type: 'object', required: ['key', 'value'], properties: { key: { type: 'string' }, value: {} } } });
-      tools.push({ name: 'config_status', description: 'Check what is missing for setup to complete.', inputSchema: { type: 'object', properties: {} } });
-      tools.push({ name: 'setup_complete', description: 'Mark setup as done and trigger live reload.', inputSchema: { type: 'object', properties: { install: { type: 'array', items: { type: 'string' } } } } });
-      tools.push({ name: 'list_available', description: 'List installable teams and features.', inputSchema: { type: 'object', properties: {} } });
-      tools.push({ name: 'list_secrets', description: 'List all secret keys and whether they are set (values never exposed).', inputSchema: { type: 'object', properties: {} } });
-      tools.push({ name: 'set_secret', description: 'Store a secret value in data/secrets.json (mode 0600).', inputSchema: { type: 'object', required: ['key', 'value'], properties: { key: { type: 'string' }, value: { type: 'string' } } } });
-      tools.push({ name: 'check_secrets', description: 'Check which required secrets are missing for given MCP server IDs.', inputSchema: { type: 'object', required: ['server_ids'], properties: { server_ids: { type: 'array', items: { type: 'string' } } } } });
+      if (canCallBuiltin(permissions, 'config', 'config_get'))
+        tools.push({ name: 'config_get', description: 'Read current config or a specific value (secrets masked).', inputSchema: { type: 'object', properties: { key: { type: 'string' } } } });
+      if (canCallBuiltin(permissions, 'config', 'config_set'))
+        tools.push({ name: 'config_set', description: 'Write a config value at a dot-path.', inputSchema: { type: 'object', required: ['key', 'value'], properties: { key: { type: 'string' }, value: {} } } });
+      if (canCallBuiltin(permissions, 'config', 'config_status'))
+        tools.push({ name: 'config_status', description: 'Check what is missing for setup to complete.', inputSchema: { type: 'object', properties: {} } });
+      if (canCallBuiltin(permissions, 'config', 'setup_complete'))
+        tools.push({ name: 'setup_complete', description: 'Mark setup as done and trigger live reload.', inputSchema: { type: 'object', properties: { install: { type: 'array', items: { type: 'string' } } } } });
+      if (canCallBuiltin(permissions, 'config', 'list_available'))
+        tools.push({ name: 'list_available', description: 'List installable teams and features.', inputSchema: { type: 'object', properties: {} } });
+      if (canCallBuiltin(permissions, 'config', 'list_secrets'))
+        tools.push({ name: 'list_secrets', description: 'List all secret keys and whether they are set (values never exposed).', inputSchema: { type: 'object', properties: {} } });
+      if (canCallBuiltin(permissions, 'config', 'set_secret'))
+        tools.push({ name: 'set_secret', description: 'Store a secret value in data/secrets.json (mode 0600).', inputSchema: { type: 'object', required: ['key', 'value'], properties: { key: { type: 'string' }, value: { type: 'string' } } } });
+      if (canCallBuiltin(permissions, 'config', 'check_secrets'))
+        tools.push({ name: 'check_secrets', description: 'Check which required secrets are missing for given MCP server IDs.', inputSchema: { type: 'object', required: ['server_ids'], properties: { server_ids: { type: 'array', items: { type: 'string' } } } } });
     }
 
     if (this.gatewayOpts && permissions['management'] !== undefined) {
@@ -832,6 +905,8 @@ export class McpGateway {
       tools.push({ name: 'list_hub_teams', description: 'List teams in the hub catalog. Call fetch_hub first.', inputSchema: { type: 'object', properties: {} } });
       tools.push({ name: 'get_hub_team', description: 'Get hub team details: agents, required secrets.', inputSchema: { type: 'object', required: ['team_id'], properties: { team_id: { type: 'string' } } } });
       tools.push({ name: 'install_team', description: 'Install a team from hub: copy to /data/teams, update config, trigger reload.', inputSchema: { type: 'object', required: ['team_id'], properties: { team_id: { type: 'string' } } } });
+      tools.push({ name: 'list_hub_agents', description: 'List standalone agents available in the hub catalog.', inputSchema: { type: 'object', properties: {} } });
+      tools.push({ name: 'install_agent', description: 'Install a standalone agent from hub into /data/agents and start it.', inputSchema: { type: 'object', required: ['agent_id'], properties: { agent_id: { type: 'string' } } } });
     }
 
     return tools;
