@@ -25,13 +25,14 @@ RUN ARCH=$(uname -m) && \
       aarch64) NATS_ARCH="arm64" ;; \
       *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
     esac && \
-    curl -L "https://github.com/nats-io/natscli/releases/download/v0.1.6/nats-0.1.6-linux-${NATS_ARCH}.zip" \
+    curl -fL "https://github.com/nats-io/natscli/releases/download/v0.1.6/nats-0.1.6-linux-${NATS_ARCH}.zip" \
       -o /tmp/nats.zip && \
     apt-get update && apt-get install -y --no-install-recommends unzip && \
     unzip /tmp/nats.zip -d /tmp/nats-cli && \
     mv /tmp/nats-cli/nats-*/nats /usr/local/bin/nats && \
     chmod +x /usr/local/bin/nats && \
     rm -rf /tmp/nats.zip /tmp/nats-cli && \
+    apt-get purge -y --auto-remove unzip && \
     rm -rf /var/lib/apt/lists/*
 
 # Install provider CLIs — pinned to known-good versions
