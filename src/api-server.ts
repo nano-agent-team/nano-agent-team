@@ -691,6 +691,9 @@ export async function createApiApp(
         };
       if (!title) return res.status(400).json({ error: '"title" is required' });
       const ticket = createTicket({ title, status, priority, type, parent_id, blocked_by, author, assigned_to, labels, body, model_hint });
+      // Notify pipeline that a new ticket is ready for PM
+      nc.publish('topic.ticket.new', codec.encode(JSON.stringify({ ticket_id: ticket.id })));
+      logger.info({ ticket_id: ticket.id }, 'POST /api/tickets: topic.ticket.new published');
       emitSseEvent('ticket_created', { ticket });
       res.status(201).json(ticket);
     } catch (err) {
