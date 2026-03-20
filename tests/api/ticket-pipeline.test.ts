@@ -315,3 +315,13 @@ describe('T5 — Full pipeline: ticket lifecycle without LLM', () => {
     expect(final.status).toBe('done');
   }, 30_000);
 });
+
+// ─── T6 — createTicket fires topic.ticket.new ─────────────────────────────────
+describe('T6 — POST /api/tickets fires topic.ticket.new', () => {
+  test('ticket creation publishes NATS event', async () => {
+    const collect = await listenNats('topic.ticket.new');
+    const ticket = await createTicket('test-new-event-' + Date.now());
+    const payload = await collect();
+    expect(payload.ticket_id).toBe(ticket.id);
+  });
+});

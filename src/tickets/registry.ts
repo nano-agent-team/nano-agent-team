@@ -79,7 +79,13 @@ export class TicketRegistry {
   // ── Delegating methods with NATS hooks ─────────────────────────────────────
 
   async createTicket(data: CreateTicketData, teamId?: string): Promise<Ticket> {
-    return this.getProvider(teamId).createTicket(data);
+    const ticket = await this.getProvider(teamId).createTicket(data);
+    // Notify pipeline that a new ticket is ready for PM
+    if (this.nc) {
+      this.nc.publish('topic.ticket.new', codec.encode(JSON.stringify({ ticket_id: ticket.id })));
+      logger.info({ ticket_id: ticket.id }, 'TicketRegistry: topic.ticket.new published');
+    }
+    return ticket;
   }
 
   async getTicket(id: string, teamId?: string): Promise<Ticket | null> {
