@@ -53,6 +53,8 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`572213c`](https://github.com/nano-agent-team/nano-agent-team/commit/572213cb78c6bab6526a72ce51c36451d485563d))
 - **ci:** Update CHANGELOG [skip ci] ([`59b3d23`](https://github.com/nano-agent-team/nano-agent-team/commit/59b3d23e37d0526b85dc07c59b8aa942e13f96c8))
 - **ci:** Update CHANGELOG [skip ci] ([`882d010`](https://github.com/nano-agent-team/nano-agent-team/commit/882d0103ad99f3e1c60bf7aeadfaa9d7ab8db369))
+- **ci:** Update CHANGELOG [skip ci] ([`f496b00`](https://github.com/nano-agent-team/nano-agent-team/commit/f496b00c3bdfb62117b6884e2be7232e9150703e))
+- Add token metrics and provider budget management design spec ([`8b1fce6`](https://github.com/nano-agent-team/nano-agent-team/commit/8b1fce6c042f252125b98f0c397799a9f0a46ebf))
 
 ### Features
 
@@ -103,6 +105,7 @@ All notable changes to this project will be documented in this file.
 - Unify NATS publish in TicketRegistry (TICK-0006) ([`84189c2`](https://github.com/nano-agent-team/nano-agent-team/commit/84189c257021e59e9a9128e4ed3f829c89653148))
 - Extract buildAgentEnvAndBinds() shared method (GH #19) (TICK-0007) ([`a9d681d`](https://github.com/nano-agent-team/nano-agent-team/commit/a9d681daca543285ade9089463c5a8ce463e5344))
 - Add tool call label to chat typing indicator (TICK-0008) ([`e2e2298`](https://github.com/nano-agent-team/nano-agent-team/commit/e2e229816b4019fb92af69db5fee65f8db115583))
+- Alarm clock MCP, GH issues proxy, credential-proxy SSL fix ([`8b0464b`](https://github.com/nano-agent-team/nano-agent-team/commit/8b0464b89424b527b6cc9d1012fb521620f8c68e))
 
 ### Miscellaneous
 
@@ -111,6 +114,7 @@ All notable changes to this project will be documented in this file.
 - Add test-results/ to .gitignore ([`c563feb`](https://github.com/nano-agent-team/nano-agent-team/commit/c563feb1053a9445d3fa6b61971842e0d8c6304f))
 - Resolve merge conflict — keep foreman inbox and 5min timeout ([`353c5de`](https://github.com/nano-agent-team/nano-agent-team/commit/353c5de4567c9232ae174a018fad18b584a88ec6))
 - Remove hello-world test feature, gitignore features/ ([`eaaf542`](https://github.com/nano-agent-team/nano-agent-team/commit/eaaf5425fedde86affb6d07b02a64bc67a3b0b1c))
+- Gitignore .superpowers/ brainstorm artifacts ([`1d652f9`](https://github.com/nano-agent-team/nano-agent-team/commit/1d652f900e2b7f3ad481605b411ac25751a41136))
 
 ### Refactoring
 
