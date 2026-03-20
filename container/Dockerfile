@@ -18,6 +18,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
+# Install NATS CLI — agents use `nats pub` to signal pipeline stages
+RUN ARCH=$(uname -m) && \
+    case "$ARCH" in \
+      x86_64)  NATS_ARCH="amd64" ;; \
+      aarch64) NATS_ARCH="arm64" ;; \
+      *) echo "Unsupported arch: $ARCH" && exit 1 ;; \
+    esac && \
+    curl -L "https://github.com/nats-io/natscli/releases/download/v0.1.6/nats-0.1.6-linux-${NATS_ARCH}.zip" \
+      -o /tmp/nats.zip && \
+    apt-get update && apt-get install -y --no-install-recommends unzip && \
+    unzip /tmp/nats.zip -d /tmp/nats-cli && \
+    mv /tmp/nats-cli/nats-*/nats /usr/local/bin/nats && \
+    chmod +x /usr/local/bin/nats && \
+    rm -rf /tmp/nats.zip /tmp/nats-cli && \
+    rm -rf /var/lib/apt/lists/*
+
 # Install provider CLIs — pinned to known-good versions
 RUN npm install -g @anthropic-ai/claude-code@2.1.76 --ignore-scripts 2>/dev/null || \
     npm install -g @anthropic-ai/claude-code@2.1.76
