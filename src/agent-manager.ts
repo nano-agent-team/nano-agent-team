@@ -451,10 +451,12 @@ export class AgentManager {
       }
 
       // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
-      if (agent.manifest.project_workspace) {
+      if (agent.manifest.project_workspace && !agent.manifest.repo_path) {
         const projectRoot = path.resolve(hostDataDir, '..', '..');
         binds.push(`${projectRoot}:/workspace/repo:rw`);
         logger.debug({ id, projectRoot }, 'Mounting project workspace');
+      } else if (agent.manifest.project_workspace && agent.manifest.repo_path) {
+        logger.warn({ id }, 'project_workspace ignored: repo_path already set for /workspace/repo');
       }
 
       // Use per-agent image if specified in manifest.
