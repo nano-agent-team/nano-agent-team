@@ -34,6 +34,9 @@ All notable changes to this project will be documented in this file.
 - **settings:** Fix SSE streaming in settings chat ([`4157329`](https://github.com/nano-agent-team/nano-agent-team/commit/4157329015291f3cfa8c56f1e742bc4b6f71c2ce))
 - **settings:** Address review comments on SSE streaming ([`8ea619a`](https://github.com/nano-agent-team/nano-agent-team/commit/8ea619ab2ea170713de7906fc0cd7722dc99137c))
 - **settings:** Fix SSE streaming in settings chat (#24) ([`f043019`](https://github.com/nano-agent-team/nano-agent-team/commit/f043019d4e8dfb115c4265b1719d7348dcd5aa83))
+- Harden nats CLI install (--fail curl, purge unzip) ([`15ee320`](https://github.com/nano-agent-team/nano-agent-team/commit/15ee32010d2b8f21bd022c4be9f0c7003362135a))
+- Guard project_workspace against conflict with repo_path ([`9e0e131`](https://github.com/nano-agent-team/nano-agent-team/commit/9e0e13178d8a36b5124c3589474d36728feab9bc))
+- Publish topic.ticket.new from REST endpoint ([`548044b`](https://github.com/nano-agent-team/nano-agent-team/commit/548044b4b56c92e8b848ca9ace22c091315d256c))
 
 ### Documentation
 
@@ -46,6 +49,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`99ebc1b`](https://github.com/nano-agent-team/nano-agent-team/commit/99ebc1b1bbb028a35543a5aa346a93866696f313))
 - **ci:** Update CHANGELOG [skip ci] ([`22b8bee`](https://github.com/nano-agent-team/nano-agent-team/commit/22b8bee7853a968534717f776dc1add872dbea33))
 - **ci:** Update CHANGELOG [skip ci] ([`9f7c072`](https://github.com/nano-agent-team/nano-agent-team/commit/9f7c0729b10e9f6f95f272bc4aae2fd24f00cd98))
+- **ci:** Update CHANGELOG [skip ci] ([`572213c`](https://github.com/nano-agent-team/nano-agent-team/commit/572213cb78c6bab6526a72ce51c36451d485563d))
 
 ### Features
 
@@ -85,6 +89,11 @@ All notable changes to this project will be documented in this file.
 - **setup:** Remove built-in agents — all agents sourced from hub ([`8c0c16b`](https://github.com/nano-agent-team/nano-agent-team/commit/8c0c16bf73ad2fbacb1961e0a9b1ec4897e91640))
 - **setup:** Chat routes to foreman; install_team auto-installs agents ([`990e887`](https://github.com/nano-agent-team/nano-agent-team/commit/990e887b1a7a0465e1c8fe95bd5fc01f43c78b4a))
 - **setup:** Implement Foreman identity, per-tool MCP permissions, install_agent ([`4c14ca0`](https://github.com/nano-agent-team/nano-agent-team/commit/4c14ca0a2e582b6e3a19efc2ace66bfcc3c98ca9))
+- Add nats CLI to agent base image ([`73b911b`](https://github.com/nano-agent-team/nano-agent-team/commit/73b911be5e2fe6cf7b08f5e2a1f4338c4d792f36))
+- Publish topic.ticket.new on ticket creation ([`9fd3177`](https://github.com/nano-agent-team/nano-agent-team/commit/9fd3177198982934fea3b7a310ea7cecc333258f))
+- Add project_workspace manifest field for self-dev agents ([`daaa5ca`](https://github.com/nano-agent-team/nano-agent-team/commit/daaa5cab9b0e861c1338f8f663ddd2dfcf4b9da8))
+- Přidat položku menu "Hello World" se zobrazením textu (TICK-0001) ([`9807ea1`](https://github.com/nano-agent-team/nano-agent-team/commit/9807ea100a1d19583011c2845f423bff2ad63528))
+- Add hello-world feature (TICK-0003) ([`07faf0a`](https://github.com/nano-agent-team/nano-agent-team/commit/07faf0ada57ea62484014e57afbadcfaaf06d179))
 
 ### Miscellaneous
 
@@ -93,12 +102,17 @@ All notable changes to this project will be documented in this file.
 - Add test-results/ to .gitignore ([`c563feb`](https://github.com/nano-agent-team/nano-agent-team/commit/c563feb1053a9445d3fa6b61971842e0d8c6304f))
 - Resolve merge conflict — keep foreman inbox and 5min timeout ([`353c5de`](https://github.com/nano-agent-team/nano-agent-team/commit/353c5de4567c9232ae174a018fad18b584a88ec6))
 
+### Refactoring
+
+- Route POST /api/tickets through ticketRegistry ([`dd1b94a`](https://github.com/nano-agent-team/nano-agent-team/commit/dd1b94a9d079eeedaa00871aaed91cf4ddb47d30))
+
 ### Tests
 
 - Přidej automatické E2E testy (Vitest + Playwright) + GHA workflow ([`3a66c15`](https://github.com/nano-agent-team/nano-agent-team/commit/3a66c156c4df84fc23eaca14c515b3ecb6bfcbee))
 - Implementuj B (tickets REST API), C (NATS/SSE), E (MockProvider pipeline) ([`2697a96`](https://github.com/nano-agent-team/nano-agent-team/commit/2697a96cde7462f28cd48313828f063cc0374867))
 - **api:** Add multi-instance dispatch integration tests ([`fe31052`](https://github.com/nano-agent-team/nano-agent-team/commit/fe31052336b0f877acfd7560243bd51fd8fe786f))
 - **ci:** Add deterministic ticket-pipeline tests + fix @mcp/sdk dependency ([`9e716ea`](https://github.com/nano-agent-team/nano-agent-team/commit/9e716eaafedfb2039323a45b9333a2be1dd8f891))
+- Add explicit 10s timeout to T6 NATS integration test ([`00f3c4e`](https://github.com/nano-agent-team/nano-agent-team/commit/00f3c4e412a3dc4f36e36c3bbb2eff8bce4a6478))
 
 ### Repo
 
