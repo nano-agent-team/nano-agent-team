@@ -20,11 +20,15 @@ export class ClaudeProvider implements Provider {
   async *run(options: ProviderRunOptions): AsyncGenerator<ProviderEvent> {
     // Build per-namespace MCP tool patterns (mcp__* glob doesn't match across __ delimiters)
     const mcpToolPatterns = Object.keys(options.mcpServers ?? {}).map((name) => `mcp__${name}__*`);
+    const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns];
+    const extraTools = options.allowedTools ?? [];
+    // Merge defaults + extras (deduplicated)
+    const allTools = [...new Set([...defaultTools, ...extraTools])];
     const sdkOptions: Record<string, unknown> = {
       model: options.model,
       cwd: options.cwd,
       permissionMode: 'acceptEdits',
-      allowedTools: ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns],
+      allowedTools: allTools,
       maxTurns: options.maxTurns ?? 50,
       includePartialMessages: true,
     };

@@ -51,6 +51,7 @@ const SESSION_TYPE = (() => {
 const WAIT_FOR_START_SIGNAL = process.env.WAIT_FOR_START_SIGNAL === 'true';
 const CLAUDE_MD_PATH = '/workspace/agent/CLAUDE.md';
 const AGENT_SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT ?? '';
+const AGENT_ALLOWED_TOOLS = (process.env.AGENT_ALLOWED_TOOLS ?? '').split(',').filter(Boolean);
 const SESSION_FILE = '/workspace/sessions/session_id';
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const DB_PATH = process.env.DB_PATH ?? '/workspace/db/nano-agent-team.db';
@@ -456,6 +457,7 @@ async function main(): Promise<void> {
           maxTurns: 200,
           systemPrompt: claudeMdContent || undefined,
           ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
+          ...(AGENT_ALLOWED_TOOLS.length > 0 ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),
           mcpServers: allMcpServers,
         });
 
