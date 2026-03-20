@@ -7,8 +7,7 @@ test-results/
 *.db-shm
 dashboard/dist/
 dashboard/node_modules/
-features/*/frontend-dist/
-features/*/node_modules/
+features/
 
 .env
 .env.local
