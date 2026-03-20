@@ -31,6 +31,8 @@ All notable changes to this project will be documented in this file.
 - **agent-runner:** Add 60s timeout to WAIT_FOR_START_SIGNAL rollover wait ([`7b9d6b8`](https://github.com/nano-agent-team/nano-agent-team/commit/7b9d6b8d404f5157fbdc539b8760651fde185033))
 - **api:** Add missing plugin.mjs stub for workflow-editor tool ([`f0aa88b`](https://github.com/nano-agent-team/nano-agent-team/commit/f0aa88b9393598fc3b2619094ae9341040d4c67c))
 - **api:** Symlink /data/node_modules for team plugin dep resolution ([`42f2c37`](https://github.com/nano-agent-team/nano-agent-team/commit/42f2c37f52631f6671a8ea47a350f69d1f09f21a))
+- **settings:** Fix SSE streaming in settings chat ([`4157329`](https://github.com/nano-agent-team/nano-agent-team/commit/4157329015291f3cfa8c56f1e742bc4b6f71c2ce))
+- **settings:** Address review comments on SSE streaming ([`8ea619a`](https://github.com/nano-agent-team/nano-agent-team/commit/8ea619ab2ea170713de7906fc0cd7722dc99137c))
 - **settings:** Fix SSE streaming in settings chat (#24) ([`f043019`](https://github.com/nano-agent-team/nano-agent-team/commit/f043019d4e8dfb115c4265b1719d7348dcd5aa83))
 
 ### Documentation
@@ -43,6 +45,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`1a5fe1c`](https://github.com/nano-agent-team/nano-agent-team/commit/1a5fe1c6e8bfdb5b243143c9e151d786c39356ed))
 - **ci:** Update CHANGELOG [skip ci] ([`99ebc1b`](https://github.com/nano-agent-team/nano-agent-team/commit/99ebc1b1bbb028a35543a5aa346a93866696f313))
 - **ci:** Update CHANGELOG [skip ci] ([`22b8bee`](https://github.com/nano-agent-team/nano-agent-team/commit/22b8bee7853a968534717f776dc1add872dbea33))
+- **ci:** Update CHANGELOG [skip ci] ([`9f7c072`](https://github.com/nano-agent-team/nano-agent-team/commit/9f7c0729b10e9f6f95f272bc4aae2fd24f00cd98))
 
 ### Features
 
@@ -79,12 +82,16 @@ All notable changes to this project will be documented in this file.
 - **api:** Add tickets feature plugin with Kanban board frontend (Phase 5) ([`8f1dbcf`](https://github.com/nano-agent-team/nano-agent-team/commit/8f1dbcfbcdc171627e26938af1ec42a99a9410cd))
 - **core:** Entity separation, multi-instance agents, dispatch strategies ([`59ad709`](https://github.com/nano-agent-team/nano-agent-team/commit/59ad70989d9193a581b68f0b13efcd6c80c672fa))
 - **settings:** Settings Agent with MCP gateway, chat UI, and real-time streaming (#22) ([`eec7888`](https://github.com/nano-agent-team/nano-agent-team/commit/eec7888f5e19f018c3bdc41fa923e139764cfe3f))
+- **setup:** Remove built-in agents — all agents sourced from hub ([`8c0c16b`](https://github.com/nano-agent-team/nano-agent-team/commit/8c0c16bf73ad2fbacb1961e0a9b1ec4897e91640))
+- **setup:** Chat routes to foreman; install_team auto-installs agents ([`990e887`](https://github.com/nano-agent-team/nano-agent-team/commit/990e887b1a7a0465e1c8fe95bd5fc01f43c78b4a))
+- **setup:** Implement Foreman identity, per-tool MCP permissions, install_agent ([`4c14ca0`](https://github.com/nano-agent-team/nano-agent-team/commit/4c14ca0a2e582b6e3a19efc2ace66bfcc3c98ca9))
 
 ### Miscellaneous
 
 - Enforce coding standards — commitlint, husky, English-only (#11) ([`900af92`](https://github.com/nano-agent-team/nano-agent-team/commit/900af929ddcda89d1dbacd7fe021ae386b906106))
 - **docker:** Expose NATS port 4222 for integration tests ([`996409c`](https://github.com/nano-agent-team/nano-agent-team/commit/996409c975bbb4e335ca18c54693042d7f553009))
 - Add test-results/ to .gitignore ([`c563feb`](https://github.com/nano-agent-team/nano-agent-team/commit/c563feb1053a9445d3fa6b61971842e0d8c6304f))
+- Resolve merge conflict — keep foreman inbox and 5min timeout ([`353c5de`](https://github.com/nano-agent-team/nano-agent-team/commit/353c5de4567c9232ae174a018fad18b584a88ec6))
 
 ### Tests
 
