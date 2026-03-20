@@ -1,0 +1,18 @@
+{
+  "id": "hello-world",
+  "name": "Hello World",
+  "version": "1.0.0",
+  "type": "feature",
+  "provides": [],
+  "requires": [],
+  "plugin": "./plugin.mjs",
+  "frontend": {
+    "routes": [
+      {
+        "path": "/hello-world",
+        "component": "HelloWorldView",
+        "nav": { "label": "Hello World", "icon": "👋" }
+      }
+    ]
+  }
+}

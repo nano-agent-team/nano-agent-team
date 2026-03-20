@@ -965,6 +965,7 @@ export async function createApiApp(
   app.use('/features/observability', express.static(path.join(TOOLS_DIR, 'observability')));
   app.use('/features/tickets', express.static(path.join(TOOLS_DIR, 'tickets')));
   app.use('/features/workflow-editor', express.static(path.join(TOOLS_DIR, 'workflow-editor')));
+  app.use('/features/hello-world', express.static(path.join(TOOLS_DIR, 'hello-world')));
   app.use('/features/data', express.static(path.join(DATA_DIR, 'features')));
 
   // ── Load tools and workflow plugins (after core API routes) ──────────────
@@ -973,6 +974,7 @@ export async function createApiApp(
   await loadTool('observability', app, nc, manager, configService, reloadFeatures);
   await loadTool('tickets', app, nc, manager, configService, reloadFeatures);
   await loadTool('workflow-editor', app, nc, manager, configService, reloadFeatures);
+  await loadTool('hello-world', app, nc, manager, configService, reloadFeatures);
 
   if (opts.setupMode === 'ready') {
     await reloadFeatures();

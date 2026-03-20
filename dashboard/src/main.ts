@@ -44,6 +44,8 @@ const componentRegistry: Record<string, LazyLoader> = {
       .then((m) => m.default ?? m),
   ObservabilityView: () =>
     import('observabilityPlugin/ObservabilityView').then((m) => m.default ?? m),
+  HelloWorldView: () =>
+    import('./modules/hello-world/HelloWorldView.vue').then((m) => m.default ?? m),
 }
 
 // ── Data fetching ─────────────────────────────────────────────────────────
