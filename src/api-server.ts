@@ -28,7 +28,7 @@ import type { ConfigService } from './config-service.js';
 import type { SetupMode } from './setup-detector.js';
 import type { McpManager } from './mcp-manager.js';
 import type { McpGateway } from './mcp-gateway.js';
-import { listTickets, getTicket, createTicket, addComment, listComments, type TicketStatus, type TicketPriority, type TicketType } from './db.js';
+import { listTickets, getTicket, addComment, listComments, type TicketPriority, type TicketType } from './db.js';
 import { TicketRegistry } from './tickets/registry.js';
 import { LocalTicketProvider } from './tickets/local-provider.js';
 import type { AbstractStatus, TicketPriority as TP } from './tickets/types.js';
@@ -673,27 +673,30 @@ export async function createApiApp(
     }
   });
 
-  app.post('/api/tickets', (req: Request, res: Response) => {
+  app.post('/api/tickets', async (req: Request, res: Response) => {
     try {
-      const { title, status, priority, type, parent_id, blocked_by, author, assigned_to, labels, body, model_hint } =
+      const { title, priority, type, parent_id, author, assigned_to, labels, body } =
         req.body as {
           title?: string;
-          status?: TicketStatus;
           priority?: TicketPriority;
           type?: TicketType;
           parent_id?: string;
-          blocked_by?: string;
           author?: string;
           assigned_to?: string;
           labels?: string;
           body?: string;
-          model_hint?: string;
         };
       if (!title) return res.status(400).json({ error: '"title" is required' });
-      const ticket = createTicket({ title, status, priority, type, parent_id, blocked_by, author, assigned_to, labels, body, model_hint });
-      // Notify pipeline that a new ticket is ready for PM
-      nc.publish('topic.ticket.new', codec.encode(JSON.stringify({ ticket_id: ticket.id })));
-      logger.info({ ticket_id: ticket.id }, 'POST /api/tickets: topic.ticket.new published');
+      const ticket = await ticketRegistry.createTicket({
+        title,
+        body,
+        priority,
+        type,
+        author,
+        assignee: assigned_to,
+        parentId: parent_id,
+        labels: labels ? labels.split(',').map(l => l.trim()).filter(Boolean) : undefined,
+      });
       emitSseEvent('ticket_created', { ticket });
       res.status(201).json(ticket);
     } catch (err) {
