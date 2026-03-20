@@ -42,7 +42,7 @@ interface GitHubNativeStatus {
 const STATUS_LABEL_PREFIX = 'status:';
 
 const ABSTRACT_TO_LABEL: Record<AbstractStatus, string | null> = {
-  new:           'status:new',
+  new:           null,            // open issues without a status label = "new"
   approved:      'status:approved',
   in_progress:   'status:in_progress',
   review:        'status:review',
@@ -196,10 +196,7 @@ export class GitHubIssuesProvider implements TicketProvider {
   // ── TicketProvider implementation ─────────────────────────────────────────
 
   async createTicket(data: CreateTicketData): Promise<Ticket> {
-    const statusLabel = ABSTRACT_TO_LABEL['new']!;
-    await this.ensureLabel(statusLabel, 'c2e0c6');
-
-    const labels = [statusLabel];
+    const labels: string[] = [];
     if (data.priority) { labels.push(`priority:${data.priority}`); }
     if (data.type)     { labels.push(`type:${data.type}`); }
     if (data.labels)   { labels.push(...data.labels); }

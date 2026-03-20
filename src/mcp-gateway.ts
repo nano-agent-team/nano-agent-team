@@ -48,6 +48,7 @@ export interface GatewayOptions {
   mcpServersDir: string;
   apiPort: string;
   hubUrl?: string;
+  alarmClock?: import('./alarm-clock.js').AlarmClock;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -667,6 +668,45 @@ function buildMcpServer(
         return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, feature_name, deployed_to: destDir, note: 'Hot-reloaded — dashboard will refresh automatically.' }) }] };
       },
     );
+
+    // ── Alarm Clock tools ──────────────────────────────────────────────────
+    if (opts?.alarmClock) {
+      const clock = opts.alarmClock;
+
+      server.tool(
+        'alarm_set',
+        'Set an alarm: publish a NATS message to an agent after a delay. The agent receives the payload on its .task subject. Returns alarm ID.',
+        {
+          agent_id: z.string().describe('Agent to wake up'),
+          delay_seconds: z.number().describe('Seconds until alarm fires'),
+          payload: z.record(z.string(), z.unknown()).optional().describe('JSON payload sent when alarm fires'),
+        },
+        async ({ agent_id, delay_seconds, payload }) => {
+          const alarm = clock.set(agent_id, delay_seconds, payload ?? { action: 'alarm' });
+          return { content: [{ type: 'text' as const, text: JSON.stringify(alarm, null, 2) }] };
+        },
+      );
+
+      server.tool(
+        'alarm_cancel',
+        'Cancel an alarm by ID.',
+        { alarm_id: z.string() },
+        async ({ alarm_id }) => {
+          const cancelled = clock.cancel(alarm_id);
+          return { content: [{ type: 'text' as const, text: cancelled ? `Alarm ${alarm_id} cancelled.` : `Alarm ${alarm_id} not found.` }] };
+        },
+      );
+
+      server.tool(
+        'alarm_list',
+        'List active alarms, optionally filtered by agent_id.',
+        { agent_id: z.string().optional() },
+        async ({ agent_id }) => {
+          const alarms = clock.list(agent_id);
+          return { content: [{ type: 'text' as const, text: JSON.stringify(alarms, null, 2) }] };
+        },
+      );
+    }
   }
 
   return server;
@@ -934,6 +974,13 @@ export class McpGateway {
       tools.push({ name: 'list_hub_agents', description: 'List standalone agents available in the hub catalog.', inputSchema: { type: 'object', properties: {} } });
       tools.push({ name: 'install_agent', description: 'Install a standalone agent from hub into /data/agents and start it.', inputSchema: { type: 'object', required: ['agent_id'], properties: { agent_id: { type: 'string' } } } });
       tools.push({ name: 'deploy_feature', description: 'Deploy a locally committed feature into /data/features and hot-reload it. No container restart needed.', inputSchema: { type: 'object', required: ['feature_name'], properties: { feature_name: { type: 'string' } } } });
+
+      // Alarm Clock tools
+      if (this.gatewayOpts?.alarmClock) {
+        tools.push({ name: 'alarm_set', description: 'Set an alarm: publish a NATS message to an agent after a delay. Returns alarm ID.', inputSchema: { type: 'object', required: ['agent_id', 'delay_seconds'], properties: { agent_id: { type: 'string' }, delay_seconds: { type: 'number' }, payload: { type: 'object' } } } });
+        tools.push({ name: 'alarm_cancel', description: 'Cancel an alarm by ID.', inputSchema: { type: 'object', required: ['alarm_id'], properties: { alarm_id: { type: 'string' } } } });
+        tools.push({ name: 'alarm_list', description: 'List active alarms, optionally filtered by agent_id.', inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } } } });
+      }
     }
 
     return tools;

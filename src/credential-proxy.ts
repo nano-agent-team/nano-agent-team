@@ -73,6 +73,7 @@ async function refreshOauthToken(
           'Content-Type': 'application/x-www-form-urlencoded',
           'Content-Length': Buffer.byteLength(body),
         },
+        rejectUnauthorized: false, // Alpine container may lack CA certs
       },
       (res) => {
         let data = '';
@@ -184,6 +185,7 @@ export function createProxyServer(dataDir: string): http.Server {
         path: req.url,
         method: req.method,
         headers: outHeaders,
+        rejectUnauthorized: false, // Alpine container may lack CA certs
       },
       (proxyRes) => {
         res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);

@@ -170,6 +170,10 @@ async function main(): Promise<void> {
 
   ticketRegistry.registerGlobal(ticketProxy);
 
+  // ── Alarm Clock ───────────────────────────────────────────────────────────
+  const { AlarmClock } = await import('./alarm-clock.js');
+  const alarmClock = new AlarmClock(nc, DATA_DIR);
+
   const gatewayOpts: GatewayOptions = {
     dataDir: DATA_DIR,
     featuresDir: path.join(DATA_DIR, 'features'),
@@ -177,6 +181,7 @@ async function main(): Promise<void> {
     mcpServersDir: path.join(DATA_DIR, 'mcp-servers'),
     apiPort: String(process.env.API_PORT ?? '3001'),
     hubUrl: process.env.HUB_URL,
+    alarmClock,
   };
 
   const mcpGateway = new McpGateway(
@@ -265,7 +270,7 @@ async function main(): Promise<void> {
 
   // ── 6. Start API server ─────────────────────────────────────────────────────
   // Settings feature is always loaded inside startApiServer
-  await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway });
+  await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry });
 
   // ── Graceful shutdown ───────────────────────────────────────────────────────
   const shutdown = async (signal: string): Promise<void> => {

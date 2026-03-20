@@ -501,6 +501,22 @@ export default {
           log.warn('Could not copy .claude.json to data volume', { err: String(e) });
         }
 
+        // Also write credentials.json for credential-proxy (proxy mode)
+        const credentialsPath = path.join(dataDir, 'credentials.json');
+        const credentials = {
+          version: 1,
+          method: 'oauth',
+          oauth_token: tokenData.access_token,
+          refresh_token: tokenData.refresh_token ?? null,
+          api_key: null,
+          created_at: new Date().toISOString(),
+          expires_at: tokenData.expires_in
+            ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
+            : null,
+        };
+        fs.writeFileSync(credentialsPath, JSON.stringify(credentials, null, 2), { mode: 0o600 });
+        console.log(`[auth] credentials.json written for proxy mode`);
+
         console.log(`[auth] OAuth token saved to ${claudeJsonPath}`);
         authLoginSession = null;
 

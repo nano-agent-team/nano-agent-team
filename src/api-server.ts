@@ -297,15 +297,19 @@ export async function createApiApp(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry },
 ): Promise<express.Application> {
   const app = express();
   app.use(express.json());
   app.use(express.urlencoded({ extended: false }));
 
-  // ── Ticket registry (global provider: Local/SQLite) ───────────────────────
-  const ticketRegistry = new TicketRegistry(nc);
-  ticketRegistry.registerGlobal(new LocalTicketProvider());
+  // ── Ticket registry ───────────────────────────────────────────────────────
+  // Use injected registry (with GH proxy) or fallback to local-only
+  const ticketRegistry = opts.ticketRegistry ?? (() => {
+    const r = new TicketRegistry(nc);
+    r.registerGlobal(new LocalTicketProvider());
+    return r;
+  })();
 
   // OTel span enrichment — give spans meaningful names after Express routing
   if (isTracingEnabled()) {
@@ -663,10 +667,14 @@ export async function createApiApp(
 
   // ── Tickets REST API ─────────────────────────────────────────────────────
 
-  app.get('/api/tickets', (req: Request, res: Response) => {
+  app.get('/api/tickets', async (req: Request, res: Response) => {
     try {
       const { status, priority, assigned_to } = req.query as Record<string, string | undefined>;
-      const tickets = listTickets({ status, priority, assigned_to });
+      const tickets = await ticketRegistry.listTickets({
+        status: status as import('./tickets/types.js').AbstractStatus | undefined,
+        priority: priority as TicketPriority | undefined,
+        assignee: assigned_to,
+      });
       res.json(tickets);
     } catch (err) {
       logger.error({ err }, 'GET /api/tickets error');
@@ -895,6 +903,21 @@ export async function createApiApp(
     }
   });
 
+  // Send a NATS message to an agent's task subject (used to trigger agent workflows)
+  app.post('/internal/agents/:agentId/send', async (req: Request, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+      const payload = JSON.stringify(req.body ?? {});
+      const subject = `agent.${agentId}.task`;
+      await publish(nc, subject, payload);
+      res.json({ ok: true, subject, payloadLength: payload.length });
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/agents/:agentId/send error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   // Start a freshly installed agent from disk (not yet in manager memory)
   app.post('/internal/agents/:agentId/start-installed', async (req: Request, res: Response) => {
     try {
@@ -1006,7 +1029,7 @@ export async function startApiServer(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry },
 ): Promise<void> {
   const app = await createApiApp(manager, nc, configService, opts);
 
