@@ -2,8 +2,8 @@ const currentImports = {};
       const exportSet = new Set(['Module', '__esModule', 'default', '_export_sfc']);
       let moduleMap = {
 "./SimpleChatView":()=>{
-      dynamicLoadingCss(["__federation_expose_SimpleChatView-BYBy1g7f.css"], false, './SimpleChatView');
-      return __federation_import('./__federation_expose_SimpleChatView-tqde-7bs.js').then(module =>Object.keys(module).every(item => exportSet.has(item)) ? () => module.default : () => module)},};
+      dynamicLoadingCss(["__federation_expose_SimpleChatView-CDTiV_eC.css"], false, './SimpleChatView');
+      return __federation_import('./__federation_expose_SimpleChatView-BY7SbWeb.js').then(module =>Object.keys(module).every(item => exportSet.has(item)) ? () => module.default : () => module)},};
       const seen = {};
       const dynamicLoadingCss = (cssFilePaths, dontAppendStylesToHead, exposeItemName) => {
         const metaUrl = import.meta.url;

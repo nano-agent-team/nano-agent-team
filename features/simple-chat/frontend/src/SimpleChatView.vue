@@ -25,6 +25,7 @@
           <span class="chat-role">Agent</span>
           <p class="chat-text chat-loading">
             <span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+            <span v-if="currentToolCall" class="tool-call-label">{{ currentToolCall }}</span>
           </p>
         </div>
       </div>
@@ -69,6 +70,7 @@ const messages = ref<Message[]>(saved.messages)
 const sessionId = saved.sessionId
 const inputText = ref('')
 const loading = ref(false)
+const currentToolCall = ref<string | null>(null)
 const messagesEl = ref<HTMLElement | null>(null)
 
 watch(messages, (val) => {
@@ -91,6 +93,8 @@ async function sendMessage() {
   loading.value = true
   await scrollToBottom()
 
+  let streamingMsg: Message | null = null
+
   try {
     const res = await fetch('/api/chat/simple-chat', {
       method: 'POST',
@@ -98,20 +102,49 @@ async function sendMessage() {
       body: JSON.stringify({ message: text, sessionId }),
     })
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-      messages.value.push({ role: 'agent', text: `Chyba: ${err.error ?? res.statusText}` })
-    } else {
-      const data = await res.json() as { reply: unknown }
-      const replyText = typeof data.reply === 'string'
-        ? data.reply
-        : JSON.stringify(data.reply)
-      messages.value.push({ role: 'agent', text: replyText })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+    const reader = res.body!.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+
+    const processLine = async (line: string) => {
+      if (!line.startsWith('data: ')) return
+      try {
+        const event = JSON.parse(line.slice(6)) as { type: string; text?: string; error?: string; toolName?: string }
+
+        if (event.type === 'tool_call') {
+          currentToolCall.value = event.toolName ?? null
+        } else if (event.type === 'chunk') {
+          currentToolCall.value = null
+          if (!streamingMsg) {
+            messages.value.push({ role: 'agent', text: '' })
+            streamingMsg = messages.value[messages.value.length - 1]
+          }
+          streamingMsg.text += event.text ?? ''
+          await nextTick()
+          scrollToBottom()
+        } else if (event.type === 'error') {
+          messages.value.push({ role: 'agent', text: `Chyba: ${event.error ?? 'Unknown error'}` })
+        }
+      } catch { /* ignore malformed lines */ }
     }
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() ?? ''
+      for (const line of lines) await processLine(line.trim())
+    }
+    if (buf.trim()) await processLine(buf.trim())
+
   } catch (err) {
     messages.value.push({ role: 'agent', text: `Síťová chyba: ${String(err)}` })
   } finally {
     loading.value = false
+    currentToolCall.value = null
     await scrollToBottom()
   }
 }
@@ -281,5 +314,13 @@ async function sendMessage() {
 .chat-send-btn:disabled {
   background-color: #93c5fd;
   cursor: not-allowed;
+}
+
+.tool-call-label {
+  font-size: 0.75rem;
+  color: #9ca3af;
+  margin-left: 0.5rem;
+  opacity: 0.7;
+  font-style: italic;
 }
 </style>

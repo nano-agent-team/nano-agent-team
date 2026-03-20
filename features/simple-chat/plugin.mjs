@@ -35,24 +35,38 @@ export default {
       }
 
       const sid = sessionId ?? 'default';
-      const replySubject = `chat.reply.${sid}.${Date.now()}`;
+      const streamSubject = `chat.stream.${sid}.${Date.now()}`;
+
+      // SSE headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
+      const sse = (data) => {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+        res.flush?.();
+      };
 
       try {
-        const sub = nc.subscribe(replySubject, { max: 1, timeout: 30_000 });
+        const sub = nc.subscribe(streamSubject);
+        res.on('close', () => sub.unsubscribe());
+        const timeoutHandle = setTimeout(() => sub.unsubscribe(), 300_000);
 
         await publishNats(`agent.${targetAgent}.inbox`,
-          JSON.stringify({ text: message, sessionId: sid, replySubject }),
+          JSON.stringify({ text: message, sessionId: sid, streamSubject }),
         );
 
         for await (const msg of sub) {
-          const data = JSON.parse(codec.decode(msg.data));
-          const reply = typeof data?.result === 'string' ? data.result : JSON.stringify(data);
-          res.json({ reply, agentId: targetAgent });
-          break;
+          const event = JSON.parse(codec.decode(msg.data));
+          sse(event);
+          if (event.type === 'done' || event.type === 'error') break;
         }
+
+        clearTimeout(timeoutHandle);
       } catch (err) {
-        res.status(503).json({ error: `Agent ${targetAgent} not responding`, detail: String(err) });
+        sse({ type: 'error', error: `Agent ${targetAgent} not responding` });
       }
+      res.end();
     });
 
     // ── Serve simple-chat frontend static assets ──────────────────────────────
