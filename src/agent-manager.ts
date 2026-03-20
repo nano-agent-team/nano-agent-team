@@ -68,6 +68,12 @@ interface HeartbeatPayload {
   task?: string;
 }
 
+interface AgentEnvAndBinds {
+  env: string[];
+  binds: string[];
+  image: string;
+}
+
 // ─── AgentManager ────────────────────────────────────────────────────────────
 
 export class AgentManager {
@@ -245,227 +251,9 @@ export class AgentManager {
 
       // HOST_DATA_DIR lets Docker daemon (on host) resolve the correct bind path
       // when nano-agent-team's /data volume differs from the host's /data directory.
-      const hostDataDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
       fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
-      // DB dir for MCP server mount
-      const dbDir = hostDataDir;
-
-      // Build env vars for the container
-      let config: NanoConfig | null = null;
-      if (this.configService) {
-        config = await this.configService.load();
-      }
-
-      // Resolve provider and model for this agent
-      // Vault config override is loaded below after teamConfigBlock — read it early for model resolution
-      const vaultId = agent.vaultId ?? id;
-      const vaultConfigPathEarly = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.json`);
-      let vaultConfigEarly: { model?: string; subscribe_topics?: string[] } = {};
-      if (fs.existsSync(vaultConfigPathEarly)) {
-        try { vaultConfigEarly = JSON.parse(fs.readFileSync(vaultConfigPathEarly, 'utf8')); } catch { /* ignore */ }
-      }
-      const { provider: providerName, model: baseModel, modelExplicit } = this.resolveAgentProvider(agent, config ?? {});
-      const model = vaultConfigEarly.model ?? baseModel;
-      if (vaultConfigEarly.model) {
-        logger.info({ agentId: id, vaultModel: vaultConfigEarly.model, baseModel }, 'Model overridden by vault config');
-      }
-
-      // Resolve auth tokens based on provider
-      const codexToken = config ? await this.resolveCodexToken(config) : undefined;
-
-      // Read CLAUDE.md and pass as env var — agent dir is mounted from inside nano-live
-      // but Docker daemon resolves bind paths on the host where /app/ may not exist.
-      const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
-      let claudeMdContent = fs.existsSync(claudeMdPath)
-        ? fs.readFileSync(claudeMdPath, 'utf8')
-        : '';
-
-      // Resolve team config from config.json (set during team install)
-      let repoUrl = process.env.REPO_URL ?? '';
-      let githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? '';
-      let teamConfigBlock = '';
-      if (config) {
-        try {
-          const raw = config as unknown as Record<string, unknown>;
-          const teams = raw?.teams as Record<string, { config?: Record<string, unknown> }> | undefined;
-          if (teams) {
-            for (const [teamId, team] of Object.entries(teams)) {
-              const tc = team.config;
-              if (tc) {
-                if (!repoUrl && typeof tc.repo_url === 'string') repoUrl = tc.repo_url;
-                if (!githubToken && typeof tc.github_token === 'string') githubToken = tc.github_token;
-                // Build context block with all team config values
-                const lines = Object.entries(tc)
-                  .filter(([k, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
-                  .filter(([k]) => k !== 'github_token') // Don't expose token in CLAUDE.md
-                  .map(([k, v]) => `- ${k}: ${v}`);
-                if (lines.length > 0) {
-                  teamConfigBlock = `\n\n## Konfigurace týmu (${teamId})\n\n${lines.join('\n')}\n`;
-                }
-              }
-            }
-          }
-        } catch { /* ignore */ }
-      }
-
-      // Inject team config into agent's system prompt
-      if (teamConfigBlock && claudeMdContent) {
-        claudeMdContent += teamConfigBlock;
-      }
-
-      // Load vault custom instructions (appended after base CLAUDE.md + team config)
-      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.md`);
-      if (fs.existsSync(customInstructionsPath)) {
-        const customContent = fs.readFileSync(customInstructionsPath, 'utf8').trim();
-        if (customContent) {
-          claudeMdContent += `\n\n## Custom instructions\n\n${customContent}`;
-        }
-      }
-
-      const env = [
-        `NATS_URL=${this.resolveNatsUrl()}`,
-        `AGENT_ID=${id}`,
-        `CONSUMER_NAME=${agent.consumerName ?? id}`,
-        `SUBSCRIBE_TOPICS=${(Array.isArray(vaultConfigEarly.subscribe_topics) && vaultConfigEarly.subscribe_topics.length > 0 ? vaultConfigEarly.subscribe_topics : resolveTopicsForAgent(agent.manifest, agent.binding, id)).join(',')}`,
-        `PROVIDER=${providerName}`,
-        `MODEL=${model}`,
-        `MODEL_EXPLICIT=${modelExplicit}`,
-        `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
-        `LOG_LEVEL=info`,
-        // MCP Gateway — HTTP MCP server in nate, accessible from DinD via host.docker.internal
-        `MCP_GATEWAY_URL=http://${this.resolveMcpGatewayHost()}:${MCP_GATEWAY_PORT}/mcp`,
-        // Provider-specific auth tokens
-        ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
-        ...(providerName === 'codex' && codexToken ? [
-          // Subscription token or API key
-          ...(codexToken.startsWith('sk-proj-') || codexToken.startsWith('sk-')
-            ? [`OPENAI_API_KEY=${codexToken}`]
-            : [`CODEX_OAUTH_TOKEN=${codexToken}`]
-          ),
-        ] : []),
-        ...(providerName === 'gemini' ? [
-          ...(config?.providers?.gemini?.apiKey ? [`GEMINI_API_KEY=${config.providers.gemini.apiKey}`] : []),
-          ...(process.env.GEMINI_API_KEY ? [`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`] : []),
-        ] : []),
-        // Tickets MCP server DB path inside container
-        `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
-        // Pass CLAUDE.md content as env var (avoids Docker bind mount path resolution issues)
-        ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
-        // Inject MCP servers from mcp_config manifest field
-        ...(() => {
-          if (!agent.manifest.mcp_config) return [];
-          try {
-            const raw = fs.readFileSync(agent.manifest.mcp_config, 'utf8');
-            const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
-            const servers = parsed.mcpServers ?? {};
-            // Patch API_PORT and CONTROL_PLANE_URL to match current instance
-            const apiPort = process.env.API_PORT ?? '3001';
-            const cfg = servers as Record<string, { env?: Record<string, string> }>;
-            if (cfg.config?.env) cfg.config.env['API_PORT'] = apiPort;
-            if (cfg.management?.env) {
-              cfg.management.env['CONTROL_PLANE_URL'] = `http://host.docker.internal:${apiPort}`;
-            }
-            return [`AGENT_MCP_SERVERS=${JSON.stringify(servers)}`];
-          } catch {
-            return [];
-          }
-        })(),
-        // Pass GitHub token if available (from team config or env vars, for gh CLI and git push)
-        ...(githubToken ? [`GH_TOKEN=${githubToken}`] : []),
-        // Pass repo URL from config (set during team install)
-        ...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
-        // Observability: propagate OTel config to agent containers
-        ...await this.getObservabilityEnvVars(),
-      ];
-
-      // Volume: agent dir → /workspace/agent (read-only)
-      const binds = [`${agent.dir}:/workspace/agent:ro`];
-
-      // Volume: DB dir → /workspace/db (read-write, for MCP tickets server)
-      binds.push(`${dbDir}:/workspace/db:rw`);
-
-      // Volume: shared vault → /workspace/vault (read-write, all agents)
-      const vaultDir = path.join(hostDataDir, 'vault');
-      fs.mkdirSync(vaultDir, { recursive: true });
-      binds.push(`${vaultDir}:/workspace/vault:rw`);
-
-      // Volume: per-agent sessions → /workspace/sessions (read-write, Claude SDK storage)
-      const sessionDir = path.join(hostDataDir, 'sessions', id);
-      fs.mkdirSync(sessionDir, { recursive: true });
-      binds.push(`${sessionDir}:/workspace/sessions:rw`);
-
-      // Volume: Provider-specific credentials
-      // Claude Code credentials → /root/.claude (read-write for session cache)
-      // Claude Code 2.x also needs ~/.claude.json (OAuth token file)
-      // Skip in proxy mode: agents use ANTHROPIC_BASE_URL instead of direct auth
-      if ((providerName === 'claude' || providerName === 'auto' || !providerName) && !this.isProxyMode()) {
-        const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
-        if (fs.existsSync(claudeDir)) {
-          binds.push(`${claudeDir}:/root/.claude:rw`);
-          logger.debug({ id, claudeDir }, 'Mounting .claude dir (rw)');
-        }
-        const claudeJson = path.join(process.env.HOME ?? '/root', '.claude.json');
-        const hostClaudeJson = process.env.HOST_CLAUDE_JSON ?? claudeJson;
-        if (fs.existsSync(claudeJson)) {
-          binds.push(`${hostClaudeJson}:/root/.claude.json:rw`);
-          logger.debug({ id, hostClaudeJson }, 'Mounting .claude.json (rw)');
-        }
-      }
-
-      // Codex CLI credentials → /root/.codex (read-write so Codex CLI can refresh tokens)
-      // HOST_CODEX_DIR = host path (for Docker bind source)
-      // container path /root/.codex = where we check existence
-      if (providerName === 'codex') {
-        const containerCodexDir = path.join(process.env.HOME ?? '/root', '.codex');
-        const hostCodexDir = process.env.HOST_CODEX_DIR ?? containerCodexDir;
-        if (fs.existsSync(containerCodexDir)) {
-          binds.push(`${hostCodexDir}:/root/.codex:rw`);
-          logger.debug({ id, hostCodexDir }, 'Mounting .codex dir (rw)');
-        }
-      }
-
-      // Volume: SSH keys → /root/.ssh (optional, for agents needing git SSH push)
-      if (agent.manifest.ssh_mount) {
-        const sshDir = path.join(process.env.HOME ?? '/root', '.ssh');
-        if (fs.existsSync(sshDir)) {
-          binds.push(`${sshDir}:/root/.ssh:ro`);
-          logger.debug({ id, sshDir }, 'Mounting SSH keys');
-        } else {
-          logger.warn({ id, sshDir }, 'ssh_mount=true but ~/.ssh not found on host');
-        }
-      }
-
-      // Volume: personal workspace → /workspace/personal (optional, for developer-type agents)
-      if (agent.manifest.workspace) {
-        const wsDir = path.join(hostDataDir, 'workspaces', id);
-        fs.mkdirSync(wsDir, { recursive: true });
-        binds.push(`${wsDir}:/workspace/personal:rw`);
-        logger.debug({ id, wsDir }, 'Mounting personal workspace');
-      }
-
-      // Volume: repo path → /workspace/repo (optional, for git workflow agents)
-      if (agent.manifest.repo_path) {
-        binds.push(`${agent.manifest.repo_path}:/workspace/repo:rw`);
-        logger.debug({ id, repo_path: agent.manifest.repo_path }, 'Mounting repo workspace');
-      }
-
-      // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
-      if (agent.manifest.project_workspace && !agent.manifest.repo_path) {
-        const projectRoot = path.resolve(hostDataDir, '..', '..');
-        binds.push(`${projectRoot}:/workspace/repo:rw`);
-        logger.debug({ id, projectRoot }, 'Mounting project workspace');
-      } else if (agent.manifest.project_workspace && agent.manifest.repo_path) {
-        logger.warn({ id }, 'project_workspace ignored: repo_path already set for /workspace/repo');
-      }
-
-      // Use per-agent image if specified in manifest.
-      // Convention: if agents/{id}/Dockerfile exists, image is nano-agent-{id}:latest
-      // Otherwise fall back to default AGENT_IMAGE.
-      const perAgentImage = `nano-agent-${id}:latest`;
-      const hasPerAgentImage = await this.imageExists(perAgentImage);
-      const image = agent.manifest.image ?? (hasPerAgentImage ? perAgentImage : AGENT_IMAGE);
-      logger.debug({ id, image }, 'Using container image');
+      const { env, binds, image } = await this.buildAgentEnvAndBinds(agent, id);
 
       const container = await this.docker.createContainer({
         Image: image,
@@ -698,93 +486,7 @@ export class AgentManager {
       // 1. Start new container in wait-for-signal mode
       await this.removeContainerIfExists(nextContainerName);
 
-      // Build env — SYNC with startAgent() env block
-      const hostDataDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
-      const vaultId = agent.vaultId ?? agentId;
-      const vaultConfigPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.json`);
-      let vaultConfig: { model?: string; subscribe_topics?: string[] } = {};
-      if (fs.existsSync(vaultConfigPath)) {
-        try { vaultConfig = JSON.parse(fs.readFileSync(vaultConfigPath, 'utf8')); } catch { /* ignore */ }
-      }
-
-      let config = null;
-      if (this.configService) config = await this.configService.load();
-      const { provider: providerName, model: baseModel, modelExplicit } = this.resolveAgentProvider(agent, config ?? {});
-      const model = vaultConfig.model ?? baseModel;
-      const codexToken = config ? await this.resolveCodexToken(config) : undefined;
-
-      const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
-      let claudeMdContent = fs.existsSync(claudeMdPath) ? fs.readFileSync(claudeMdPath, 'utf8') : '';
-
-      // Resolve team config from config.json (set during team install)
-      let teamConfigBlock = '';
-      if (config) {
-        try {
-          const raw = config as unknown as Record<string, unknown>;
-          const teams = raw?.teams as Record<string, { config?: Record<string, unknown> }> | undefined;
-          if (teams) {
-            for (const [teamId, team] of Object.entries(teams)) {
-              const tc = team.config;
-              if (tc) {
-                const lines = Object.entries(tc)
-                  .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
-                  .filter(([k]) => k !== 'github_token')
-                  .map(([k, v]) => `- ${k}: ${v}`);
-                if (lines.length > 0) {
-                  teamConfigBlock = `\n\n## Konfigurace týmu (${teamId})\n\n${lines.join('\n')}\n`;
-                }
-              }
-            }
-          }
-        } catch { /* ignore */ }
-      }
-      if (teamConfigBlock && claudeMdContent) claudeMdContent += teamConfigBlock;
-
-      const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.md`);
-      if (fs.existsSync(customInstructionsPath)) {
-        const custom = fs.readFileSync(customInstructionsPath, 'utf8').trim();
-        if (custom) claudeMdContent += `\n\n## Custom instructions\n\n${custom}`;
-      }
-
-      const env = [
-        `NATS_URL=${this.resolveNatsUrl()}`,
-        `AGENT_ID=${agentId}`,
-        `CONSUMER_NAME=${agent.consumerName ?? agentId}`,
-        `SUBSCRIBE_TOPICS=${resolveTopicsForAgent(agent.manifest, agent.binding, agentId).join(',')}`,
-        `PROVIDER=${providerName}`,
-        `MODEL=${model}`,
-        `MODEL_EXPLICIT=${modelExplicit}`,
-        `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
-        `LOG_LEVEL=info`,
-        `WAIT_FOR_START_SIGNAL=true`,
-        ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
-        ...(providerName === 'codex' && codexToken ? [
-          ...(codexToken.startsWith('sk-proj-') || codexToken.startsWith('sk-')
-            ? [`OPENAI_API_KEY=${codexToken}`]
-            : [`CODEX_OAUTH_TOKEN=${codexToken}`]
-          ),
-        ] : []),
-        ...(providerName === 'gemini' ? [
-          ...(config?.providers?.gemini?.apiKey ? [`GEMINI_API_KEY=${config.providers.gemini.apiKey}`] : []),
-          ...(process.env.GEMINI_API_KEY ? [`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`] : []),
-        ] : []),
-        `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
-        ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
-        ...await this.getObservabilityEnvVars(),
-      ];
-
-      const binds = [`${agent.dir}:/workspace/agent:ro`];
-      binds.push(`${hostDataDir}:/workspace/db:rw`);
-      const vaultDir = path.join(hostDataDir, 'vault');
-      fs.mkdirSync(vaultDir, { recursive: true });
-      binds.push(`${vaultDir}:/workspace/vault:rw`);
-      const sessionDir = path.join(hostDataDir, 'sessions', agentId);
-      fs.mkdirSync(sessionDir, { recursive: true });
-      binds.push(`${sessionDir}:/workspace/sessions:rw`);
-
-      const perAgentImage = `nano-agent-${agentId}:latest`;
-      const hasPerAgentImage = await this.imageExists(perAgentImage);
-      const image = agent.manifest.image ?? (hasPerAgentImage ? perAgentImage : AGENT_IMAGE);
+      const { env, binds, image } = await this.buildAgentEnvAndBinds(agent, agentId, ['WAIT_FOR_START_SIGNAL=true']);
 
       const nextContainer = await this.docker.createContainer({
         Image: image,
@@ -869,6 +571,239 @@ export class AgentManager {
       state.pendingContainerId = undefined;
       state.status = 'running'; // revert to running so health monitoring continues
     }
+  }
+
+  /**
+   * Build the full env, binds, and image for an agent container.
+   * Shared by startAgent() and rolloverAgent() to eliminate duplication.
+   * @param agent     The loaded agent definition
+   * @param agentId   The agent instance ID
+   * @param extraEnv  Additional env vars appended at the end (e.g. ['WAIT_FOR_START_SIGNAL=true'])
+   */
+  private async buildAgentEnvAndBinds(agent: LoadedAgent, agentId: string, extraEnv?: string[]): Promise<AgentEnvAndBinds> {
+    // HOST_DATA_DIR lets Docker daemon (on host) resolve the correct bind path
+    const hostDataDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
+
+    // Vault config override (model, subscribe_topics)
+    const vaultId = agent.vaultId ?? agentId;
+    const vaultConfigPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.json`);
+    let vaultConfig: { model?: string; subscribe_topics?: string[] } = {};
+    if (fs.existsSync(vaultConfigPath)) {
+      try { vaultConfig = JSON.parse(fs.readFileSync(vaultConfigPath, 'utf8')); } catch { /* ignore */ }
+    }
+
+    // Config service
+    let config: NanoConfig | null = null;
+    if (this.configService) {
+      config = await this.configService.load();
+    }
+
+    // Resolve provider and model for this agent
+    const { provider: providerName, model: baseModel, modelExplicit } = this.resolveAgentProvider(agent, config ?? {});
+    const model = vaultConfig.model ?? baseModel;
+    if (vaultConfig.model) {
+      logger.info({ agentId, vaultModel: vaultConfig.model, baseModel }, 'Model overridden by vault config');
+    }
+
+    // Resolve auth tokens based on provider
+    const codexToken = config ? await this.resolveCodexToken(config) : undefined;
+
+    // Read CLAUDE.md and pass as env var — agent dir is mounted from inside nano-live
+    // but Docker daemon resolves bind paths on the host where /app/ may not exist.
+    const claudeMdPath = path.join(agent.dir, 'CLAUDE.md');
+    let claudeMdContent = fs.existsSync(claudeMdPath)
+      ? fs.readFileSync(claudeMdPath, 'utf8')
+      : '';
+
+    // Resolve team config from config.json (set during team install)
+    let repoUrl = process.env.REPO_URL ?? '';
+    let githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? '';
+    let teamConfigBlock = '';
+    if (config) {
+      try {
+        const raw = config as unknown as Record<string, unknown>;
+        const teams = raw?.teams as Record<string, { config?: Record<string, unknown> }> | undefined;
+        if (teams) {
+          for (const [teamId, team] of Object.entries(teams)) {
+            const tc = team.config;
+            if (tc) {
+              if (!repoUrl && typeof tc.repo_url === 'string') repoUrl = tc.repo_url;
+              if (!githubToken && typeof tc.github_token === 'string') githubToken = tc.github_token;
+              // Build context block with all team config values
+              const lines = Object.entries(tc)
+                .filter(([, v]) => typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean')
+                .filter(([k]) => k !== 'github_token') // Don't expose token in CLAUDE.md
+                .map(([k, v]) => `- ${k}: ${v}`);
+              if (lines.length > 0) {
+                teamConfigBlock = `\n\n## Konfigurace týmu (${teamId})\n\n${lines.join('\n')}\n`;
+              }
+            }
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    // Inject team config into agent's system prompt
+    if (teamConfigBlock && claudeMdContent) {
+      claudeMdContent += teamConfigBlock;
+    }
+
+    // Load vault custom instructions (appended after base CLAUDE.md + team config)
+    const customInstructionsPath = path.join(DATA_DIR, 'vault', 'agents', `${vaultId}.md`);
+    if (fs.existsSync(customInstructionsPath)) {
+      const customContent = fs.readFileSync(customInstructionsPath, 'utf8').trim();
+      if (customContent) {
+        claudeMdContent += `\n\n## Custom instructions\n\n${customContent}`;
+      }
+    }
+
+    const env = [
+      `NATS_URL=${this.resolveNatsUrl()}`,
+      `AGENT_ID=${agentId}`,
+      `CONSUMER_NAME=${agent.consumerName ?? agentId}`,
+      `SUBSCRIBE_TOPICS=${(Array.isArray(vaultConfig.subscribe_topics) && vaultConfig.subscribe_topics.length > 0 ? vaultConfig.subscribe_topics : resolveTopicsForAgent(agent.manifest, agent.binding, agentId)).join(',')}`,
+      `PROVIDER=${providerName}`,
+      `MODEL=${model}`,
+      `MODEL_EXPLICIT=${modelExplicit}`,
+      `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
+      `LOG_LEVEL=info`,
+      // MCP Gateway — HTTP MCP server in nate, accessible from DinD via host.docker.internal
+      `MCP_GATEWAY_URL=http://${this.resolveMcpGatewayHost()}:${MCP_GATEWAY_PORT}/mcp`,
+      // Provider-specific auth tokens
+      ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
+      ...(providerName === 'codex' && codexToken ? [
+        // Subscription token or API key
+        ...(codexToken.startsWith('sk-proj-') || codexToken.startsWith('sk-')
+          ? [`OPENAI_API_KEY=${codexToken}`]
+          : [`CODEX_OAUTH_TOKEN=${codexToken}`]
+        ),
+      ] : []),
+      ...(providerName === 'gemini' ? [
+        ...(config?.providers?.gemini?.apiKey ? [`GEMINI_API_KEY=${config.providers.gemini.apiKey}`] : []),
+        ...(process.env.GEMINI_API_KEY ? [`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`] : []),
+      ] : []),
+      // Tickets MCP server DB path inside container
+      `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
+      // Pass CLAUDE.md content as env var (avoids Docker bind mount path resolution issues)
+      ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
+      // Inject MCP servers from mcp_config manifest field
+      ...(() => {
+        if (!agent.manifest.mcp_config) return [];
+        try {
+          const raw = fs.readFileSync(agent.manifest.mcp_config, 'utf8');
+          const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
+          const servers = parsed.mcpServers ?? {};
+          // Patch API_PORT and CONTROL_PLANE_URL to match current instance
+          const apiPort = process.env.API_PORT ?? '3001';
+          const cfg = servers as Record<string, { env?: Record<string, string> }>;
+          if (cfg.config?.env) cfg.config.env['API_PORT'] = apiPort;
+          if (cfg.management?.env) {
+            cfg.management.env['CONTROL_PLANE_URL'] = `http://host.docker.internal:${apiPort}`;
+          }
+          return [`AGENT_MCP_SERVERS=${JSON.stringify(servers)}`];
+        } catch {
+          return [];
+        }
+      })(),
+      // Pass GitHub token if available (from team config or env vars, for gh CLI and git push)
+      ...(githubToken ? [`GH_TOKEN=${githubToken}`] : []),
+      // Pass repo URL from config (set during team install)
+      ...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
+      // Observability: propagate OTel config to agent containers
+      ...await this.getObservabilityEnvVars(),
+      // Caller-supplied extras (e.g. WAIT_FOR_START_SIGNAL=true for rollover)
+      ...(extraEnv ?? []),
+    ];
+
+    // Volume: agent dir → /workspace/agent (read-only)
+    const binds = [`${agent.dir}:/workspace/agent:ro`];
+
+    // Volume: DB dir → /workspace/db (read-write, for MCP tickets server)
+    binds.push(`${hostDataDir}:/workspace/db:rw`);
+
+    // Volume: shared vault → /workspace/vault (read-write, all agents)
+    const vaultDir = path.join(hostDataDir, 'vault');
+    fs.mkdirSync(vaultDir, { recursive: true });
+    binds.push(`${vaultDir}:/workspace/vault:rw`);
+
+    // Volume: per-agent sessions → /workspace/sessions (read-write, Claude SDK storage)
+    const sessionDir = path.join(hostDataDir, 'sessions', agentId);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    binds.push(`${sessionDir}:/workspace/sessions:rw`);
+
+    // Volume: Provider-specific credentials
+    // Claude Code credentials → /root/.claude (read-write for session cache)
+    // Claude Code 2.x also needs ~/.claude.json (OAuth token file)
+    // Skip in proxy mode: agents use ANTHROPIC_BASE_URL instead of direct auth
+    if ((providerName === 'claude' || providerName === 'auto' || !providerName) && !this.isProxyMode()) {
+      const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
+      if (fs.existsSync(claudeDir)) {
+        binds.push(`${claudeDir}:/root/.claude:rw`);
+        logger.debug({ agentId, claudeDir }, 'Mounting .claude dir (rw)');
+      }
+      const claudeJson = path.join(process.env.HOME ?? '/root', '.claude.json');
+      const hostClaudeJson = process.env.HOST_CLAUDE_JSON ?? claudeJson;
+      if (fs.existsSync(claudeJson)) {
+        binds.push(`${hostClaudeJson}:/root/.claude.json:rw`);
+        logger.debug({ agentId, hostClaudeJson }, 'Mounting .claude.json (rw)');
+      }
+    }
+
+    // Codex CLI credentials → /root/.codex (read-write so Codex CLI can refresh tokens)
+    // HOST_CODEX_DIR = host path (for Docker bind source)
+    // container path /root/.codex = where we check existence
+    if (providerName === 'codex') {
+      const containerCodexDir = path.join(process.env.HOME ?? '/root', '.codex');
+      const hostCodexDir = process.env.HOST_CODEX_DIR ?? containerCodexDir;
+      if (fs.existsSync(containerCodexDir)) {
+        binds.push(`${hostCodexDir}:/root/.codex:rw`);
+        logger.debug({ agentId, hostCodexDir }, 'Mounting .codex dir (rw)');
+      }
+    }
+
+    // Volume: SSH keys → /root/.ssh (optional, for agents needing git SSH push)
+    if (agent.manifest.ssh_mount) {
+      const sshDir = path.join(process.env.HOME ?? '/root', '.ssh');
+      if (fs.existsSync(sshDir)) {
+        binds.push(`${sshDir}:/root/.ssh:ro`);
+        logger.debug({ agentId, sshDir }, 'Mounting SSH keys');
+      } else {
+        logger.warn({ agentId, sshDir }, 'ssh_mount=true but ~/.ssh not found on host');
+      }
+    }
+
+    // Volume: personal workspace → /workspace/personal (optional, for developer-type agents)
+    if (agent.manifest.workspace) {
+      const wsDir = path.join(hostDataDir, 'workspaces', agentId);
+      fs.mkdirSync(wsDir, { recursive: true });
+      binds.push(`${wsDir}:/workspace/personal:rw`);
+      logger.debug({ agentId, wsDir }, 'Mounting personal workspace');
+    }
+
+    // Volume: repo path → /workspace/repo (optional, for git workflow agents)
+    if (agent.manifest.repo_path) {
+      binds.push(`${agent.manifest.repo_path}:/workspace/repo:rw`);
+      logger.debug({ agentId, repo_path: agent.manifest.repo_path }, 'Mounting repo workspace');
+    }
+
+    // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
+    if (agent.manifest.project_workspace && !agent.manifest.repo_path) {
+      const projectRoot = path.resolve(hostDataDir, '..', '..');
+      binds.push(`${projectRoot}:/workspace/repo:rw`);
+      logger.debug({ agentId, projectRoot }, 'Mounting project workspace');
+    } else if (agent.manifest.project_workspace && agent.manifest.repo_path) {
+      logger.warn({ agentId }, 'project_workspace ignored: repo_path already set for /workspace/repo');
+    }
+
+    // Use per-agent image if specified in manifest.
+    // Convention: if agents/{id}/Dockerfile exists, image is nano-agent-{id}:latest
+    // Otherwise fall back to default AGENT_IMAGE.
+    const perAgentImage = `nano-agent-${agentId}:latest`;
+    const hasPerAgentImage = await this.imageExists(perAgentImage);
+    const image = agent.manifest.image ?? (hasPerAgentImage ? perAgentImage : AGENT_IMAGE);
+    logger.debug({ agentId, image }, 'Using container image');
+
+    return { env, binds, image };
   }
 
   private subscribeHeartbeats(): void {
