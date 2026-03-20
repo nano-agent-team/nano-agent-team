@@ -14,7 +14,7 @@
 import type { NatsConnection } from 'nats';
 
 import { logger } from '../logger.js';
-import { codec } from '../nats-client.js';
+import { publish } from '../nats-client.js';
 import type { TicketProvider } from './provider.js';
 import { TicketProxy } from './proxy.js';
 import type {
@@ -82,7 +82,7 @@ export class TicketRegistry {
     const ticket = await this.getProvider(teamId).createTicket(data);
     // Notify pipeline that a new ticket is ready for PM
     if (this.nc) {
-      this.nc.publish('topic.ticket.new', codec.encode(JSON.stringify({ ticket_id: ticket.id })));
+      await publish(this.nc, 'topic.ticket.new', JSON.stringify({ ticket_id: ticket.id }));
       logger.info({ ticket_id: ticket.id }, 'TicketRegistry: topic.ticket.new published');
     }
     return ticket;
@@ -115,7 +115,7 @@ export class TicketRegistry {
       const subject = STATUS_NATS_EVENTS[data.status]!;
       const payload = { ticket_id: id, status: data.status, changed_by: changedBy };
       if (this.nc) {
-        this.nc.publish(subject, codec.encode(JSON.stringify(payload)));
+        await publish(this.nc, subject, JSON.stringify(payload));
         logger.info({ subject, ticket_id: id, status: data.status }, 'TicketRegistry: pipeline event published');
       }
     }
