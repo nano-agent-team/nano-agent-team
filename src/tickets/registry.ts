@@ -82,8 +82,12 @@ export class TicketRegistry {
     const ticket = await this.getProvider(teamId).createTicket(data);
     // Notify pipeline that a new ticket is ready for PM
     if (this.nc) {
-      await publish(this.nc, 'topic.ticket.new', JSON.stringify({ ticket_id: ticket.id }));
-      logger.info({ ticket_id: ticket.id }, 'TicketRegistry: topic.ticket.new published');
+      try {
+        await publish(this.nc, 'topic.ticket.new', JSON.stringify({ ticket_id: ticket.id }));
+        logger.info({ ticket_id: ticket.id }, 'TicketRegistry: topic.ticket.new published');
+      } catch (err) {
+        logger.error({ err, ticket_id: ticket.id }, 'TicketRegistry: failed to publish topic.ticket.new');
+      }
     }
     return ticket;
   }
@@ -115,8 +119,12 @@ export class TicketRegistry {
       const subject = STATUS_NATS_EVENTS[data.status]!;
       const payload = { ticket_id: id, status: data.status, changed_by: changedBy };
       if (this.nc) {
-        await publish(this.nc, subject, JSON.stringify(payload));
-        logger.info({ subject, ticket_id: id, status: data.status }, 'TicketRegistry: pipeline event published');
+        try {
+          await publish(this.nc, subject, JSON.stringify(payload));
+          logger.info({ subject, ticket_id: id, status: data.status }, 'TicketRegistry: pipeline event published');
+        } catch (err) {
+          logger.error({ err, subject, ticket_id: id }, 'TicketRegistry: failed to publish pipeline event');
+        }
       }
     }
 

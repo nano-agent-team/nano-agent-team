@@ -440,7 +440,7 @@ async function connectProvider() {
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
-    step.value = 2
+    await complete()
   } catch (err) {
     apiKeyError.value = `Chyba při ukládání: ${String(err)}`
   } finally {
@@ -484,7 +484,7 @@ async function proceedAfterOauth() {
       }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    step.value = 2
+    await complete()
   } catch (err) {
     apiKeyError.value = `Chyba při ukládání: ${String(err)}`
   }
@@ -504,7 +504,7 @@ async function proceedAfterCodexLogin() {
       }),
     })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    step.value = 2
+    await complete()
   } catch (err) {
     apiKeyError.value = `Chyba při ukládání: ${String(err)}`
   }
