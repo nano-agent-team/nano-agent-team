@@ -92,9 +92,9 @@ export class AgentManager {
     this.dispatcher = new WorkflowDispatcher(nc, () => this.getInstanceHeartbeats());
   }
 
-  /** Returns true when credentials.json exists → use proxy mode */
+  /** Returns true when USE_CREDENTIAL_PROXY=true — agents use proxy instead of direct token */
   private isProxyMode(): boolean {
-    return fs.existsSync(path.join(DATA_DIR, 'credentials.json'));
+    return process.env.USE_CREDENTIAL_PROXY === 'true';
   }
 
   /** Inspect Docker network to find the gateway IP that worker containers can reach */
@@ -737,9 +737,10 @@ export class AgentManager {
     // Skip in proxy mode: agents use ANTHROPIC_BASE_URL instead of direct auth
     if ((providerName === 'claude' || providerName === 'auto' || !providerName) && !this.isProxyMode()) {
       const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
+      const hostClaudeDir = process.env.HOST_CLAUDE_DIR ?? claudeDir;
       if (fs.existsSync(claudeDir)) {
-        binds.push(`${claudeDir}:/root/.claude:rw`);
-        logger.debug({ agentId, claudeDir }, 'Mounting .claude dir (rw)');
+        binds.push(`${hostClaudeDir}:/root/.claude:rw`);
+        logger.debug({ agentId, hostClaudeDir }, 'Mounting .claude dir (rw)');
       }
       const claudeJson = path.join(process.env.HOME ?? '/root', '.claude.json');
       const hostClaudeJson = process.env.HOST_CLAUDE_JSON ?? claudeJson;
