@@ -123,13 +123,31 @@ export async function ensureConsumer(
     (config as Record<string, unknown>).filter_subjects = filterSubjects;
   }
 
+  // Check if an existing consumer has different filter subjects — JetStream cannot
+  // update filter_subject(s) in place, so we must delete and recreate.
+  let needsRecreate = false;
+  try {
+    const existing = await jsm.consumers.info(streamName, consumerName);
+    const existingFilters: string[] =
+      existing.config.filter_subjects ??
+      (existing.config.filter_subject ? [existing.config.filter_subject] : []);
+    const sorted = (a: string[]) => [...a].sort().join(',');
+    if (sorted(existingFilters) !== sorted(filterSubjects)) {
+      needsRecreate = true;
+      await jsm.consumers.delete(streamName, consumerName);
+      logger.debug({ agentId, old: existingFilters, new: filterSubjects }, 'Consumer filter changed — deleted for recreation');
+    }
+  } catch {
+    // Consumer doesn't exist yet — will be created below
+  }
+
   try {
     await jsm.consumers.add(streamName, config as ConsumerConfig);
-    logger.debug({ agentId, filterSubjects }, 'Consumer created');
+    logger.debug({ agentId, filterSubjects, recreated: needsRecreate }, 'Consumer created');
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg.includes('consumer name already in use') || msg.includes('consumer already exists')) {
-      // Update existing consumer config (e.g. ack_wait changes)
+      // Consumer exists with correct filters — update other config fields
       try {
         await jsm.consumers.update(streamName, consumerName, config as ConsumerConfig);
         logger.debug({ agentId }, 'Consumer updated');

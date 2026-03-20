@@ -328,19 +328,21 @@ function buildMcpServer(
   if (canCallBuiltin(permissions, 'tickets', 'ticket_update')) {
     server.tool(
       'ticket_update',
-      'Update ticket fields (title, body, priority, assignee). Use ticket_approve or ticket_reject to change status.',
+      'Update ticket fields. Pass status to transition: "in_progress" triggers Developer (spec-ready), "review" triggers Reviewer, "done" closes the ticket.',
       {
         ticket_id: z.string().describe('Ticket ID'),
         title:     z.string().optional().describe('New title'),
         body:      z.string().optional().describe('New body / tech spec (replaces existing)'),
         priority:  z.string().optional().describe('New priority: CRITICAL|HIGH|MED|LOW'),
         assignee:  z.string().optional().describe('New assignee agent id'),
+        status:    z.string().optional().describe('New status: in_progress | review | done'),
       },
-      async ({ ticket_id, title, body, priority, assignee }) => {
+      async ({ ticket_id, title, body, priority, assignee, status }) => {
         const ticket = await registry.updateTicket(ticket_id, {
           title, body,
           priority: priority as TicketPriority | undefined,
           assignee,
+          status: status as import('./tickets/types.js').AbstractStatus | undefined,
         }, agentId);
         return { content: [{ type: 'text' as const, text: JSON.stringify(ticket, null, 2) }] };
       },
@@ -641,6 +643,30 @@ function buildMcpServer(
       });
       return { content: [{ type: 'text' as const, text: JSON.stringify(agents, null, 2) }] };
     });
+
+    server.tool(
+      'deploy_feature',
+      'Deploy a locally committed feature into /data/features and hot-reload it — no container restart needed. Source is read from /host-source/features/{feature_name}/.',
+      { feature_name: z.string() },
+      async ({ feature_name }) => {
+        if (!/^[a-z0-9_-]+$/.test(feature_name)) {
+          return { content: [{ type: 'text' as const, text: 'Invalid feature_name format (use lowercase letters, numbers, hyphens).' }] };
+        }
+        const srcDir = `/host-source/features/${feature_name}`;
+        const destDir = path.join(opts.featuresDir, feature_name);
+        if (!fs.existsSync(srcDir)) {
+          return { content: [{ type: 'text' as const, text: `Feature directory not found: ${srcDir}. Make sure it was committed to the repo.` }] };
+        }
+        fs.mkdirSync(destDir, { recursive: true });
+        execFileSync('cp', ['-r', `${srcDir}/.`, destDir], { timeout: 10_000 });
+        try {
+          await fetch(`http://localhost:${opts.apiPort}/internal/reload`, { method: 'POST' });
+        } catch (err) {
+          logger.warn({ feature_name, err: String(err) }, 'deploy_feature: reload failed (best effort)');
+        }
+        return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, feature_name, deployed_to: destDir, note: 'Hot-reloaded — dashboard will refresh automatically.' }) }] };
+      },
+    );
   }
 
   return server;
@@ -865,7 +891,7 @@ export class McpGateway {
       tools.push({ name: 'ticket_create', description: 'Create a new ticket.', inputSchema: { type: 'object', required: ['title'], properties: { title: { type: 'string' }, body: { type: 'string' }, priority: { type: 'string' }, type: { type: 'string' } } } });
     }
     if (canCallBuiltin(permissions, 'tickets', 'ticket_update')) {
-      tools.push({ name: 'ticket_update', description: 'Update ticket fields.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, priority: { type: 'string' }, assignee: { type: 'string' } } } });
+      tools.push({ name: 'ticket_update', description: 'Update ticket fields. Pass status to transition pipeline: "in_progress" triggers Developer, "review" triggers Reviewer, "done" closes.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, priority: { type: 'string' }, assignee: { type: 'string' }, status: { type: 'string' } } } });
     }
     if (canCallBuiltin(permissions, 'tickets', 'ticket_approve')) {
       tools.push({ name: 'ticket_approve', description: 'Approve a ticket.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' }, assignee: { type: 'string' } } } });
@@ -907,6 +933,7 @@ export class McpGateway {
       tools.push({ name: 'install_team', description: 'Install a team from hub: copy to /data/teams, update config, trigger reload.', inputSchema: { type: 'object', required: ['team_id'], properties: { team_id: { type: 'string' } } } });
       tools.push({ name: 'list_hub_agents', description: 'List standalone agents available in the hub catalog.', inputSchema: { type: 'object', properties: {} } });
       tools.push({ name: 'install_agent', description: 'Install a standalone agent from hub into /data/agents and start it.', inputSchema: { type: 'object', required: ['agent_id'], properties: { agent_id: { type: 'string' } } } });
+      tools.push({ name: 'deploy_feature', description: 'Deploy a locally committed feature into /data/features and hot-reload it. No container restart needed.', inputSchema: { type: 'object', required: ['feature_name'], properties: { feature_name: { type: 'string' } } } });
     }
 
     return tools;
