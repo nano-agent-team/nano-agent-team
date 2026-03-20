@@ -9,6 +9,7 @@ dashboard/dist/
 dashboard/node_modules/
 features/*/frontend-dist/
 features/*/node_modules/
+.superpowers/
 
 .env
 .env.local
