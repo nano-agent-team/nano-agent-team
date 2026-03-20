@@ -732,41 +732,41 @@ export class AgentManager {
     binds.push(`${sessionDir}:/workspace/sessions:rw`);
 
     // Volume: Provider-specific credentials
-    // Claude Code credentials → /root/.claude (read-write for session cache)
+    // Claude Code credentials → /home/agent/.claude (read-write for session cache)
     // Claude Code 2.x also needs ~/.claude.json (OAuth token file)
     // Skip in proxy mode: agents use ANTHROPIC_BASE_URL instead of direct auth
     if ((providerName === 'claude' || providerName === 'auto' || !providerName) && !this.isProxyMode()) {
       const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
       const hostClaudeDir = process.env.HOST_CLAUDE_DIR ?? claudeDir;
       if (fs.existsSync(claudeDir)) {
-        binds.push(`${hostClaudeDir}:/root/.claude:rw`);
+        binds.push(`${hostClaudeDir}:/home/agent/.claude:rw`);
         logger.debug({ agentId, hostClaudeDir }, 'Mounting .claude dir (rw)');
       }
       const claudeJson = path.join(process.env.HOME ?? '/root', '.claude.json');
       const hostClaudeJson = process.env.HOST_CLAUDE_JSON ?? claudeJson;
       if (fs.existsSync(claudeJson)) {
-        binds.push(`${hostClaudeJson}:/root/.claude.json:rw`);
+        binds.push(`${hostClaudeJson}:/home/agent/.claude.json:rw`);
         logger.debug({ agentId, hostClaudeJson }, 'Mounting .claude.json (rw)');
       }
     }
 
-    // Codex CLI credentials → /root/.codex (read-write so Codex CLI can refresh tokens)
+    // Codex CLI credentials → /home/agent/.codex (read-write so Codex CLI can refresh tokens)
     // HOST_CODEX_DIR = host path (for Docker bind source)
-    // container path /root/.codex = where we check existence
+    // container path /home/agent/.codex = where we check existence
     if (providerName === 'codex') {
       const containerCodexDir = path.join(process.env.HOME ?? '/root', '.codex');
       const hostCodexDir = process.env.HOST_CODEX_DIR ?? containerCodexDir;
       if (fs.existsSync(containerCodexDir)) {
-        binds.push(`${hostCodexDir}:/root/.codex:rw`);
+        binds.push(`${hostCodexDir}:/home/agent/.codex:rw`);
         logger.debug({ agentId, hostCodexDir }, 'Mounting .codex dir (rw)');
       }
     }
 
-    // Volume: SSH keys → /root/.ssh (optional, for agents needing git SSH push)
+    // Volume: SSH keys → /home/agent/.ssh (optional, for agents needing git SSH push)
     if (agent.manifest.ssh_mount) {
       const sshDir = path.join(process.env.HOME ?? '/root', '.ssh');
       if (fs.existsSync(sshDir)) {
-        binds.push(`${sshDir}:/root/.ssh:ro`);
+        binds.push(`${sshDir}:/home/agent/.ssh:ro`);
         logger.debug({ agentId, sshDir }, 'Mounting SSH keys');
       } else {
         logger.warn({ agentId, sshDir }, 'ssh_mount=true but ~/.ssh not found on host');

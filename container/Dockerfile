@@ -53,4 +53,16 @@ COPY --from=builder /app/dist/ ./dist/
 # Create workspace mount points for volumes (vault, sessions, agent)
 RUN mkdir -p /workspace/vault /workspace/sessions /workspace/agent
 
+# Create non-root agent user
+RUN groupadd -r agent && useradd -r -g agent -m -s /bin/bash agent
+
+# Ensure workspace dirs are owned by agent
+RUN chown -R agent:agent /workspace /app
+
+# Set npm global prefix for non-root user
+ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global
+ENV PATH="/home/agent/.npm-global/bin:$PATH"
+
+USER agent
+
 CMD ["node", "dist/index.js"]

@@ -11,4 +11,12 @@ COPY agent-runner/dist/ ./dist/
 # Create workspace mount points for volumes (vault, sessions, agent)
 RUN mkdir -p /workspace/vault /workspace/sessions /workspace/agent
 
+# Create non-root agent user (Alpine syntax)
+RUN addgroup -S agent && adduser -S agent -G agent -s /bin/sh
+
+# Ensure workspace dirs are owned by agent
+RUN chown -R agent:agent /workspace /app
+
+USER agent
+
 CMD ["node", "dist/index.js"]
