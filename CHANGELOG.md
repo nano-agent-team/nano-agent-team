@@ -55,6 +55,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`882d010`](https://github.com/nano-agent-team/nano-agent-team/commit/882d0103ad99f3e1c60bf7aeadfaa9d7ab8db369))
 - **ci:** Update CHANGELOG [skip ci] ([`f496b00`](https://github.com/nano-agent-team/nano-agent-team/commit/f496b00c3bdfb62117b6884e2be7232e9150703e))
 - Add token metrics and provider budget management design spec ([`8b1fce6`](https://github.com/nano-agent-team/nano-agent-team/commit/8b1fce6c042f252125b98f0c397799a9f0a46ebf))
+- **ci:** Update CHANGELOG [skip ci] ([`fa113fe`](https://github.com/nano-agent-team/nano-agent-team/commit/fa113fe5349ee1e02b24a7214b4615565788340b))
 
 ### Features
 
@@ -106,6 +107,7 @@ All notable changes to this project will be documented in this file.
 - Extract buildAgentEnvAndBinds() shared method (GH #19) (TICK-0007) ([`a9d681d`](https://github.com/nano-agent-team/nano-agent-team/commit/a9d681daca543285ade9089463c5a8ce463e5344))
 - Add tool call label to chat typing indicator (TICK-0008) ([`e2e2298`](https://github.com/nano-agent-team/nano-agent-team/commit/e2e229816b4019fb92af69db5fee65f8db115583))
 - Alarm clock MCP, GH issues proxy, credential-proxy SSL fix ([`8b0464b`](https://github.com/nano-agent-team/nano-agent-team/commit/8b0464b89424b527b6cc9d1012fb521620f8c68e))
+- Proactive OAuth token auto-refresh with agent reload ([`2a1193a`](https://github.com/nano-agent-team/nano-agent-team/commit/2a1193a0c38bc24396136341b2fe0903bf98b079))
 
 ### Miscellaneous
 
