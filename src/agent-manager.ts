@@ -92,9 +92,9 @@ export class AgentManager {
     this.dispatcher = new WorkflowDispatcher(nc, () => this.getInstanceHeartbeats());
   }
 
-  /** Returns true when USE_CREDENTIAL_PROXY=true — agents use proxy instead of direct token */
+  /** Returns true when credentials.json exists → use proxy mode */
   private isProxyMode(): boolean {
-    return process.env.USE_CREDENTIAL_PROXY === 'true';
+    return fs.existsSync(path.join(DATA_DIR, 'credentials.json'));
   }
 
   /** Inspect Docker network to find the gateway IP that worker containers can reach */
