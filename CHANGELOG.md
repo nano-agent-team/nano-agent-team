@@ -50,6 +50,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`22b8bee`](https://github.com/nano-agent-team/nano-agent-team/commit/22b8bee7853a968534717f776dc1add872dbea33))
 - **ci:** Update CHANGELOG [skip ci] ([`9f7c072`](https://github.com/nano-agent-team/nano-agent-team/commit/9f7c0729b10e9f6f95f272bc4aae2fd24f00cd98))
 - **ci:** Update CHANGELOG [skip ci] ([`572213c`](https://github.com/nano-agent-team/nano-agent-team/commit/572213cb78c6bab6526a72ce51c36451d485563d))
+- **ci:** Update CHANGELOG [skip ci] ([`59b3d23`](https://github.com/nano-agent-team/nano-agent-team/commit/59b3d23e37d0526b85dc07c59b8aa942e13f96c8))
 
 ### Features
 
@@ -101,6 +102,7 @@ All notable changes to this project will be documented in this file.
 - **docker:** Expose NATS port 4222 for integration tests ([`996409c`](https://github.com/nano-agent-team/nano-agent-team/commit/996409c975bbb4e335ca18c54693042d7f553009))
 - Add test-results/ to .gitignore ([`c563feb`](https://github.com/nano-agent-team/nano-agent-team/commit/c563feb1053a9445d3fa6b61971842e0d8c6304f))
 - Resolve merge conflict — keep foreman inbox and 5min timeout ([`353c5de`](https://github.com/nano-agent-team/nano-agent-team/commit/353c5de4567c9232ae174a018fad18b584a88ec6))
+- Remove hello-world test feature, gitignore features/ ([`eaaf542`](https://github.com/nano-agent-team/nano-agent-team/commit/eaaf5425fedde86affb6d07b02a64bc67a3b0b1c))
 
 ### Refactoring
 
