@@ -22,6 +22,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Self-update: project source directory (for git pull + docker build)
       - .:/host-source
+      # Local hub catalog mount — used for dev bootstrap (HUB_URL=file:///local-hub)
+      - ../hub:/local-hub
       # Note: SSH keys are NOT mounted. git pull uses HTTPS (default for GitHub).
       # For SSH-based remotes, configure SSH agent forwarding on the host instead.
       # Claude Code credentials — shared with host so OAuth tokens persist
@@ -39,6 +41,8 @@ services:
       HOST_CODEX_DIR: ${HOME}/.codex
       HOST_CLAUDE_JSON: ${HOME}/.claude.json
       SKIP_DOCKERD: "true"   # dev mode: use host Docker socket instead of internal dockerd
+      # Hub catalog: use local mount for dev (no network dependency, uses current branch)
+      HUB_URL: "file:///local-hub"
       # Embedded NATS (default — no NATS_URL needed)
       # To use external NATS: set NATS_URL=nats://nats:4222 and NATS_EMBEDDED=false
       # NATS_URL: nats://nats:4222

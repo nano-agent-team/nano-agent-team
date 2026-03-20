@@ -797,13 +797,13 @@ export async function createApiApp(
       const sub = nc.subscribe(streamSubject);
       // Clean up subscription if client disconnects before done
       res.on('close', () => sub.unsubscribe());
-      // Safety net: unsubscribe after 90s even if agent never sends 'done'
-      const timeoutHandle = setTimeout(() => sub.unsubscribe(), 90_000);
+      // Safety net: unsubscribe after 5 min even if agent never sends 'done'
+      const timeoutHandle = setTimeout(() => sub.unsubscribe(), 300_000);
 
       logger.debug({ streamSubject }, 'Chat/settings: subscribed, publishing to agent');
 
       // Use JetStream publish for at-least-once delivery guarantee + OTel tracing
-      await publish(nc, 'agent.settings.inbox', JSON.stringify({ content: message, sessionId: sid, replySubject, streamSubject }));
+      await publish(nc, 'agent.foreman.inbox', JSON.stringify({ text: message, sessionId: sid, replySubject, streamSubject }));
 
       logger.debug({ streamSubject }, 'Chat/settings: published, entering for-await');
 
@@ -857,6 +857,58 @@ export async function createApiApp(
       res.json({ ok: true, agentId });
     } catch (err) {
       logger.error({ err }, 'POST /internal/agents/:agentId/start error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // Reload an agent: re-read manifest from disk, stop current container, start fresh.
+  // Use after updating manifest.json (e.g. mcp_permissions changed).
+  app.post('/internal/agents/:agentId/reload', async (req: Request, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+      const { loadManifest } = await import('./agent-registry.js');
+      const agentDir = path.join(DATA_DIR, 'agents', agentId);
+      const manifest = loadManifest(agentDir);
+      const agent = { manifest, dir: agentDir };
+      const topics = resolveTopicsForAgent(manifest);
+      // Stop existing container if running
+      if (manager.getAgent(agentId)) {
+        await manager.stopAgent(agentId);
+        await new Promise((r) => setTimeout(r, 500));
+      }
+      await ensureConsumer(nc, 'AGENTS', manifest.id, topics);
+      await manager.startAgent(agent);
+      logger.info({ agentId }, 'Agent reloaded from disk');
+      res.json({ ok: true, agentId });
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/agents/:agentId/reload error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // Start a freshly installed agent from disk (not yet in manager memory)
+  app.post('/internal/agents/:agentId/start-installed', async (req: Request, res: Response) => {
+    try {
+      const { agentId } = req.params;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+
+      // Skip if already running
+      if (manager.getStates().find(s => s.agentId === agentId)) {
+        return res.json({ ok: true, agentId, skipped: 'already running' });
+      }
+
+      const { loadManifest } = await import('./agent-registry.js');
+      const agentDir = path.join(DATA_DIR, 'agents', agentId);
+      const manifest = loadManifest(agentDir);
+      const agent = { manifest, dir: agentDir };
+      const topics = resolveTopicsForAgent(manifest);
+      await ensureConsumer(nc, 'AGENTS', manifest.id, topics);
+      await manager.startAgent(agent);
+      logger.info({ agentId }, 'Installed agent started');
+      res.json({ ok: true, agentId });
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/agents/:agentId/start-installed error');
       res.status(500).json({ error: String(err) });
     }
   });

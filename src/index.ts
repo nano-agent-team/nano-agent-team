@@ -5,17 +5,19 @@
  * 1. Detect setup mode (first-run / setup-incomplete / ready)
  * 2. Connect to NATS JetStream
  * 3. Ensure AGENTS stream
- * 4. Always start settings agent (handles onboarding)
- * 5a. Setup mode: start only settings agent, expose setup UI
- * 5b. Ready mode: load all agents + features from config
- * 6. Start API server
+ * 4a. Setup mode: bootstrap foreman from hub, start it
+ * 4b. Ready mode: load all agents from /data/agents + features from config
+ * 5. Start API server
+ *
+ * Core ships NO built-in agents. All agents come from the hub catalog.
  */
 
 import fs from 'fs';
 import http from 'http';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { DATA_DIR, NATS_URL, AGENTS_DIR, MCP_GATEWAY_PORT } from './config.js';
+import { DATA_DIR, NATS_URL, MCP_GATEWAY_PORT } from './config.js';
 import { logger } from './logger.js';
 import { startCredentialProxy } from './credential-proxy.js';
 import { connectNats, ensureStream, ensureConsumer, closeNats, publish } from './nats-client.js';
@@ -35,6 +37,75 @@ import { McpServerRegistry } from './mcp-server-registry.js';
 import { McpManager } from './mcp-manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const DEFAULT_HUB_URL = process.env.HUB_URL ?? 'https://github.com/nano-agent-team-dev/hub.git';
+const HUB_CACHE_DIR = '/tmp/hub';
+
+/**
+ * Bootstrap: fetch the hub catalog and install the foreman agent into /data/agents/.
+ * Called once during setup mode (first-run / setup-incomplete).
+ * If foreman is already installed, skips the hub fetch and returns immediately.
+ */
+async function bootstrapForeman(
+  dataDir: string,
+): Promise<{ manifest: ReturnType<typeof loadManifest>; dir: string } | null> {
+  const foremanDataDir = path.join(dataDir, 'agents', 'foreman');
+
+  // Already installed — just load and return
+  if (fs.existsSync(path.join(foremanDataDir, 'manifest.json'))) {
+    logger.info('Foreman already installed, skipping hub fetch');
+    try {
+      return { manifest: loadManifest(foremanDataDir), dir: foremanDataDir };
+    } catch (err) {
+      logger.error({ err }, 'Foreman manifest invalid — cannot bootstrap');
+      return null;
+    }
+  }
+
+  // Clone or update hub
+  const hubUrl = DEFAULT_HUB_URL;
+  const ghToken = process.env.GH_TOKEN;
+  let cloneUrl = hubUrl;
+  if (ghToken && hubUrl.includes('github.com')) {
+    cloneUrl = hubUrl.replace('https://', `https://oauth2:${ghToken}@`);
+  }
+
+  try {
+    const gitEnv = {
+      PATH: process.env.PATH ?? '/usr/bin:/bin:/usr/local/bin',
+      HOME: process.env.HOME ?? '/root',
+      GIT_TERMINAL_PROMPT: '0',
+    };
+    if (fs.existsSync(path.join(HUB_CACHE_DIR, '.git'))) {
+      logger.info('Hub cache exists — pulling latest');
+      execFileSync('git', ['pull', '--ff-only'], { cwd: HUB_CACHE_DIR, env: gitEnv, timeout: 30_000 });
+    } else {
+      logger.info({ hubUrl }, 'Cloning hub catalog');
+      execFileSync('git', ['clone', '--depth=1', cloneUrl, HUB_CACHE_DIR], { env: gitEnv, timeout: 60_000 });
+    }
+  } catch (err) {
+    logger.error({ err }, 'Failed to fetch hub catalog — cannot bootstrap foreman');
+    return null;
+  }
+
+  const foremanHubDir = path.join(HUB_CACHE_DIR, 'agents', 'foreman');
+  if (!fs.existsSync(path.join(foremanHubDir, 'manifest.json'))) {
+    logger.error({ foremanHubDir }, 'Foreman agent not found in hub');
+    return null;
+  }
+
+  // Install foreman into /data/agents/foreman
+  fs.mkdirSync(foremanDataDir, { recursive: true });
+  execFileSync('cp', ['-r', `${foremanHubDir}/.`, foremanDataDir], { timeout: 10_000 });
+  logger.info('Foreman installed from hub');
+
+  try {
+    return { manifest: loadManifest(foremanDataDir), dir: foremanDataDir };
+  } catch (err) {
+    logger.error({ err }, 'Foreman manifest invalid after install');
+    return null;
+  }
+}
 
 async function main(): Promise<void> {
   // ── 1. Detect setup mode ────────────────────────────────────────────────────
@@ -60,19 +131,6 @@ async function main(): Promise<void> {
   // ── 3. Ensure AGENTS stream ─────────────────────────────────────────────────
   await ensureStream(nc, 'AGENTS', ['agent.>', 'topic.>', 'health.>']);
   logger.info('Stream AGENTS ready');
-
-  // ── 4. Always register settings agent consumer ──────────────────────────────
-  const settingsAgentDir = path.join(path.resolve(AGENTS_DIR), 'settings');
-  let settingsAgent;
-  try {
-    const manifest = loadManifest(settingsAgentDir);
-    settingsAgent = { manifest, dir: settingsAgentDir };
-    const settingsTopics = resolveTopicsForAgent(manifest);
-    await ensureConsumer(nc, 'AGENTS', manifest.id, settingsTopics);
-    logger.info({ id: manifest.id, topics: settingsTopics }, 'Settings agent consumer ready');
-  } catch (err) {
-    logger.warn({ err }, 'Settings agent manifest not found — setup UI will use form-only mode');
-  }
 
   const configService = new ConfigService(DATA_DIR);
   const manager = new AgentManager(nc, configService);
@@ -138,30 +196,29 @@ async function main(): Promise<void> {
   mcpGateway.start(MCP_GATEWAY_PORT);
 
   if (isSetupRequired(setupMode)) {
-    // ── 5a. Setup mode ─────────────────────────────────────────────────────────
-    logger.info({ setupMode }, 'Setup mode active');
+    // ── 4a. Setup mode — bootstrap foreman from hub ─────────────────────────────
+    logger.info({ setupMode }, 'Setup mode active — bootstrapping foreman from hub');
 
-    // Start only settings agent
-    if (settingsAgent) {
-      await manager.startAll([settingsAgent]);
+    const foremanAgent = await bootstrapForeman(DATA_DIR);
+    if (foremanAgent) {
+      const foremanTopics = resolveTopicsForAgent(foremanAgent.manifest);
+      await ensureConsumer(nc, 'AGENTS', foremanAgent.manifest.id, foremanTopics);
+      await manager.startAll([foremanAgent]);
       manager.startHealthMonitoring();
+      logger.info('Foreman started — ready for setup');
+    } else {
+      logger.warn('Foreman bootstrap failed — setup UI will run without conversational agent');
     }
 
   } else {
     // ── 5b. Ready mode ─────────────────────────────────────────────────────────
     const appConfig = await configService.load();
 
-    // Load all agents (built-in + installed from DATA_DIR)
-    const agents = loadAgents(AGENTS_DIR);
-
+    // Load all agents from /data/agents/ (installed from hub — no built-ins in core)
+    const agents: ReturnType<typeof loadAgents> = [];
     const dataAgentsDir = path.join(DATA_DIR, 'agents');
     if (fs.existsSync(dataAgentsDir)) {
-      const installedAgents = loadAgents(dataAgentsDir);
-      for (const agent of installedAgents) {
-        if (!agents.find(a => a.manifest.id === agent.manifest.id)) {
-          agents.push(agent);
-        }
-      }
+      agents.push(...loadAgents(dataAgentsDir));
     }
 
     for (const agent of agents) {

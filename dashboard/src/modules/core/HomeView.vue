@@ -49,14 +49,14 @@
       </div>
     </aside>
 
-    <!-- RIGHT: Settings agent chat -->
+    <!-- RIGHT: Foreman chat -->
     <section class="chat-panel">
       <div class="chat-head">
         <div class="chat-head-left">
-          <span class="agent-sigil">SA</span>
+          <span class="agent-sigil">FM</span>
           <div class="chat-head-info">
-            <span class="chat-title">Settings Agent</span>
-            <span class="chat-sub">system configuration &amp; onboarding</span>
+            <span class="chat-title">Foreman</span>
+            <span class="chat-sub">setup &amp; project onboarding</span>
           </div>
         </div>
         <div class="chat-head-right">
@@ -82,8 +82,8 @@
       <div class="messages-wrap" ref="messagesEl">
         <div class="messages-inner">
           <div v-if="messages.length === 0" class="chat-empty">
-            <div class="empty-sigil">SA</div>
-            <div class="empty-text">Settings Agent is ready.<br>How can I help you set up your system?</div>
+            <div class="empty-sigil">FM</div>
+            <div class="empty-text">Foreman is ready.<br>How can I help you?</div>
           </div>
 
           <template v-for="(msg, i) in messages" :key="msg.id">
@@ -140,7 +140,6 @@
             class="chat-input"
             placeholder="Type a message..."
             rows="1"
-            :disabled="loading_chat"
             @keydown.enter.exact.prevent="sendMessage"
             @keydown.enter.shift.exact="() => {}"
             @input="autoResize"
@@ -149,7 +148,7 @@
           />
           <button
             class="send-btn"
-            :disabled="!inputText.trim() || loading_chat"
+            :disabled="!inputText.trim()"
             @click="sendMessage"
             title="Send (Enter)"
           >
@@ -302,8 +301,6 @@ async function sendMessage() {
         } else if (event.type === 'chunk') {
           currentToolCall.value = null
           if (!streamingMsg) {
-            // First chunk — replace typing indicator with real message
-            loading_chat.value = false
             messages.value.push({ id: agentMsgId, role: 'agent', text: '', ts: Date.now() })
             // Use the reactive proxy from the array, not the plain object
             streamingMsg = messages.value[messages.value.length - 1]

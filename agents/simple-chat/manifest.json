@@ -1,9 +1,0 @@
-{
-  "id": "simple-chat",
-  "name": "Simple Chat",
-  "version": "1.0.0",
-  "session_type": "stateless",
-  "subscribe_topics": ["agent.simple-chat.inbox"],
-  "capabilities": ["fast", "cheap"],
-  "provider": "auto"
-}
