@@ -427,7 +427,7 @@ export async function createApiApp(
 
         // Load workflow for this team (workflow.json → team.json fallback)
         const workflow = loadWorkflow(teamDir);
-        if (workflow) currentWorkflow = workflow;
+        currentWorkflow = workflow;
 
         // Expand instances: workflow.instances block (if present) or fallback to agents list
         const instances = workflow

@@ -147,8 +147,9 @@ let eventSource: EventSource | null = null
 
 function connectSSE() {
   eventSource = new EventSource('/api/events')
-  eventSource.addEventListener('plugins-updated', () => {
-    fetchWorkflow()
+  eventSource.addEventListener('system', (e: MessageEvent) => {
+    const data = JSON.parse(e.data) as { type: string }
+    if (data.type === 'plugins-updated') fetchWorkflow()
   })
   eventSource.onerror = () => {
     eventSource?.close()
