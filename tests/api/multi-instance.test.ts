@@ -65,17 +65,23 @@ beforeAll(async () => {
     return;
   }
 
-  // 2. Build nano-test-agent:latest on host, then load into nate's DinD
-  console.log('[multi-instance] Building nano-test-agent:latest on host...');
-  execFileSync('docker', ['build', '-t', 'nano-test-agent:latest', FIXTURE_AGENT_DIR], {
-    stdio: 'inherit',
-    timeout: 120_000 * CI_MULT,
-  });
-  console.log('[multi-instance] Loading nano-test-agent:latest into nate DinD...');
-  execSync('docker save nano-test-agent:latest | docker exec -i nate docker load', {
-    stdio: ['pipe', 'inherit', 'inherit'],
-    timeout: 60_000 * CI_MULT,
-  });
+  // 2. Ensure nano-test-agent:latest is in DinD
+  //    CI pre-builds and imports it; locally we build + load on demand
+  try {
+    execSync('docker exec nate docker image inspect nano-test-agent:latest', { stdio: 'ignore' });
+    console.log('[multi-instance] nano-test-agent:latest already in DinD (pre-built by CI)');
+  } catch {
+    console.log('[multi-instance] Building nano-test-agent:latest on host...');
+    execFileSync('docker', ['build', '-t', 'nano-test-agent:latest', FIXTURE_AGENT_DIR], {
+      stdio: 'inherit',
+      timeout: 120_000 * CI_MULT,
+    });
+    console.log('[multi-instance] Loading nano-test-agent:latest into nate DinD...');
+    execSync('docker save nano-test-agent:latest | docker exec -i nate docker load', {
+      stdio: ['pipe', 'inherit', 'inherit'],
+      timeout: 60_000 * CI_MULT,
+    });
+  }
 
   // 3. Install test team
   fs.mkdirSync(INSTALLED_TEAM, { recursive: true });
