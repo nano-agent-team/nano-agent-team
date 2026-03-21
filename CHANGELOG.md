@@ -42,6 +42,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Add .npmrc with ignore-platform for cross-arch builds ([`88ec43e`](https://github.com/nano-agent-team/nano-agent-team/commit/88ec43e8b9628732ff742bd53f9eaa6b33556718))
 - **ci:** Remove accidental @rolldown/binding-linux-arm64-gnu from dependencies ([`0f1cc1d`](https://github.com/nano-agent-team/nano-agent-team/commit/0f1cc1da6d37bf8c9962a4d38f6e31c5b9379962))
 - **ci:** Increase E2E test timeouts for CI environment (GH-81) ([`8b1a9ba`](https://github.com/nano-agent-team/nano-agent-team/commit/8b1a9ba1779e24157f65c921939646accda38101))
+- **ci:** Update ticket status assertion from native to abstract ([`80c2bb9`](https://github.com/nano-agent-team/nano-agent-team/commit/80c2bb95e6ef10f5ef5ee6b5f551ae64fe5c9765))
 
 ### Documentation
 
@@ -66,6 +67,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`d11a0c0`](https://github.com/nano-agent-team/nano-agent-team/commit/d11a0c09a03188536a2f9f40d09ac00d6e1fcf50))
 - **ci:** Update CHANGELOG [skip ci] ([`6c470a7`](https://github.com/nano-agent-team/nano-agent-team/commit/6c470a7f922300ce6d9dd2f3a0c8a1d40446e0dc))
 - **ci:** Update CHANGELOG [skip ci] ([`afc971a`](https://github.com/nano-agent-team/nano-agent-team/commit/afc971a2b080aa736f609b416620255a741e5230))
+- **ci:** Update CHANGELOG [skip ci] ([`298be66`](https://github.com/nano-agent-team/nano-agent-team/commit/298be66b1895a1808a011cfd199c806f9a8c0acb))
 
 ### Features
 
