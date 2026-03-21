@@ -12,6 +12,7 @@
  *   MODEL             — Model id for the provider
  *   SESSION_TYPE      — "stateless" | "persistent" (default: stateless)
  *   WAIT_FOR_START_SIGNAL — if "true", wait for agent.{id}.start-consuming before pulling
+ *   EPHEMERAL_TASK_MESSAGE — base64-encoded JSON task; if set, process once and exit (no NATS)
  *   ANTHROPIC_API_KEY / CODEX_OAUTH_TOKEN / GEMINI_API_KEY — provider-specific auth
  *   OBSERVABILITY_LEVEL          — "none" | "logging" | "full"
  *   OTEL_EXPORTER_OTLP_ENDPOINT  — OTLP HTTP endpoint
@@ -186,6 +187,84 @@ async function main(): Promise<void> {
   } catch (err) {
     log.error({ err, provider: PROVIDER_NAME }, 'Failed to write system prompt');
     process.exit(1);
+  }
+
+  // ── Ephemeral mode: process a single task from env var, then exit ─────────
+  const ephemeralTaskB64 = process.env.EPHEMERAL_TASK_MESSAGE;
+  if (ephemeralTaskB64) {
+    log.info({ agentId: AGENT_ID }, 'Ephemeral mode: processing single task from EPHEMERAL_TASK_MESSAGE');
+
+    let payload: IncomingMessage;
+    try {
+      const decoded = Buffer.from(ephemeralTaskB64, 'base64').toString('utf8');
+      payload = JSON.parse(decoded) as IncomingMessage;
+    } catch (err) {
+      log.error({ err }, 'Failed to decode EPHEMERAL_TASK_MESSAGE');
+      process.exit(1);
+    }
+
+    const claudeMdContent = systemPrompt || '';
+    const ghToken = (payload as Record<string, unknown>).gh_token as string | undefined;
+    const payloadForPrompt = ghToken
+      ? Object.fromEntries(Object.entries(payload as Record<string, unknown>).filter(([k]) => k !== 'gh_token'))
+      : payload;
+
+    const eventContext = payloadForPrompt.text
+      ? String(payloadForPrompt.text)
+      : `Event:\n\n${JSON.stringify(payloadForPrompt, null, 2)}`;
+
+    const prompt: string = eventContext;
+
+    log.info({ agentId: AGENT_ID, promptLen: prompt.length }, 'Ephemeral task decoded — invoking provider');
+
+    let result = '';
+    let errorSubtype: string | undefined;
+
+    try {
+      const providerRun = provider.run({
+        model: MODEL,
+        modelExplicit: MODEL_EXPLICIT,
+        cwd: '/workspace',
+        prompt,
+        maxTurns: 200,
+        systemPrompt: claudeMdContent || undefined,
+        ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
+        ...(AGENT_ALLOWED_TOOLS.length > 0 ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),
+        mcpServers: allMcpServers,
+      });
+
+      for await (const event of providerRun) {
+        if (event.type === 'result') {
+          result = event.result;
+          errorSubtype = event.errorSubtype;
+        }
+      }
+    } catch (err) {
+      log.error({ err, agentId: AGENT_ID, provider: PROVIDER_NAME }, 'Provider threw an exception in ephemeral mode');
+      result = `[Error: ${err instanceof Error ? err.message : String(err)}]`;
+      errorSubtype = 'exception';
+    }
+
+    if (errorSubtype) {
+      log.warn({ agentId: AGENT_ID, errorSubtype, resultLength: result.length }, 'Ephemeral task completed with error');
+    } else {
+      log.info({ agentId: AGENT_ID, resultLength: result.length }, 'Ephemeral task completed successfully');
+    }
+
+    // Write result to a well-known file so the control plane can read it
+    try {
+      fs.mkdirSync('/workspace/output', { recursive: true });
+      fs.writeFileSync('/workspace/output/result.json', JSON.stringify({
+        agentId: AGENT_ID,
+        result,
+        ...(errorSubtype ? { error: true, errorSubtype } : {}),
+        ts: Date.now(),
+      }), 'utf8');
+    } catch (err) {
+      log.warn({ err }, 'Failed to write ephemeral result file');
+    }
+
+    process.exit(errorSubtype ? 1 : 0);
   }
 
   // Connect to NATS
