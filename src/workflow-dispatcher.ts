@@ -205,6 +205,7 @@ export class WorkflowDispatcher {
         if (signal.aborted) break;
         logger.error({ err, label, retryInMs: delay }, 'WorkflowDispatcher: loop crashed — restarting');
         await new Promise(resolve => setTimeout(resolve, delay));
+        if (signal.aborted) break;
         delay = Math.min(delay * 2, 60_000);
       }
     }

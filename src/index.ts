@@ -279,6 +279,7 @@ async function main(): Promise<void> {
     mcpGateway.stop();
     await mcpManager.stopAll();
     await manager.stopAll();
+    await manager.stopAllDispatches();
     await closeNats(nc);
     stopEmbeddedNats();
     process.exit(0);
