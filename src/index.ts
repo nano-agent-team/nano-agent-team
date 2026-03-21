@@ -282,7 +282,7 @@ async function main(): Promise<void> {
   let workspaceProvider: WorkspaceProvider | undefined;
   {
     const cfg = await configService.load();
-    const workspaceRepos = (cfg as unknown as Record<string, unknown>)?.workspaceRepos as Record<string, string> | undefined;
+    const workspaceRepos = cfg?.workspaceRepos;
     if (workspaceRepos && Object.keys(workspaceRepos).length > 0) {
       workspaceProvider = new WorkspaceProvider(path.join(DATA_DIR, 'workspaces'), workspaceRepos);
       workspaceProvider.startPeriodicFetch();
