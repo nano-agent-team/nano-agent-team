@@ -35,7 +35,7 @@ find "${AGENTS_DIR}" -name "Dockerfile" | while read -r dockerfile; do
 done
 
 # Also scan hub agents for per-agent Dockerfiles
-HUB_AGENTS_DIR="${SCRIPT_DIR}/../../hub/agents"
+HUB_AGENTS_DIR="${HUB_AGENTS_DIR:-${SCRIPT_DIR}/../../hub/agents}"
 if [ -d "$HUB_AGENTS_DIR" ]; then
   echo "==> Scanning for hub agent Dockerfiles in ${HUB_AGENTS_DIR}..."
   find "${HUB_AGENTS_DIR}" -name "Dockerfile" | while read -r dockerfile; do
