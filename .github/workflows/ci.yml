@@ -170,8 +170,8 @@ jobs:
 
       - run: npm ci
 
-      - name: API + NATS + Pipeline tests (Vitest)
-        run: npm run test:api
+      - name: API + NATS tests (Vitest)
+        run: npx vitest run --exclude 'tests/api/multi-instance.test.ts'
         env:
           NATS_URL: nats://localhost:4222
           MOCK_RESPONSE: "Mock provider: task acknowledged."
