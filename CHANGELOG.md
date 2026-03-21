@@ -93,6 +93,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`5e87125`](https://github.com/nano-agent-team/nano-agent-team/commit/5e871254f6946f4a5a0d8b058160a50a118a50e5))
 - **ci:** Update CHANGELOG [skip ci] ([`91518c9`](https://github.com/nano-agent-team/nano-agent-team/commit/91518c931b9ef09ac31eaea6bdd6578f317291d8))
 - **ci:** Update CHANGELOG [skip ci] ([`0c2c841`](https://github.com/nano-agent-team/nano-agent-team/commit/0c2c841eb4060fe3cfafb0c101b8f29707e192c5))
+- **ci:** Update CHANGELOG [skip ci] ([`66b021a`](https://github.com/nano-agent-team/nano-agent-team/commit/66b021a1db06fdf4c5173b99cb4e4df85e77f9c9))
 
 ### Features
 
@@ -150,6 +151,7 @@ All notable changes to this project will be documented in this file.
 - Enable superpowers skills for agent development (GH-30) ([`ceec985`](https://github.com/nano-agent-team/nano-agent-team/commit/ceec985139aa762c6256b8aaf6591ba52365935d))
 - **api:** Fix stale NATS process reuse on container restart (GH-35) ([`4012a0a`](https://github.com/nano-agent-team/nano-agent-team/commit/4012a0a7dc8bc69465dc2c69f9388a6b8d90e3ab))
 - Security: Run agent containers as non-root user (GH-57) ([`4901405`](https://github.com/nano-agent-team/nano-agent-team/commit/49014053ea03a03667d0f753ec85809fe406ae98))
+- **api:** Fix credential proxy for OAuth — host header, org UUID, gate-pass token ([`3825433`](https://github.com/nano-agent-team/nano-agent-team/commit/38254332d99dfc014bb5e63538bca205facbee8c))
 
 ### Miscellaneous
 
