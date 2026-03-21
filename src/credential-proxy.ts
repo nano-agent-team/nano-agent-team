@@ -140,18 +140,27 @@ let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
 export function startAutoRefresh(dataDir: string, onRefresh?: () => void): void {
   if (autoRefreshTimer) clearInterval(autoRefreshTimer);
 
+  let autoRefreshInFlight = false;
+
   const check = async () => {
+    if (autoRefreshInFlight) return;
     const creds = readCredentials(dataDir);
     if (!creds || creds.method !== 'oauth' || !creds.refresh_token || !creds.expires_at) return;
 
     const remaining = new Date(creds.expires_at).getTime() - Date.now();
     if (remaining > 30 * 60 * 1000) return; // more than 30 min left
 
-    logger.info({ remainingMin: Math.round(remaining / 60000) }, 'Auto-refresh: token expiring soon');
-    const updated = await refreshOauthToken(creds, dataDir);
-    if (updated.oauth_token !== creds.oauth_token) {
-      logger.info('Auto-refresh: token refreshed, triggering agent reload');
-      onRefresh?.();
+    const label = remaining > 0 ? 'expiring soon' : 'already expired';
+    logger.info({ remainingMin: Math.round(remaining / 60000), label }, 'Auto-refresh: token ' + label);
+    autoRefreshInFlight = true;
+    try {
+      const updated = await refreshOauthToken(creds, dataDir);
+      if (updated.oauth_token !== creds.oauth_token) {
+        logger.info('Auto-refresh: token refreshed, triggering agent reload');
+        onRefresh?.();
+      }
+    } finally {
+      autoRefreshInFlight = false;
     }
   };
 

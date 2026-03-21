@@ -19,7 +19,7 @@ import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { DATA_DIR, NATS_URL, MCP_GATEWAY_PORT } from './config.js';
 import { logger } from './logger.js';
-import { startCredentialProxy } from './credential-proxy.js';
+import { startCredentialProxy, startAutoRefresh, stopAutoRefresh } from './credential-proxy.js';
 import { connectNats, ensureStream, ensureConsumer, closeNats, publish } from './nats-client.js';
 import { loadAgents, loadManifest, resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
 import { AgentManager } from './agent-manager.js';
@@ -119,10 +119,12 @@ async function main(): Promise<void> {
     proxyServer = await startCredentialProxy(DATA_DIR);
     logger.info('Credential proxy started on :8082');
 
-    // Auto-refresh OAuth token before expiry, then reload agents with fresh token
-    const { startAutoRefresh } = await import('./credential-proxy.js');
+    // Auto-refresh OAuth token before expiry.
+    // Proxy reads fresh token per-request from credentials.json, so agent reload
+    // is not strictly needed — but we reload to update the gate-pass CLAUDE_CODE_OAUTH_TOKEN
+    // env var that SDK uses for its internal login check.
     startAutoRefresh(DATA_DIR, () => {
-      logger.info('Token auto-refreshed — reloading agents');
+      logger.info('Token auto-refreshed — reloading agents for fresh gate-pass token');
       void fetch(`http://localhost:${process.env.API_PORT ?? '3001'}/internal/reload`, { method: 'POST' }).catch(() => {});
     });
   }
@@ -282,6 +284,7 @@ async function main(): Promise<void> {
   // ── Graceful shutdown ───────────────────────────────────────────────────────
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutting down...');
+    stopAutoRefresh();
     proxyServer?.close();
     mcpGateway.stop();
     await mcpManager.stopAll();
