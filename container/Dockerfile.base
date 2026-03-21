@@ -11,8 +11,8 @@ COPY agent-runner/dist/ ./dist/
 # Create workspace mount points for volumes (vault, sessions, agent)
 RUN mkdir -p /workspace/vault /workspace/sessions /workspace/agent
 
-# Create non-root agent user (Alpine syntax) with explicit UID and home dir
-RUN addgroup -S agent && adduser -S -G agent -h /home/agent -s /bin/sh -u 1000 agent
+# Create non-root agent user (Alpine syntax) with home dir
+RUN addgroup -S agent && adduser -S -G agent -h /home/agent -s /bin/sh agent
 
 # Ensure workspace dirs are owned by agent
 RUN chown -R agent:agent /workspace /app
