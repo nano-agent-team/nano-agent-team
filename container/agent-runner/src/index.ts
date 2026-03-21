@@ -148,6 +148,11 @@ function saveSessionId(id: string): void {
   }
 }
 
+/** First message of this container lifecycle always starts a fresh session.
+ *  This prevents stale session IDs (from a previous container run) from
+ *  causing the provider to hang on resume. */
+let firstMessageOfLifecycle = true;
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -322,7 +327,7 @@ async function main(): Promise<void> {
   {
     const saved = loadSessionId();
     if (saved) {
-      log.info({ agentId: AGENT_ID, sessionId: saved }, 'Loaded saved session ID — will resume on first message');
+      log.info({ agentId: AGENT_ID, sessionId: saved }, 'Found saved session ID — will be used after first fresh message');
     }
   }
 
@@ -418,7 +423,7 @@ async function main(): Promise<void> {
         : `Event on topic "${subject}":\n\n${JSON.stringify(payloadForPrompt, null, 2)}`;
 
       // ── Provider invocation ───────────────────────────────────────────────
-      const existingSessionId = loadSessionId();
+      const existingSessionId = firstMessageOfLifecycle ? undefined : loadSessionId();
 
       // CLAUDE.md is written to /workspace/CLAUDE.md at startup and read automatically by Claude Code.
       // Never prepend it to the prompt — it would re-inject instructions as a user message,
@@ -502,6 +507,16 @@ async function main(): Promise<void> {
       if (sessionId) {
         saveSessionId(sessionId);
         log.debug({ agentId: AGENT_ID, sessionId }, 'Session id saved');
+      }
+      if (firstMessageOfLifecycle) {
+        firstMessageOfLifecycle = false;
+        if (!sessionId) {
+          // First message failed without producing a session — clear stale file
+          try { fs.unlinkSync(path.join('/workspace/sessions', 'session_id')); } catch { /* ignore */ }
+          log.warn({ agentId: AGENT_ID }, 'First message failed without session — cleared stale session file');
+        } else {
+          log.info({ agentId: AGENT_ID }, 'First message completed — subsequent messages will resume session');
+        }
       }
       currentSessionId = undefined;
 
