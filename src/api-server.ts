@@ -6,6 +6,7 @@
  *   GET  /api/events        — SSE stream
  *   POST /api/chat/settings — NATS bridge for settings agent
  *   POST /internal/reload   — live reload tools after setup_complete
+ *   POST /internal/restart  — graceful restart with pending-deploy tracking
  *   GET  /                  — static dashboard/dist/
  *
  * Plugin routes are registered via loadTool() from features/{id}/plugin.mjs
@@ -13,7 +14,9 @@
  */
 
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import express, { type Request, type Response, type NextFunction } from 'express';
@@ -1076,6 +1079,60 @@ export async function createApiApp(
     }
   });
 
+  // ── POST /internal/restart — graceful restart with deploy tracking ───────
+  app.post('/internal/restart', async (req: Request, res: Response) => {
+    try {
+      const { ticket_id, workspaceId } = req.body ?? {};
+
+      // Determine current main commit from bare repo (for rollback reference)
+      let mainCommit = 'unknown';
+      try {
+        const bareRepoDir = path.join(DATA_DIR, 'workspaces', 'repos', 'nano-agent-team.git');
+        mainCommit = execSync('git rev-parse main', { cwd: bareRepoDir, encoding: 'utf8' }).trim();
+      } catch {
+        logger.warn('Could not determine main commit from bare repo');
+      }
+
+      // Write pending-deploy.json with deploy context
+      const pendingDeploy = {
+        ticket_id: ticket_id ?? null,
+        workspaceId: workspaceId ?? null,
+        previousMainCommit: mainCommit,
+        timestamp: new Date().toISOString(),
+      };
+      fs.writeFileSync(
+        path.join(DATA_DIR, 'pending-deploy.json'),
+        JSON.stringify(pendingDeploy, null, 2),
+      );
+      logger.info({ pendingDeploy }, 'Pending deploy written, restart scheduled');
+
+      // Respond before shutting down
+      res.json({ ok: true, message: 'Restart scheduled' });
+
+      // Graceful shutdown after a short delay to allow response to flush
+      setTimeout(async () => {
+        try {
+          logger.info('Performing graceful shutdown for restart...');
+          await manager.stopAll();
+          await manager.stopAllDispatches();
+          nc.drain().catch(() => {});
+          // Close the HTTP server if available
+          const httpServer = (app as unknown as { _httpServer?: http.Server })._httpServer;
+          if (httpServer) {
+            httpServer.close();
+          }
+          process.exit(0);
+        } catch (err) {
+          logger.error({ err }, 'Error during restart shutdown');
+          process.exit(1);
+        }
+      }, 500);
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/restart error');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   // ── Static files for tools (must be before catch-all) ────────────────────
   app.use('/features/settings', express.static(path.join(TOOLS_DIR, 'settings')));
   app.use('/features/simple-chat', express.static(path.join(TOOLS_DIR, 'simple-chat')));
@@ -1122,13 +1179,15 @@ export async function startApiServer(
   nc: NatsConnection,
   configService: ConfigService,
   opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
-): Promise<void> {
+): Promise<http.Server> {
   const app = await createApiApp(manager, nc, configService, opts);
 
-  await new Promise<void>((resolve) => {
-    app.listen(API_PORT, () => {
+  return new Promise<http.Server>((resolve) => {
+    const server = app.listen(API_PORT, () => {
       logger.info({ port: API_PORT }, 'API server listening');
-      resolve();
+      // Expose server reference for /internal/restart shutdown
+      (app as unknown as { _httpServer?: http.Server })._httpServer = server;
+      resolve(server);
     });
   });
 }
