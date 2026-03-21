@@ -41,6 +41,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Add --ignore-platform to npm ci for cross-arch lockfile ([`3f63dea`](https://github.com/nano-agent-team/nano-agent-team/commit/3f63deaeb93c42878a5c66ed8eb1269f854bd2c1))
 - **ci:** Add .npmrc with ignore-platform for cross-arch builds ([`88ec43e`](https://github.com/nano-agent-team/nano-agent-team/commit/88ec43e8b9628732ff742bd53f9eaa6b33556718))
 - **ci:** Remove accidental @rolldown/binding-linux-arm64-gnu from dependencies ([`0f1cc1d`](https://github.com/nano-agent-team/nano-agent-team/commit/0f1cc1da6d37bf8c9962a4d38f6e31c5b9379962))
+- **ci:** Increase E2E test timeouts for CI environment (GH-81) ([`8b1a9ba`](https://github.com/nano-agent-team/nano-agent-team/commit/8b1a9ba1779e24157f65c921939646accda38101))
 
 ### Documentation
 
@@ -64,6 +65,7 @@ All notable changes to this project will be documented in this file.
 - Add Foreman chat UI mockup screenshot ([`d7446be`](https://github.com/nano-agent-team/nano-agent-team/commit/d7446be610d6fd912a6b68a04a5b25d6184f24b0))
 - **ci:** Update CHANGELOG [skip ci] ([`d11a0c0`](https://github.com/nano-agent-team/nano-agent-team/commit/d11a0c09a03188536a2f9f40d09ac00d6e1fcf50))
 - **ci:** Update CHANGELOG [skip ci] ([`6c470a7`](https://github.com/nano-agent-team/nano-agent-team/commit/6c470a7f922300ce6d9dd2f3a0c8a1d40446e0dc))
+- **ci:** Update CHANGELOG [skip ci] ([`afc971a`](https://github.com/nano-agent-team/nano-agent-team/commit/afc971a2b080aa736f609b416620255a741e5230))
 
 ### Features
 
