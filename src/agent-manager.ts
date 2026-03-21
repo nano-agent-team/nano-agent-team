@@ -12,7 +12,8 @@ import fs from 'fs';
 import path from 'path';
 
 import Dockerode from 'dockerode';
-import type { NatsConnection } from 'nats';
+import type { NatsConnection, ConsumerMessages } from 'nats';
+import { AckPolicy, DeliverPolicy } from 'nats';
 
 import {
   AGENT_IMAGE,
@@ -20,6 +21,7 @@ import {
   ANTHROPIC_BASE_URL,
   AGENT_RESTART_MAX,
   AGENT_RESTART_DELAY_MS,
+  API_PORT,
   DATA_DIR,
   DB_PATH,
   DOCKER_NETWORK,
@@ -74,10 +76,31 @@ interface AgentEnvAndBinds {
   image: string;
 }
 
+/** Tracks the NATS consumer loop for an ephemeral (workspace_source: 'ticket') agent */
+interface EphemeralAgentLoop {
+  agent: LoadedAgent;
+  /** Call to abort the consumer loop */
+  stop: () => void;
+  /** Resolves when the loop has fully exited */
+  done: Promise<void>;
+  /** JetStream consumer name */
+  consumerName: string;
+}
+
+interface WorkspaceInfo {
+  workspaceId: string;
+  path: string;
+  repoType: string;
+  branch: string;
+  ownerId: string;
+  status: string;
+}
+
 // ─── AgentManager ────────────────────────────────────────────────────────────
 
 export class AgentManager {
   private states = new Map<string, AgentState>();
+  private ephemeralLoops = new Map<string, EphemeralAgentLoop>();
   private docker: Dockerode;
   private healthTimer?: NodeJS.Timeout;
   private proxyHost: string | null = null;
@@ -240,6 +263,17 @@ export class AgentManager {
 
   async startAgent(agent: LoadedAgent): Promise<void> {
     const id = getInstanceId(agent);
+
+    // ── Ephemeral agent: workspace_source: 'ticket' ──────────────────────────
+    // Do NOT start a container at boot. Instead, register a NATS consumer loop
+    // in the control plane that intercepts messages, resolves the workspace,
+    // and spins up an ephemeral container per task.
+    if (agent.manifest.workspace_source === 'ticket') {
+      await this.startEphemeralConsumer(agent, id);
+      return;
+    }
+
+    // ── Persistent agent (normal flow) ───────────────────────────────────────
     // When an agent is loaded in team context (root fallback), use team-scoped name
     // to prevent conflicts if multiple teams share the same root agent definition.
     const containerName = agent.teamId ? `nano-agent-${agent.teamId}-${id}` : `nano-agent-${id}`;
@@ -294,6 +328,18 @@ export class AgentManager {
   }
 
   async stopAgent(agentId: string): Promise<void> {
+    // Stop ephemeral consumer loop if this is an ephemeral agent
+    const ephemeralLoop = this.ephemeralLoops.get(agentId);
+    if (ephemeralLoop) {
+      ephemeralLoop.stop();
+      await ephemeralLoop.done;
+      this.ephemeralLoops.delete(agentId);
+      const state = this.states.get(agentId);
+      if (state) state.status = 'dead';
+      logger.info({ agentId }, 'Ephemeral agent consumer stopped');
+      return;
+    }
+
     const state = this.states.get(agentId);
     if (!state?.containerId) return;
 
@@ -338,6 +384,7 @@ export class AgentManager {
     busy?: boolean;
     task?: string;
     rollingOver?: boolean;
+    ephemeral?: boolean;
   }> {
     return [...this.states.values()].map((s) => ({
       agentId: s.agentId,
@@ -349,6 +396,7 @@ export class AgentManager {
       busy: s.busy,
       task: s.task,
       rollingOver: s.status === 'rolling-over' || !!s.pendingContainerId,
+      ephemeral: s.agent.manifest.workspace_source === 'ticket',
     }));
   }
 
@@ -357,6 +405,11 @@ export class AgentManager {
       clearInterval(this.healthTimer);
       this.healthTimer = undefined;
     }
+
+    // Stop ephemeral consumer loops
+    for (const [, loop] of this.ephemeralLoops) loop.stop();
+    await Promise.allSettled([...this.ephemeralLoops.values()].map(l => l.done));
+    this.ephemeralLoops.clear();
 
     await Promise.allSettled(
       [...this.states.keys()].map((id) => this.stopAgent(id)),
@@ -374,6 +427,232 @@ export class AgentManager {
       { intervalMs: HEALTH_CHECK_INTERVAL_MS },
       'Health monitoring started',
     );
+  }
+
+  // ── Ephemeral agent support (workspace_source: 'ticket') ──────────────────
+
+  /**
+   * Start a control-plane NATS consumer for an ephemeral agent.
+   * Instead of starting a persistent container, this sets up a pull loop
+   * that intercepts task messages and spawns a fresh container per message.
+   */
+  private async startEphemeralConsumer(agent: LoadedAgent, agentId: string): Promise<void> {
+    if (this.ephemeralLoops.has(agentId)) {
+      logger.warn({ agentId }, 'Ephemeral consumer already running — skipping');
+      return;
+    }
+
+    // Register the agent in states map as 'running' (ephemeral — no container yet)
+    this.states.set(agentId, {
+      agentId,
+      agent,
+      status: 'running',
+      restartCount: 0,
+      startedAt: new Date(),
+    });
+
+    const filterSubjects = resolveTopicsForAgent(agent.manifest, agent.binding, agentId);
+    const consumerName = agent.consumerName ?? agentId;
+
+    // Ensure durable consumer exists in JetStream
+    const jsm = await this.nc.jetstreamManager();
+    try {
+      await jsm.consumers.info('AGENTS', consumerName);
+    } catch {
+      const consumerConfig: Record<string, unknown> = {
+        durable_name: consumerName,
+        ack_policy: AckPolicy.Explicit,
+        deliver_policy: DeliverPolicy.New,
+        // Long ack_wait: ephemeral containers may take a while to process
+        ack_wait: 600_000_000_000, // 10 min in nanoseconds
+      };
+      if (filterSubjects.length === 1) {
+        consumerConfig.filter_subject = filterSubjects[0];
+      } else {
+        consumerConfig.filter_subjects = filterSubjects;
+      }
+      await jsm.consumers.add('AGENTS', consumerConfig as Parameters<typeof jsm.consumers.add>[1]);
+    }
+
+    const js = this.nc.jetstream();
+    const consumer = await js.consumers.get('AGENTS', consumerName);
+
+    const signal = { aborted: false };
+    const messagesRef: { current: ConsumerMessages | null } = { current: null };
+
+    logger.info(
+      { agentId, filterSubjects, consumerName },
+      'Ephemeral agent: started NATS consumer loop (no persistent container)',
+    );
+
+    const done = this.runEphemeralLoop(consumer, agent, agentId, signal, messagesRef);
+
+    this.ephemeralLoops.set(agentId, {
+      agent,
+      stop: () => {
+        signal.aborted = true;
+        messagesRef.current?.close();
+      },
+      done,
+      consumerName,
+    });
+  }
+
+  /**
+   * Run the ephemeral consumer loop with exponential backoff on errors.
+   */
+  private async runEphemeralLoop(
+    consumer: Awaited<ReturnType<ReturnType<NatsConnection['jetstream']>['consumers']['get']>>,
+    agent: LoadedAgent,
+    agentId: string,
+    signal: { aborted: boolean },
+    messagesRef: { current: ConsumerMessages | null },
+  ): Promise<void> {
+    let delay = 1000;
+    while (!this.nc.isClosed() && !signal.aborted) {
+      try {
+        await this.ephemeralPullLoop(consumer, agent, agentId, signal, messagesRef);
+        break;
+      } catch (err) {
+        if (signal.aborted) break;
+        logger.error({ err, agentId, retryInMs: delay }, 'Ephemeral consumer loop crashed — restarting');
+        await new Promise(resolve => setTimeout(resolve, delay));
+        if (signal.aborted) break;
+        delay = Math.min(delay * 2, 60_000);
+      }
+    }
+  }
+
+  /**
+   * Pull messages from the ephemeral agent's JetStream consumer.
+   * For each message, resolve workspace → create container → wait for exit → cleanup.
+   */
+  private async ephemeralPullLoop(
+    consumer: Awaited<ReturnType<ReturnType<NatsConnection['jetstream']>['consumers']['get']>>,
+    agent: LoadedAgent,
+    agentId: string,
+    signal: { aborted: boolean },
+    messagesRef: { current: ConsumerMessages | null },
+  ): Promise<void> {
+    const messages = await consumer.consume({ max_messages: 1 });
+    messagesRef.current = messages;
+
+    for await (const msg of messages) {
+      if (signal.aborted) {
+        msg.nak();
+        break;
+      }
+
+      let ticketId: string | undefined;
+      try {
+        const payload = JSON.parse(codec.decode(msg.data)) as Record<string, unknown>;
+        ticketId = (payload.ticket_id ?? payload.ticketId) as string | undefined;
+      } catch {
+        logger.warn({ agentId }, 'Ephemeral agent: cannot parse message payload — nacking');
+        msg.nak();
+        continue;
+      }
+
+      if (!ticketId) {
+        logger.warn({ agentId }, 'Ephemeral agent: message has no ticket_id — nacking');
+        msg.nak();
+        continue;
+      }
+
+      try {
+        await this.runEphemeralContainer(agent, agentId, ticketId, msg.data, msg.headers);
+        msg.ack();
+        logger.info({ agentId, ticketId }, 'Ephemeral container completed successfully');
+      } catch (err) {
+        logger.error({ err, agentId, ticketId }, 'Ephemeral container failed');
+        msg.nak();
+      }
+    }
+  }
+
+  /**
+   * Resolve workspace for a ticket, spin up an ephemeral container, wait for it to exit, clean up.
+   */
+  private async runEphemeralContainer(
+    agent: LoadedAgent,
+    agentId: string,
+    ticketId: string,
+    messageData: Uint8Array,
+    messageHeaders?: import('nats').MsgHdrs,
+  ): Promise<void> {
+    // 1. Resolve workspace path from workspace provider
+    const apiPort = API_PORT;
+    const workspaceUrl = `http://localhost:${apiPort}/internal/workspaces/by-owner/${encodeURIComponent(ticketId)}`;
+
+    const resp = await fetch(workspaceUrl);
+    if (!resp.ok) {
+      throw new Error(`Workspace not found for ticket ${ticketId}: ${resp.status} ${await resp.text()}`);
+    }
+    const workspace = await resp.json() as WorkspaceInfo;
+
+    // HOST_DATA_DIR resolution: workspace.path is relative to the control plane container.
+    // For Docker bind mounts, we need the host path.
+    const hostDataDir = process.env.HOST_DATA_DIR ?? path.dirname(DB_PATH);
+    // workspace.path is absolute (e.g. /data/workspaces/active/ws-xxx)
+    // We need to translate it: replace DATA_DIR prefix with hostDataDir
+    const hostWorkspacePath = workspace.path.replace(DATA_DIR, hostDataDir);
+
+    // 2. Build env and binds (same as persistent agent)
+    const { env, binds, image } = await this.buildAgentEnvAndBinds(agent, agentId, [
+      // Pass the task message as env var so agent-runner processes it immediately
+      `EPHEMERAL_TASK_MESSAGE=${Buffer.from(messageData).toString('base64')}`,
+      `EPHEMERAL_TICKET_ID=${ticketId}`,
+      // Force stateless session for ephemeral containers
+      'SESSION_TYPE=stateless',
+    ]);
+
+    // 3. Add workspace bind mount
+    binds.push(`${hostWorkspacePath}:/workspace/repo:rw`);
+
+    // 4. Create and start ephemeral container
+    const containerName = `nano-agent-${agentId}-${ticketId.replace(/[^a-zA-Z0-9_.-]/g, '-')}`;
+    await this.removeContainerIfExists(containerName);
+
+    logger.info({ agentId, ticketId, containerName, workspacePath: hostWorkspacePath }, 'Starting ephemeral container');
+
+    const container = await this.docker.createContainer({
+      Image: image,
+      name: containerName,
+      Env: env,
+      HostConfig: {
+        Binds: binds,
+        NetworkMode: DOCKER_NETWORK,
+        RestartPolicy: { Name: 'no' },
+      },
+    });
+
+    await container.start();
+
+    // 5. Wait for container to exit (with timeout)
+    const EPHEMERAL_TIMEOUT_MS = 600_000; // 10 minutes max
+    const exited = await Promise.race([
+      new Promise<boolean>((resolve) => {
+        void container.wait().then(() => resolve(true)).catch(() => resolve(true));
+      }),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), EPHEMERAL_TIMEOUT_MS)),
+    ]);
+
+    // 6. Check exit code and clean up
+    try {
+      const info = await container.inspect() as { State: { ExitCode: number; Running: boolean } };
+      if (!exited) {
+        logger.warn({ agentId, ticketId, containerName }, 'Ephemeral container timed out — force removing');
+        await container.stop({ t: 10 }).catch(() => {});
+      } else if (info.State.ExitCode !== 0) {
+        logger.warn({ agentId, ticketId, exitCode: info.State.ExitCode }, 'Ephemeral container exited with error');
+      }
+    } catch {
+      // Container may already be gone
+    }
+
+    // Always remove ephemeral containers after they're done
+    await container.remove({ force: true }).catch(() => {});
+    logger.debug({ agentId, ticketId, containerName }, 'Ephemeral container cleaned up');
   }
 
   // ── Private ────────────────────────────────────────────────────────────────

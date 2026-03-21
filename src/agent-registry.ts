@@ -81,6 +81,9 @@ export interface AgentManifest {
   mcp_config?: string;
   /** Extra tools to allow for this agent (e.g. ["Skill"] for superpowers skills) */
   allowedTools?: string[];
+  /** Mount worktree from workspace provider based on ticket_id in NATS payload.
+   *  When set, agent runs as ephemeral: new container per task, workspace resolved from message payload. */
+  workspace_source?: 'ticket';
 }
 
 // ─── Workflow Binding ─────────────────────────────────────────────────────────
