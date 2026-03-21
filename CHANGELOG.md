@@ -49,6 +49,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Remove obsolete pipeline test, fix ticket field ([`425e43f`](https://github.com/nano-agent-team/nano-agent-team/commit/425e43f63264238b69cbfddcddb3bccd482021dc))
 - **ci:** Remove heartbeat test (no agents in CI config) ([`8bcd162`](https://github.com/nano-agent-team/nano-agent-team/commit/8bcd162c140bc90d112d2391be2c0da045582819))
 - **ci:** Pre-build test agent, remove heartbeat test ([`fbb4313`](https://github.com/nano-agent-team/nano-agent-team/commit/fbb431360134028d581c130360c62c8bd0cba62b))
+- **ci:** Skip test agent build when pre-built image exists ([`7cf44d2`](https://github.com/nano-agent-team/nano-agent-team/commit/7cf44d2607b249fce695074844f948a75ca96669))
 
 ### Documentation
 
@@ -80,6 +81,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`d0025db`](https://github.com/nano-agent-team/nano-agent-team/commit/d0025db60b50833ceb7c3e354e88c30950922ce2))
 - **ci:** Update CHANGELOG [skip ci] ([`309c687`](https://github.com/nano-agent-team/nano-agent-team/commit/309c687dbdf94bcec5824024193c150f07017b75))
 - **ci:** Update CHANGELOG [skip ci] ([`14ce4d5`](https://github.com/nano-agent-team/nano-agent-team/commit/14ce4d53cf6fe05d97b401af9cca510d0dd4216a))
+- **ci:** Update CHANGELOG [skip ci] ([`5e87125`](https://github.com/nano-agent-team/nano-agent-team/commit/5e871254f6946f4a5a0d8b058160a50a118a50e5))
 
 ### Features
 
