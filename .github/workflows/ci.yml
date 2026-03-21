@@ -122,8 +122,17 @@ jobs:
           load: true
           tags: nano-agent:latest
 
-      - name: Save agent image for DinD
-        run: docker save nano-agent:latest -o /tmp/nano-agent.tar
+      - name: Build test agent image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./tests/fixtures/test-agent
+          push: false
+          load: true
+          tags: nano-test-agent:latest
+
+      - name: Save agent images for DinD
+        run: |
+          docker save nano-agent:latest nano-test-agent:latest -o /tmp/nano-agent.tar
 
       - name: Prepare data directory
         run: |
