@@ -25,6 +25,7 @@ services:
       - "3003:3003"     # MCP Gateway — pro ticket-pipeline testy
     volumes:
       - ./data:/data    # bind mount — testy mohou zapisovat do ./data/ a container vidí změny
+      - ${NANO_AGENT_TAR:-/dev/null}:/tmp/nano-agent.tar:ro  # pre-built agent image (CI only)
     environment:
       LOG_LEVEL: warn
       MOCK_RESPONSE: "Mock provider: task acknowledged."

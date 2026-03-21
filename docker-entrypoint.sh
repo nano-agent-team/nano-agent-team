@@ -39,10 +39,21 @@ if [ -z "$DOCKER_HOST" ] && [ -z "$SKIP_DOCKERD" ]; then
 
   # Build nano-agent image if not already present (persists in DATA_DIR/docker volume)
   if ! docker image inspect nano-agent:latest >/dev/null 2>&1; then
-    echo "[entrypoint] Building nano-agent:latest..."
-    docker build -t nano-agent:latest /app/container/ \
-      && echo "[entrypoint] nano-agent:latest ready" \
-      || { echo "[entrypoint] ERROR: nano-agent build failed"; exit 1; }
+    # Check for pre-built image tar (CI imports it via docker cp)
+    if [ -f /tmp/nano-agent.tar ]; then
+      echo "[entrypoint] Loading pre-built nano-agent:latest from tar..."
+      docker load -i /tmp/nano-agent.tar \
+        && rm -f /tmp/nano-agent.tar \
+        && echo "[entrypoint] nano-agent:latest loaded from tar" \
+        || echo "[entrypoint] WARN: tar load failed, falling back to build"
+    fi
+    # Build if still not present (tar load may have failed or tar not present)
+    if ! docker image inspect nano-agent:latest >/dev/null 2>&1; then
+      echo "[entrypoint] Building nano-agent:latest..."
+      docker build -t nano-agent:latest /app/container/ \
+        && echo "[entrypoint] nano-agent:latest ready" \
+        || { echo "[entrypoint] ERROR: nano-agent build failed"; exit 1; }
+    fi
   fi
 fi
 # ─────────────────────────────────────────────────────────────────────────────
