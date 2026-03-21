@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-21
 **Status:** Draft
-**GH Issue:** TBD
+**GH Issue:** nano-agent-team #90
 
 ---
 
