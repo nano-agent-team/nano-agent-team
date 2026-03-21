@@ -18,7 +18,7 @@ describe('B1 — POST /api/tickets (vytvoření)', () => {
     const body = await res.json() as Record<string, unknown>;
     expect(body.id).toMatch(/^TICK-\d{4}$/);
     expect(body.title).toBe('Test ticket B1');
-    expect(body.status).toBe('idea');
+    expect(body.status).toBe('new');
     expect(body.priority).toBe('HIGH');
     expect(body.created_at).toBeDefined();
     ticketId = body.id as string;
