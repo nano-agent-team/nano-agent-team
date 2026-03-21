@@ -59,6 +59,7 @@ All notable changes to this project will be documented in this file.
 - Use pkill instead of fuser for Alpine compat (GH-35) ([`4e2a6a1`](https://github.com/nano-agent-team/nano-agent-team/commit/4e2a6a116caf74d87aff203a856bc05ce4f9265b))
 - Non-root user — explicit UID, HOME env, Alpine fixes ([`01f36e9`](https://github.com/nano-agent-team/nano-agent-team/commit/01f36e968835e12a7f9b82100a872cd4b6316dbf))
 - Remove hardcoded UID 1000 — conflicts with base image users in CI ([`cf2df3f`](https://github.com/nano-agent-team/nano-agent-team/commit/cf2df3f1b280776e054e020a50a9427920c94be1))
+- **api:** Auto-refresh review fixes — shutdown cleanup, in-flight guard ([`d710e9b`](https://github.com/nano-agent-team/nano-agent-team/commit/d710e9b5dba2952b7db69dc692dd135988d79766))
 
 ### Documentation
 
@@ -95,6 +96,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`0c2c841`](https://github.com/nano-agent-team/nano-agent-team/commit/0c2c841eb4060fe3cfafb0c101b8f29707e192c5))
 - **ci:** Update CHANGELOG [skip ci] ([`66b021a`](https://github.com/nano-agent-team/nano-agent-team/commit/66b021a1db06fdf4c5173b99cb4e4df85e77f9c9))
 - **ci:** Update CHANGELOG [skip ci] ([`8808f53`](https://github.com/nano-agent-team/nano-agent-team/commit/8808f53f79ad01270f158af0d2ed8fa992c3cd17))
+- **ci:** Update CHANGELOG [skip ci] ([`8d67242`](https://github.com/nano-agent-team/nano-agent-team/commit/8d672420c414f4f820aa5bafd686a0115171ffb6))
 
 ### Features
 
