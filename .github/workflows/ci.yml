@@ -18,7 +18,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci --ignore-platform
+      - run: npm ci
       - run: npm run build
 
   typecheck-agent-runner:
@@ -33,7 +33,7 @@ jobs:
           cache: npm
           cache-dependency-path: container/agent-runner/package-lock.json
 
-      - run: npm ci --ignore-platform
+      - run: npm ci
         working-directory: container/agent-runner
 
       - run: npm run build
@@ -51,7 +51,7 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
 
-      - run: npm ci --ignore-platform
+      - run: npm ci
         working-directory: dashboard
 
       - run: npm run build
@@ -72,7 +72,7 @@ jobs:
           cache: npm
           cache-dependency-path: features/${{ matrix.feature }}/frontend/package-lock.json
 
-      - run: npm ci --ignore-platform
+      - run: npm ci
         working-directory: features/${{ matrix.feature }}/frontend
 
       - run: npm run build
@@ -143,7 +143,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci --ignore-platform
+      - run: npm ci
 
       - name: API + NATS + Pipeline tests (Vitest)
         run: npm run test:api
