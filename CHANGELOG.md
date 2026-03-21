@@ -51,6 +51,14 @@ All notable changes to this project will be documented in this file.
 - **ci:** Pre-build test agent, remove heartbeat test ([`fbb4313`](https://github.com/nano-agent-team/nano-agent-team/commit/fbb431360134028d581c130360c62c8bd0cba62b))
 - **ci:** Skip test agent build when pre-built image exists ([`7cf44d2`](https://github.com/nano-agent-team/nano-agent-team/commit/7cf44d2607b249fce695074844f948a75ca96669))
 - **ci:** Exclude multi-instance test from CI run ([`10d043d`](https://github.com/nano-agent-team/nano-agent-team/commit/10d043d015ad6ad26c608ce24912f8348ef8e631))
+- **docker:** Mount ~/.claude dir on macOS via HOST_CLAUDE_DIR env (GH-36) ([`e65ade7`](https://github.com/nano-agent-team/nano-agent-team/commit/e65ade71c6985affa97337bc03abd811f94ef8ee))
+- Remove unrelated changes from GH-36 PR ([`ee2dbd8`](https://github.com/nano-agent-team/nano-agent-team/commit/ee2dbd85c85cd9541dc80f3250c11c2259946d12))
+- Clear stale session file when first message fails without session_id ([`71ada7e`](https://github.com/nano-agent-team/nano-agent-team/commit/71ada7e922814121d21066ca4711919394a81d9d))
+- Abort backoff sleep on stop signal, wire stopAllDispatches into shutdown ([`e0fb9ab`](https://github.com/nano-agent-team/nano-agent-team/commit/e0fb9ab368681e3f38afccce21d520c29f0d3d9f))
+- Remove unrelated files, make HUB_AGENTS_DIR configurable ([`0746d5c`](https://github.com/nano-agent-team/nano-agent-team/commit/0746d5c225b8170220d1779dba9b60832b4b0138))
+- Use pkill instead of fuser for Alpine compat (GH-35) ([`4e2a6a1`](https://github.com/nano-agent-team/nano-agent-team/commit/4e2a6a116caf74d87aff203a856bc05ce4f9265b))
+- Non-root user — explicit UID, HOME env, Alpine fixes ([`01f36e9`](https://github.com/nano-agent-team/nano-agent-team/commit/01f36e968835e12a7f9b82100a872cd4b6316dbf))
+- Remove hardcoded UID 1000 — conflicts with base image users in CI ([`cf2df3f`](https://github.com/nano-agent-team/nano-agent-team/commit/cf2df3f1b280776e054e020a50a9427920c94be1))
 
 ### Documentation
 
@@ -84,6 +92,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`14ce4d5`](https://github.com/nano-agent-team/nano-agent-team/commit/14ce4d53cf6fe05d97b401af9cca510d0dd4216a))
 - **ci:** Update CHANGELOG [skip ci] ([`5e87125`](https://github.com/nano-agent-team/nano-agent-team/commit/5e871254f6946f4a5a0d8b058160a50a118a50e5))
 - **ci:** Update CHANGELOG [skip ci] ([`91518c9`](https://github.com/nano-agent-team/nano-agent-team/commit/91518c931b9ef09ac31eaea6bdd6578f317291d8))
+- **ci:** Update CHANGELOG [skip ci] ([`0c2c841`](https://github.com/nano-agent-team/nano-agent-team/commit/0c2c841eb4060fe3cfafb0c101b8f29707e192c5))
 
 ### Features
 
@@ -136,6 +145,11 @@ All notable changes to this project will be documented in this file.
 - Add tool call label to chat typing indicator (TICK-0008) ([`e2e2298`](https://github.com/nano-agent-team/nano-agent-team/commit/e2e229816b4019fb92af69db5fee65f8db115583))
 - Alarm clock MCP, GH issues proxy, credential-proxy SSL fix ([`8b0464b`](https://github.com/nano-agent-team/nano-agent-team/commit/8b0464b89424b527b6cc9d1012fb521620f8c68e))
 - Proactive OAuth token auto-refresh with agent reload ([`2a1193a`](https://github.com/nano-agent-team/nano-agent-team/commit/2a1193a0c38bc24396136341b2fe0903bf98b079))
+- **agent-runner:** Fix stale session hang on restart (GH-37) ([`ded9f6d`](https://github.com/nano-agent-team/nano-agent-team/commit/ded9f6d35c7d908f522645be5f17208ede7614ea))
+- **agent-runner:** Enable per-loop cancellation (GH-38) ([`dc933ae`](https://github.com/nano-agent-team/nano-agent-team/commit/dc933aea0e11d0374d0ccbda01685a2de761b209))
+- Enable superpowers skills for agent development (GH-30) ([`ceec985`](https://github.com/nano-agent-team/nano-agent-team/commit/ceec985139aa762c6256b8aaf6591ba52365935d))
+- **api:** Fix stale NATS process reuse on container restart (GH-35) ([`4012a0a`](https://github.com/nano-agent-team/nano-agent-team/commit/4012a0a7dc8bc69465dc2c69f9388a6b8d90e3ab))
+- Security: Run agent containers as non-root user (GH-57) ([`4901405`](https://github.com/nano-agent-team/nano-agent-team/commit/49014053ea03a03667d0f753ec85809fe406ae98))
 
 ### Miscellaneous
 
