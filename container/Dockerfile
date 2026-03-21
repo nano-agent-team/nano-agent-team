@@ -56,8 +56,11 @@ RUN mkdir -p /workspace/vault /workspace/sessions /workspace/agent
 # Create non-root agent user (no fixed UID — base image may already have UID 1000)
 RUN groupadd -r agent && useradd -r -g agent -m -s /bin/bash agent
 
+# Copy superpowers skills (available to all agents)
+COPY skills/ /home/agent/.claude/skills/
+
 # Ensure workspace dirs are owned by agent
-RUN chown -R agent:agent /workspace /app
+RUN chown -R agent:agent /workspace /app /home/agent/.claude
 
 # Set npm global prefix for non-root user
 ENV NPM_CONFIG_PREFIX=/home/agent/.npm-global
