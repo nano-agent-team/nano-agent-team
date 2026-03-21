@@ -15,7 +15,7 @@
 FROM node:22-alpine AS ts-builder
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
+COPY .npmrc* package.json package-lock.json* ./
 RUN npm ci
 
 COPY tsconfig.json ./
@@ -93,7 +93,7 @@ RUN npm install -g @openai/codex --ignore-scripts 2>/dev/null || \
 
 # Production Node.js dependencies only
 # Note: --ignore-scripts is intentionally omitted — better-sqlite3 requires native build scripts.
-COPY package.json package-lock.json* ./
+COPY .npmrc* package.json package-lock.json* ./
 RUN npm ci --omit=dev
 
 # Compiled TypeScript
