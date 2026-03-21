@@ -38,6 +38,7 @@ All notable changes to this project will be documented in this file.
 - Guard project_workspace against conflict with repo_path ([`9e0e131`](https://github.com/nano-agent-team/nano-agent-team/commit/9e0e13178d8a36b5124c3589474d36728feab9bc))
 - Publish topic.ticket.new from REST endpoint ([`548044b`](https://github.com/nano-agent-team/nano-agent-team/commit/548044b4b56c92e8b848ca9ace22c091315d256c))
 - Review fixes for pipeline-generated TICK-0004..0008 ([`634bea5`](https://github.com/nano-agent-team/nano-agent-team/commit/634bea5521d1c02b18f86654beb12f1664f629be))
+- **ci:** Add --ignore-platform to npm ci for cross-arch lockfile ([`3f63dea`](https://github.com/nano-agent-team/nano-agent-team/commit/3f63deaeb93c42878a5c66ed8eb1269f854bd2c1))
 
 ### Documentation
 
@@ -56,6 +57,9 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`f496b00`](https://github.com/nano-agent-team/nano-agent-team/commit/f496b00c3bdfb62117b6884e2be7232e9150703e))
 - Add token metrics and provider budget management design spec ([`8b1fce6`](https://github.com/nano-agent-team/nano-agent-team/commit/8b1fce6c042f252125b98f0c397799a9f0a46ebf))
 - **ci:** Update CHANGELOG [skip ci] ([`fa113fe`](https://github.com/nano-agent-team/nano-agent-team/commit/fa113fe5349ee1e02b24a7214b4615565788340b))
+- **ci:** Update CHANGELOG [skip ci] ([`d6ecca7`](https://github.com/nano-agent-team/nano-agent-team/commit/d6ecca7a7026be7affc4cdee80224aa6d693d038))
+- Add Foreman chat UI design spec ([`b05361d`](https://github.com/nano-agent-team/nano-agent-team/commit/b05361dae34d0d99c4ab4a679c5f6ce546396c99))
+- Add Foreman chat UI mockup screenshot ([`d7446be`](https://github.com/nano-agent-team/nano-agent-team/commit/d7446be610d6fd912a6b68a04a5b25d6184f24b0))
 
 ### Features
 
