@@ -83,7 +83,7 @@ Each log entry is a JSON line pushed to Loki. Labels index the stream; the log l
 }
 ```
 
-Only `agentId`, `type`, and `level` are Loki stream labels. High-cardinality values (`sessionId`, `ticketId`) are included in the JSON log line payload — they remain searchable via LogQL `| json` but do not create a new Loki stream per value.
+Only `agentId`, `type`, and `level` are Loki stream labels. The `type` label value is set directly from `LogEntry.type` — the same values used in the log levels table (`text`, `tool_call`, `tool_result`, `done`, `error`). High-cardinality values (`sessionId`, `ticketId`) are included in the JSON log line payload — they remain searchable via LogQL `| json` but do not create a new Loki stream per value.
 
 `ticketId` is set from the task message received via NATS. If no ticket is associated (e.g. Foreman responding to a user message), `ticketId` in the payload is `"none"`.
 
@@ -126,7 +126,7 @@ interface LogEntry {
 
 If `LOKI_URL` is unset, `loki-client.ts` becomes a no-op. Observability is disabled when Loki is not configured.
 
-`loki-client.ts` exposes a `flush()` method that sends any buffered entries synchronously before returning. The agent-runner calls `flush()` on graceful shutdown (before process exit) to drain the in-flight batch. For ephemeral agents that exit immediately after a task, this ensures the final events (e.g. `done`) are not silently dropped.
+`loki-client.ts` exposes an async `flush()` method that resolves after the in-flight batch is delivered or a 2-second timeout expires. The agent-runner `await`s `flush()` during graceful shutdown (before process exit) to drain buffered entries. For ephemeral agents that exit immediately after a task, this ensures the final events (e.g. `done`) are not silently dropped.
 
 ### Provider event hooks
 
@@ -136,7 +136,11 @@ Agent-runner already receives provider events (`text`, `tool_call`, `result`). L
 
 Agent-runner subscribes to `agent.{agentId}.config` on **core NATS** (not JetStream). The control plane publishes to this subject via **core NATS publish** as well — not via JetStream. This is intentional: config override messages are ephemeral and must not be persisted in the `AGENTS` JetStream stream.
 
-The `AGENTS` stream filter (`agent.>`) would otherwise capture these messages. To prevent this, the `AGENTS` stream must explicitly exclude `agent.*.config` subjects, or the stream filter must be narrowed. This is a new convention: `agent.{agentId}.{signal}` is the format for per-agent runtime signals delivered on core NATS only.
+The `AGENTS` stream currently filters on `agent.>`, which would capture `agent.{id}.config` messages. To prevent this, the `AGENTS` stream filter must be narrowed to exclude config subjects. The concrete change: replace the stream's single `agent.>` filter subject with an explicit list: `agent.*.inbox`, `agent.*.task` (or whatever the actual filter subjects are). `agent.*.config` is intentionally excluded from the stream filter.
+
+If narrowing the stream filter is too disruptive, an alternative is to use a different top-level subject for runtime signals: `agentcfg.{agentId}` — outside `agent.>` entirely and therefore never captured by `AGENTS`. The chosen approach must be specified at implementation time and documented in the stream definition.
+
+This is a new convention: `agent.{agentId}.{signal}` is the format for per-agent runtime signals delivered on core NATS only (if the stream filter approach is used).
 
 No NATS server ACL changes are required — `agent.>` is already an allowed subject pattern for agents.
 
@@ -158,6 +162,8 @@ No NATS server ACL changes are required — `agent.>` is already an allowed subj
 **Response:** `200 { "agentId": "sd-developer", "observabilityLevel": "full" }`
 
 The control plane does not persist this state — it is a runtime override only. Agent restart resets to the global default.
+
+Per-agent observability level is **not** a field in `AgentManifest`. The manifest controls which tools an agent can use; observability level is a control-plane concern. The only per-agent override mechanism is this runtime debug API.
 
 ---
 
@@ -194,7 +200,7 @@ grafana:
     - ./grafana/provisioning:/etc/grafana/provisioning
 ```
 
-If Grafana is already running (e.g. for Prometheus), only Loki is added as a new data source.
+This spec assumes Grafana is not yet running. If Grafana is already running in a separate setup, skip the Grafana service block and add only the Loki data source to the existing instance's provisioning directory.
 
 ### Agent-runner env vars
 
@@ -270,6 +276,8 @@ datasources:
 Phase 2 adds capture of Claude's internal reasoning (extended thinking blocks) by intercepting at the credential proxy layer. The key design element is a **context holder**: a lightweight in-memory KV store in the control plane that maps `sessionId → { agentId, ticketId }`.
 
 Agent-runner registers context at task start by POSTing to a new `/internal/log-context` endpoint on the control plane: `{ sessionId, agentId, ticketId }`. The control plane stores this in an in-memory Map. The credential proxy reads `x-session-id` from incoming Anthropic API requests (injected by agent-runner via Anthropic SDK `defaultHeaders`), looks up context in the control plane's Map, and pushes raw LLM stream events (including thinking blocks) to Loki with full labels.
+
+The Phase 2 spec must address `/internal/log-context` endpoint authentication. The current expectation is that internal Docker network isolation is sufficient (only agent containers can reach the control plane's internal port), but this must be confirmed in the Phase 2 spec.
 
 This is a separate spec. Phase 1 does not depend on it.
 
