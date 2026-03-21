@@ -229,18 +229,9 @@ async function main(): Promise<void> {
     // ── 5b. Ready mode ─────────────────────────────────────────────────────────
     const appConfig = await configService.load();
 
-    // Load all agents from /data/agents/ (installed from hub — no built-ins in core)
-    const agents: ReturnType<typeof loadAgents> = [];
-    const dataAgentsDir = path.join(DATA_DIR, 'agents');
-    if (fs.existsSync(dataAgentsDir)) {
-      agents.push(...loadAgents(dataAgentsDir));
-    }
-
-    for (const agent of agents) {
-      const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
-      await ensureConsumer(nc, 'AGENTS', getInstanceId(agent), topics);
-      logger.info({ id: getInstanceId(agent), topics }, 'Agent consumer ready');
-    }
+    // Agent loading is deferred to reloadFeatures() (called by startApiServer)
+    // which handles workflow bindings, team context, and proper consumer setup.
+    // Do NOT load agents here — it would create consumers without bindings.
 
     // Start MCP server containers for all registered servers that have their secrets ready
     for (const mcpServer of mcpServerRegistry.getAll()) {
@@ -255,13 +246,7 @@ async function main(): Promise<void> {
       await mcpManager.start(mcpServer);
     }
 
-    await manager.startAll(agents);
     manager.startHealthMonitoring();
-
-    logger.info(
-      { agents: agents.map((a) => a.manifest.id) },
-      'nano-agent-team ready',
-    );
 
     // Publish health.check every 30 minutes (Scrum Master agent listens)
     setInterval(() => {
