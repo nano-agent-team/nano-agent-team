@@ -60,6 +60,8 @@ All notable changes to this project will be documented in this file.
 - Non-root user — explicit UID, HOME env, Alpine fixes ([`01f36e9`](https://github.com/nano-agent-team/nano-agent-team/commit/01f36e968835e12a7f9b82100a872cd4b6316dbf))
 - Remove hardcoded UID 1000 — conflicts with base image users in CI ([`cf2df3f`](https://github.com/nano-agent-team/nano-agent-team/commit/cf2df3f1b280776e054e020a50a9427920c94be1))
 - **api:** Auto-refresh review fixes — shutdown cleanup, in-flight guard ([`d710e9b`](https://github.com/nano-agent-team/nano-agent-team/commit/d710e9b5dba2952b7db69dc692dd135988d79766))
+- **docker:** Add COPY skills/ to agent Dockerfile (missing from GH-30) ([`65433e0`](https://github.com/nano-agent-team/nano-agent-team/commit/65433e08f5309825b733cea143443d20ee34b2a1))
+- SSE event name, revert unrelated files, fix stale workflow cache ([`c50c5e1`](https://github.com/nano-agent-team/nano-agent-team/commit/c50c5e153a55a7adfffdeacef995ad49fdb44769))
 
 ### Documentation
 
@@ -97,6 +99,8 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`66b021a`](https://github.com/nano-agent-team/nano-agent-team/commit/66b021a1db06fdf4c5173b99cb4e4df85e77f9c9))
 - **ci:** Update CHANGELOG [skip ci] ([`8808f53`](https://github.com/nano-agent-team/nano-agent-team/commit/8808f53f79ad01270f158af0d2ed8fa992c3cd17))
 - **ci:** Update CHANGELOG [skip ci] ([`8d67242`](https://github.com/nano-agent-team/nano-agent-team/commit/8d672420c414f4f820aa5bafd686a0115171ffb6))
+- **ci:** Update CHANGELOG [skip ci] ([`89091a8`](https://github.com/nano-agent-team/nano-agent-team/commit/89091a80dde5874635caa6b02447095804ac2276))
+- **ci:** Update CHANGELOG [skip ci] ([`afe9717`](https://github.com/nano-agent-team/nano-agent-team/commit/afe9717bfe5ee73514ecdbd74103529033d83a84))
 
 ### Features
 
@@ -156,6 +160,7 @@ All notable changes to this project will be documented in this file.
 - Security: Run agent containers as non-root user (GH-57) ([`4901405`](https://github.com/nano-agent-team/nano-agent-team/commit/49014053ea03a03667d0f753ec85809fe406ae98))
 - **api:** Fix credential proxy for OAuth — host header, org UUID, gate-pass token ([`3825433`](https://github.com/nano-agent-team/nano-agent-team/commit/38254332d99dfc014bb5e63538bca205facbee8c))
 - **api:** Auto-refresh OAuth token before expiry ([`8cb1b6e`](https://github.com/nano-agent-team/nano-agent-team/commit/8cb1b6ee235df1389d3f46f6b69f32eb77c39d8a))
+- **dashboard:** Replace agent list with Vue Flow graph (GH-45) ([`19e3363`](https://github.com/nano-agent-team/nano-agent-team/commit/19e336351701954791ce072ee3c32020d9bd9a32))
 
 ### Miscellaneous
 
@@ -165,6 +170,7 @@ All notable changes to this project will be documented in this file.
 - Resolve merge conflict — keep foreman inbox and 5min timeout ([`353c5de`](https://github.com/nano-agent-team/nano-agent-team/commit/353c5de4567c9232ae174a018fad18b584a88ec6))
 - Remove hello-world test feature, gitignore features/ ([`eaaf542`](https://github.com/nano-agent-team/nano-agent-team/commit/eaaf5425fedde86affb6d07b02a64bc67a3b0b1c))
 - Gitignore .superpowers/ brainstorm artifacts ([`1d652f9`](https://github.com/nano-agent-team/nano-agent-team/commit/1d652f900e2b7f3ad481605b411ac25751a41136))
+- Trigger CI ([`474edc0`](https://github.com/nano-agent-team/nano-agent-team/commit/474edc0e8a78e3b157aa2868138e43d972ca278d))
 
 ### Refactoring
 
