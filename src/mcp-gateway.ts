@@ -707,6 +707,87 @@ function buildMcpServer(
         },
       );
     }
+
+    // ── Workspace tools ─────────────────────────────────────────────────────
+
+    server.tool(
+      'workspace_create',
+      'Create a git worktree workspace for an agent. Returns workspace metadata including path.',
+      { repoType: z.string(), ownerId: z.string().optional(), branch: z.string().optional() },
+      async ({ repoType, ownerId, branch }) => {
+        const data = await callInternal('POST', '/internal/workspaces', { repoType, ownerId, branch });
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'workspace_get',
+      'Get workspace details by ID.',
+      { workspaceId: z.string() },
+      async ({ workspaceId }) => {
+        const data = await callInternal('GET', `/internal/workspaces/${workspaceId}`);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'workspace_find',
+      'Find workspace by owner ID.',
+      { ownerId: z.string() },
+      async ({ ownerId }) => {
+        const data = await callInternal('GET', `/internal/workspaces/by-owner/${ownerId}`);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'workspace_return',
+      'Return (release) a workspace. Cleans up the worktree.',
+      { workspaceId: z.string() },
+      async ({ workspaceId }) => {
+        const data = await callInternal('DELETE', `/internal/workspaces/${workspaceId}`);
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'workspace_list',
+      'List all active workspaces.',
+      {},
+      async () => {
+        const data = await callInternal('GET', '/internal/workspaces');
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+      },
+    );
+
+    // ── Restart & Health tools ──────────────────────────────────────────────
+
+    server.tool(
+      'restart_self',
+      'Graceful restart of the control plane. Optionally pass ticket_id and workspaceId so they survive the restart.',
+      { ticket_id: z.string().optional(), workspaceId: z.string().optional() },
+      async ({ ticket_id, workspaceId }) => {
+        const data = await callInternal('POST', '/internal/restart', { ticket_id, workspaceId });
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+      },
+    );
+
+    server.tool(
+      'health_check',
+      'Check system health. Returns health status of all components.',
+      { timeout_ms: z.number().optional() },
+      async ({ timeout_ms }) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout_ms ?? 5000);
+        try {
+          const res = await fetch(`${apiBase}/api/health`, { signal: controller.signal });
+          const data = await res.json();
+          return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      },
+    );
   }
 
   return server;
@@ -981,6 +1062,17 @@ export class McpGateway {
         tools.push({ name: 'alarm_cancel', description: 'Cancel an alarm by ID.', inputSchema: { type: 'object', required: ['alarm_id'], properties: { alarm_id: { type: 'string' } } } });
         tools.push({ name: 'alarm_list', description: 'List active alarms, optionally filtered by agent_id.', inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } } } });
       }
+
+      // Workspace tools
+      tools.push({ name: 'workspace_create', description: 'Create a git worktree workspace for an agent. Returns workspace metadata including path.', inputSchema: { type: 'object', required: ['repoType'], properties: { repoType: { type: 'string' }, ownerId: { type: 'string' }, branch: { type: 'string' } } } });
+      tools.push({ name: 'workspace_get', description: 'Get workspace details by ID.', inputSchema: { type: 'object', required: ['workspaceId'], properties: { workspaceId: { type: 'string' } } } });
+      tools.push({ name: 'workspace_find', description: 'Find workspace by owner ID.', inputSchema: { type: 'object', required: ['ownerId'], properties: { ownerId: { type: 'string' } } } });
+      tools.push({ name: 'workspace_return', description: 'Return (release) a workspace. Cleans up the worktree.', inputSchema: { type: 'object', required: ['workspaceId'], properties: { workspaceId: { type: 'string' } } } });
+      tools.push({ name: 'workspace_list', description: 'List all active workspaces.', inputSchema: { type: 'object', properties: {} } });
+
+      // Restart & Health tools
+      tools.push({ name: 'restart_self', description: 'Graceful restart of the control plane.', inputSchema: { type: 'object', properties: { ticket_id: { type: 'string' }, workspaceId: { type: 'string' } } } });
+      tools.push({ name: 'health_check', description: 'Check system health. Returns health status of all components.', inputSchema: { type: 'object', properties: { timeout_ms: { type: 'number' } } } });
     }
 
     return tools;
