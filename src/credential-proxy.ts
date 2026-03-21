@@ -74,7 +74,6 @@ async function refreshOauthToken(
           'Content-Type': 'application/x-www-form-urlencoded',
           'Content-Length': Buffer.byteLength(body),
         },
-        rejectUnauthorized: false, // Alpine container may lack CA certs
       },
       (res) => {
         let data = '';
@@ -130,6 +129,39 @@ function maybeRefreshBackground(creds: StoredCredentials, dataDir: string): void
   refreshOauthToken(creds, dataDir).finally(() => {
     refreshInFlight = false;
   });
+}
+
+// ─── Proactive auto-refresh timer ────────────────────────────────────────────
+// Checks every 10 minutes. Refreshes 30 min before expiry.
+// After refresh, calls onRefresh callback so agents can be reloaded with new token.
+
+let autoRefreshTimer: ReturnType<typeof setInterval> | null = null;
+
+export function startAutoRefresh(dataDir: string, onRefresh?: () => void): void {
+  if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+
+  const check = async () => {
+    const creds = readCredentials(dataDir);
+    if (!creds || creds.method !== 'oauth' || !creds.refresh_token || !creds.expires_at) return;
+
+    const remaining = new Date(creds.expires_at).getTime() - Date.now();
+    if (remaining > 30 * 60 * 1000) return; // more than 30 min left
+
+    logger.info({ remainingMin: Math.round(remaining / 60000) }, 'Auto-refresh: token expiring soon');
+    const updated = await refreshOauthToken(creds, dataDir);
+    if (updated.oauth_token !== creds.oauth_token) {
+      logger.info('Auto-refresh: token refreshed, triggering agent reload');
+      onRefresh?.();
+    }
+  };
+
+  // Check immediately on startup, then every 10 min
+  void check();
+  autoRefreshTimer = setInterval(() => void check(), 10 * 60 * 1000);
+}
+
+export function stopAutoRefresh(): void {
+  if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
 }
 
 // ─── Hop-by-hop headers to strip ─────────────────────────────────────────────
