@@ -8,13 +8,29 @@
  * (installed via apk in Dockerfile: apk add nats-server).
  */
 
-import { spawn, type ChildProcess } from 'child_process';
+import { spawn, execSync, type ChildProcess } from 'child_process';
 import net from 'net';
 
 const NATS_PORT = 4222;
 const STARTUP_TIMEOUT_MS = 8000;
 
 let natsProcess: ChildProcess | null = null;
+
+/** Single-shot, non-retrying TCP probe — resolves true if port is open */
+function isPortOpen(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ port, host: '127.0.0.1' });
+    socket.setTimeout(500);
+    socket.on('connect', () => { socket.destroy(); resolve(true); });
+    socket.on('error', () => { socket.destroy(); resolve(false); });
+    socket.on('timeout', () => { socket.destroy(); resolve(false); });
+  });
+}
+
+/** Simple promise-based sleep */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /** Wait until TCP port is accepting connections */
 function waitForPort(port: number, timeoutMs: number): Promise<void> {
@@ -42,13 +58,37 @@ function waitForPort(port: number, timeoutMs: number): Promise<void> {
 }
 
 export async function startEmbeddedNats(): Promise<string> {
-  // Check if NATS is already running on the port
-  try {
-    await waitForPort(NATS_PORT, 500);
-    console.log('[nats-embedded] NATS already running — skipping embedded start');
-    return `nats://localhost:${NATS_PORT}`;
-  } catch {
-    // Not running — start embedded
+  // Fast path: we already spawned NATS in this process
+  if (natsProcess !== null && natsProcess.exitCode === null) {
+    try {
+      await waitForPort(NATS_PORT, 500);
+      console.log('[nats-embedded] NATS (self-spawned) still running — reusing');
+      return `nats://localhost:${NATS_PORT}`;
+    } catch {
+      // Process handle exists but port not responding — stale handle, clear it
+      console.warn('[nats-embedded] Self-spawned NATS not responding — will restart');
+      natsProcess.kill('SIGKILL');
+      natsProcess = null;
+    }
+  }
+
+  // If we reach here, natsProcess is null. Check if something else owns the port.
+  const portOpen = await isPortOpen(NATS_PORT);
+  if (portOpen) {
+    console.warn('[nats-embedded] Orphan NATS detected on port 4222 — killing');
+    try {
+      execSync('pkill -f nats-server 2>/dev/null');
+    } catch {
+      // pkill returns non-zero when no process matched — acceptable
+    }
+    // Give OS a moment to release the port
+    await sleep(500);
+    if (await isPortOpen(NATS_PORT)) {
+      throw new Error(
+        `Port ${NATS_PORT} is still in use after killing nats-server. ` +
+        `Kill it manually: pkill -9 -f nats-server`,
+      );
+    }
   }
 
   console.log('[nats-embedded] Starting embedded NATS server...');
@@ -89,4 +129,8 @@ export function stopEmbeddedNats(): void {
     natsProcess.kill('SIGTERM');
     natsProcess = null;
   }
+  // Belt-and-suspenders: also kill any remaining nats-server processes
+  try {
+    execSync('pkill -f nats-server 2>/dev/null');
+  } catch { /* pkill returns non-zero when no process matched — acceptable */ }
 }
