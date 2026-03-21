@@ -28,6 +28,7 @@ import type { ConfigService } from './config-service.js';
 import type { SetupMode } from './setup-detector.js';
 import type { McpManager } from './mcp-manager.js';
 import type { McpGateway } from './mcp-gateway.js';
+import type { WorkspaceProvider } from './workspace-provider.js';
 import { listTickets, getTicket, addComment, listComments, type TicketPriority, type TicketType } from './db.js';
 import { TicketRegistry } from './tickets/registry.js';
 import { LocalTicketProvider } from './tickets/local-provider.js';
@@ -298,7 +299,7 @@ export async function createApiApp(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
 ): Promise<express.Application> {
   const app = express();
   app.use(express.json());
@@ -1003,6 +1004,65 @@ export async function createApiApp(
     }
   });
 
+  // ── Workspace management ──────────────────────────────────────────────────
+  if (opts.workspaceProvider) {
+    const wsp = opts.workspaceProvider;
+
+    // IMPORTANT: by-owner route must be before /:id to avoid "by-owner" matching as ID
+    app.get('/internal/workspaces/by-owner/:ownerId', (req: Request, res: Response) => {
+      try {
+        const ws = wsp.findByOwner(req.params.ownerId);
+        if (!ws) return res.status(404).json({ error: 'No active workspace for owner' });
+        res.json(ws);
+      } catch (err) {
+        logger.error({ err }, 'GET /internal/workspaces/by-owner/:ownerId error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.post('/internal/workspaces', async (req: Request, res: Response) => {
+      try {
+        const { repoType, ownerId, branch } = req.body as { repoType: string; ownerId?: string; branch?: string };
+        if (!repoType) return res.status(400).json({ error: 'repoType is required' });
+        const ws = await wsp.create(repoType, ownerId ?? 'anonymous', branch);
+        res.status(201).json(ws);
+      } catch (err) {
+        logger.error({ err }, 'POST /internal/workspaces error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.get('/internal/workspaces', (_req: Request, res: Response) => {
+      try {
+        res.json(wsp.list());
+      } catch (err) {
+        logger.error({ err }, 'GET /internal/workspaces error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.get('/internal/workspaces/:id', (req: Request, res: Response) => {
+      try {
+        const ws = wsp.get(req.params.id);
+        if (!ws) return res.status(404).json({ error: 'Workspace not found' });
+        res.json(ws);
+      } catch (err) {
+        logger.error({ err }, 'GET /internal/workspaces/:id error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.delete('/internal/workspaces/:id', (req: Request, res: Response) => {
+      try {
+        wsp.returnWorkspace(req.params.id);
+        res.json({ ok: true });
+      } catch (err) {
+        logger.error({ err }, 'DELETE /internal/workspaces/:id error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+  }
+
   app.post('/internal/reload', async (_req: Request, res: Response) => {
     try {
       await reloadFeatures(); // includes loadWorkflowPlugins
@@ -1061,7 +1121,7 @@ export async function startApiServer(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
 ): Promise<void> {
   const app = await createApiApp(manager, nc, configService, opts);
 

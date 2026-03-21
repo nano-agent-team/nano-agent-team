@@ -35,6 +35,7 @@ import { startEmbeddedNats, stopEmbeddedNats } from './nats-embedded.js';
 import { SecretStore } from './secret-store.js';
 import { McpServerRegistry } from './mcp-server-registry.js';
 import { McpManager } from './mcp-manager.js';
+import { WorkspaceProvider } from './workspace-provider.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -277,13 +278,26 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── 5c. Workspace Provider (if workspaceRepos configured) ──────────────────
+  let workspaceProvider: WorkspaceProvider | undefined;
+  {
+    const cfg = await configService.load();
+    const workspaceRepos = (cfg as unknown as Record<string, unknown>)?.workspaceRepos as Record<string, string> | undefined;
+    if (workspaceRepos && Object.keys(workspaceRepos).length > 0) {
+      workspaceProvider = new WorkspaceProvider(path.join(DATA_DIR, 'workspaces'), workspaceRepos);
+      workspaceProvider.startPeriodicFetch();
+      logger.info({ repos: Object.keys(workspaceRepos) }, 'WorkspaceProvider started');
+    }
+  }
+
   // ── 6. Start API server ─────────────────────────────────────────────────────
   // Settings feature is always loaded inside startApiServer
-  await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry });
+  await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry, workspaceProvider });
 
   // ── Graceful shutdown ───────────────────────────────────────────────────────
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutting down...');
+    workspaceProvider?.shutdown();
     stopAutoRefresh();
     proxyServer?.close();
     mcpGateway.stop();
