@@ -410,6 +410,9 @@ export async function createApiApp(
       }
     }
 
+    // Track desired route keys so stale ones can be unregistered after the loop
+    const desiredRoutes = new Set<string>();
+
     // Scan /data/teams/*/ — expand instances from workflow.json (multi-instance + dispatch support).
     // Falls back to team.json agents list when no workflow.json instances block is present.
     if (fs.existsSync(dataTeamsDir)) {
@@ -454,6 +457,7 @@ export async function createApiApp(
           for (const [subject, dispatchConfig] of Object.entries(workflow.dispatch)) {
             if (dispatchConfig.strategy !== 'broadcast') {
               await manager.registerDispatch(subject, dispatchConfig);
+              desiredRoutes.add(`dispatch:${subject}`);
             }
           }
         }
@@ -465,7 +469,24 @@ export async function createApiApp(
           for (const input of Object.values(agent.binding?.inputs ?? {})) {
             if (typeof input === 'object' && 'from' in input && 'to' in input) {
               await manager.registerEntrypointRoute(input.from, `agent.${instanceId}.${input.to}`);
+              desiredRoutes.add(`${input.from}=>agent.${instanceId}.${input.to}`);
             }
+          }
+        }
+      }
+    }
+
+    // Remove stale routes that are active but no longer in desired config
+    for (const activeKey of manager.activeDispatcherRoutes) {
+      if (!desiredRoutes.has(activeKey)) {
+        if (activeKey.startsWith('dispatch:')) {
+          await manager.unregisterDispatch(activeKey.replace('dispatch:', ''));
+        } else {
+          const arrowIdx = activeKey.indexOf('=>');
+          if (arrowIdx !== -1) {
+            const from = activeKey.slice(0, arrowIdx);
+            const toSubject = activeKey.slice(arrowIdx + 2);
+            await manager.unregisterEntrypointRoute(from, toSubject);
           }
         }
       }

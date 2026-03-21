@@ -6,7 +6,7 @@
  * Competing and broadcast are handled natively (no dispatcher needed).
  */
 
-import { AckPolicy, DeliverPolicy, type NatsConnection } from 'nats';
+import { AckPolicy, DeliverPolicy, type NatsConnection, type ConsumerMessages } from 'nats';
 
 import { logger } from './logger.js';
 import type { DispatchConfig } from './agent-registry.js';
@@ -16,10 +16,18 @@ interface InstanceHeartbeat {
   lastSeen: Date;
 }
 
+interface ActiveLoop {
+  /** Call to stop the consume loop and exit runWithBackoff */
+  stop: () => void;
+  /** Resolves when the loop has fully exited */
+  done: Promise<void>;
+  /** The JetStream consumer name (needed for optional cleanup) */
+  consumerName: string;
+}
+
 export class WorkflowDispatcher {
   private roundRobinCounters = new Map<string, number>();
-  private registeredRoutes = new Set<string>();
-  private registeredDispatches = new Set<string>();
+  private activeLoops = new Map<string, ActiveLoop>();
 
   constructor(
     private nc: NatsConnection,
@@ -34,8 +42,8 @@ export class WorkflowDispatcher {
    */
   async registerEntrypointRoute(from: string, toSubject: string): Promise<void> {
     const key = `${from}=>${toSubject}`;
-    if (this.registeredRoutes.has(key)) return;
-    this.registeredRoutes.add(key);
+    if (this.activeLoops.has(key)) return;
+
     const js = this.nc.jetstream();
     const jsm = await this.nc.jetstreamManager();
 
@@ -55,18 +63,33 @@ export class WorkflowDispatcher {
     const consumer = await js.consumers.get('AGENTS', consumerName);
     logger.info({ from, toSubject }, 'WorkflowDispatcher: registered entrypoint route');
 
-    void this.runWithBackoff(
-      () => this.entrypointRouteLoop(consumer, from, toSubject),
-      `entrypoint:${from}=>${toSubject}`,
+    const signal = { aborted: false };
+    const messagesRef: { current: ConsumerMessages | null } = { current: null };
+
+    const done = this.runWithBackoff(
+      () => this.entrypointRouteLoop(consumer, from, toSubject, messagesRef),
+      `entrypoint:${key}`,
+      signal,
     );
+
+    this.activeLoops.set(key, {
+      stop: () => {
+        signal.aborted = true;
+        messagesRef.current?.close();
+      },
+      done,
+      consumerName,
+    });
   }
 
   private async entrypointRouteLoop(
     consumer: Awaited<ReturnType<ReturnType<NatsConnection['jetstream']>['consumers']['get']>>,
     from: string,
     toSubject: string,
+    messagesRef: { current: ConsumerMessages | null },
   ): Promise<void> {
     const messages = await consumer.consume({ max_messages: 1 });
+    messagesRef.current = messages;
     for await (const msg of messages) {
       try {
         const js = this.nc.jetstream();
@@ -87,8 +110,9 @@ export class WorkflowDispatcher {
    * Idempotent: repeated calls for the same subject are no-ops.
    */
   async register(subject: string, config: DispatchConfig): Promise<void> {
-    if (this.registeredDispatches.has(subject)) return;
-    this.registeredDispatches.add(subject);
+    const key = `dispatch:${subject}`;
+    if (this.activeLoops.has(key)) return;
+
     const js = this.nc.jetstream();
     const jsm = await this.nc.jetstreamManager();
 
@@ -110,19 +134,34 @@ export class WorkflowDispatcher {
 
     logger.info({ subject, strategy: config.strategy, to: config.to }, 'WorkflowDispatcher: registered dispatch rule');
 
+    const signal = { aborted: false };
+    const messagesRef: { current: ConsumerMessages | null } = { current: null };
+
     // Start async pull loop — restarts automatically on unexpected errors
-    void this.runWithBackoff(
-      () => this.pullLoop(consumer, subject, config),
+    const done = this.runWithBackoff(
+      () => this.pullLoop(consumer, subject, config, messagesRef),
       `dispatch:${subject}`,
+      signal,
     );
+
+    this.activeLoops.set(key, {
+      stop: () => {
+        signal.aborted = true;
+        messagesRef.current?.close();
+      },
+      done,
+      consumerName,
+    });
   }
 
   private async pullLoop(
     consumer: Awaited<ReturnType<ReturnType<NatsConnection['jetstream']>['consumers']['get']>>,
     subject: string,
     config: DispatchConfig,
+    messagesRef: { current: ConsumerMessages | null },
   ): Promise<void> {
     const messages = await consumer.consume({ max_messages: 1 });
+    messagesRef.current = messages;
 
     for await (const msg of messages) {
       const instanceId = this.pickInstance(config.strategy, config.to);
@@ -150,20 +189,92 @@ export class WorkflowDispatcher {
 
   /**
    * Run an async loop function, restarting it with exponential backoff if it throws.
-   * Max delay caps at 60s. Stops only when NATS connection is closed.
+   * Max delay caps at 60s. Stops when NATS connection is closed or signal is aborted.
    */
-  private async runWithBackoff(fn: () => Promise<void>, label: string): Promise<void> {
+  private async runWithBackoff(
+    fn: () => Promise<void>,
+    label: string,
+    signal: { aborted: boolean },
+  ): Promise<void> {
     let delay = 1000;
-    while (!this.nc.isClosed()) {
+    while (!this.nc.isClosed() && !signal.aborted) {
       try {
         await fn();
         break; // clean exit (e.g. consumer drained) — do not restart
       } catch (err) {
+        if (signal.aborted) break;
         logger.error({ err, label, retryInMs: delay }, 'WorkflowDispatcher: loop crashed — restarting');
         await new Promise(resolve => setTimeout(resolve, delay));
+        if (signal.aborted) break;
         delay = Math.min(delay * 2, 60_000);
       }
     }
+  }
+
+  /**
+   * Stop the loop for a specific entrypoint route and remove its JetStream consumer.
+   * After this call, registerEntrypointRoute() with the same key will re-create a fresh loop.
+   */
+  async unregisterEntrypointRoute(from: string, toSubject: string): Promise<void> {
+    const key = `${from}=>${toSubject}`;
+    const loop = this.activeLoops.get(key);
+    if (!loop) return;
+
+    loop.stop();
+    await loop.done;
+    this.activeLoops.delete(key);
+
+    // Optionally delete the durable consumer from JetStream
+    try {
+      const jsm = await this.nc.jetstreamManager();
+      await jsm.consumers.delete('AGENTS', loop.consumerName);
+    } catch (err) {
+      logger.warn({ err, key }, 'WorkflowDispatcher: failed to delete consumer on unregister');
+    }
+
+    logger.info({ from, toSubject }, 'WorkflowDispatcher: unregistered entrypoint route');
+  }
+
+  /**
+   * Stop the loop for a specific dispatch rule and remove its JetStream consumer.
+   * After this call, register() with the same subject will re-create a fresh loop.
+   */
+  async unregisterDispatch(subject: string): Promise<void> {
+    const key = `dispatch:${subject}`;
+    const loop = this.activeLoops.get(key);
+    if (!loop) return;
+
+    loop.stop();
+    await loop.done;
+    this.activeLoops.delete(key);
+
+    try {
+      const jsm = await this.nc.jetstreamManager();
+      await jsm.consumers.delete('AGENTS', loop.consumerName);
+    } catch (err) {
+      logger.warn({ err, key }, 'WorkflowDispatcher: failed to delete consumer on unregister');
+    }
+
+    logger.info({ subject }, 'WorkflowDispatcher: unregistered dispatch rule');
+  }
+
+  /**
+   * Stop all active loops cleanly (used for graceful shutdown).
+   */
+  async stopAll(): Promise<void> {
+    const entries = [...this.activeLoops.entries()];
+    for (const [, loop] of entries) loop.stop();
+    await Promise.all(entries.map(([, loop]) => loop.done));
+    this.activeLoops.clear();
+    logger.info({ count: entries.length }, 'WorkflowDispatcher: stopped all loops');
+  }
+
+  /**
+   * Returns the keys of all currently active loops (entrypoint routes + dispatch rules).
+   * Key format: `${from}=>${toSubject}` for routes, `dispatch:${subject}` for dispatches.
+   */
+  get activeRouteKeys(): string[] {
+    return [...this.activeLoops.keys()];
   }
 
   private pickInstance(strategy: string, candidates: string[]): string | null {
