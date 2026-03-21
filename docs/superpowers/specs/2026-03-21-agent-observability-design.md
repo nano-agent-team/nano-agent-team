@@ -45,7 +45,7 @@ Grafana :3003                                      thinking blocks)
 ```
 POST /api/agents/:id/debug
     │
-    │  NATS: config.{agentId} { observabilityLevel: "full" }
+    │  NATS: agent.{agentId}.config { observabilityLevel: "full" }
     ▼
 agent-runner — changes level in-process, no restart
 ```
@@ -71,37 +71,39 @@ Default: `standard`.
 
 Each log entry is a JSON line pushed to Loki. Labels index the stream; the log line carries the payload.
 
-**Labels** (indexed, filterable in Grafana):
+**Labels** (indexed, filterable in Grafana — keep small set to avoid high cardinality):
 
 ```json
 {
   "agentId": "sd-developer",
-  "sessionId": "ses-abc123",
-  "ticketId": "TICK-0042",
   "type": "tool_call",
   "level": "standard"
 }
 ```
 
-`ticketId` is set from the task message received via NATS. If no ticket is associated (e.g. Foreman responding to a user message), `ticketId` is `"none"`.
+Only `agentId`, `type`, and `level` are Loki stream labels. High-cardinality values (`sessionId`, `ticketId`) are included in the JSON log line payload — they remain searchable via LogQL `| json` but do not create a new Loki stream per value.
 
-**Log line payload** (JSON string, varies by event type):
+`ticketId` is set from the task message received via NATS. If no ticket is associated (e.g. Foreman responding to a user message), `ticketId` in the payload is `"none"`.
+
+**sessionId source:** The agent-runner's current session ID (stored in `SESSION_ID_FILE` and already tracked in memory). For ephemeral agents that have no persistent session, a UUID is generated per task start. The session ID is included in every log line payload for correlation.
+
+**Log line payload** (JSON string — includes sessionId and ticketId for correlation):
 
 ```json
 // type: text
-{ "text": "Looking at the file structure..." }
+{ "sessionId": "ses-abc123", "ticketId": "TICK-0042", "text": "Looking at the file structure..." }
 
 // type: tool_call
-{ "tool": "mcp__tickets__get_ticket", "params": { "id": "TICK-0042" } }
+{ "sessionId": "ses-abc123", "ticketId": "TICK-0042", "tool": "mcp__tickets__get_ticket", "params": { "id": "TICK-0042" } }
 
 // type: tool_result
-{ "tool": "mcp__tickets__get_ticket", "result": { "id": "TICK-0042", "title": "..." } }
+{ "sessionId": "ses-abc123", "ticketId": "TICK-0042", "tool": "mcp__tickets__get_ticket", "result": { "id": "TICK-0042", "title": "..." } }
 
 // type: done
-{ "status": "success", "durationMs": 42300 }
+{ "sessionId": "ses-abc123", "ticketId": "TICK-0042", "status": "success", "durationMs": 42300 }
 
 // type: error
-{ "message": "Tool call failed", "tool": "mcp__github__create_pr" }
+{ "sessionId": "ses-abc123", "ticketId": "TICK-0042", "message": "Tool call failed", "tool": "mcp__github__create_pr" }
 ```
 
 ---
@@ -116,7 +118,7 @@ Thin HTTP client that batches log entries and flushes to Loki every 1 second (or
 interface LogEntry {
   type: 'text' | 'tool_call' | 'tool_result' | 'done' | 'error';
   payload: Record<string, unknown>;
-  ts: number; // nanoseconds (Loki requires nanosecond timestamps)
+  ts: number; // nanoseconds — use Date.now() * 1_000_000 (ms → ns)
 }
 ```
 
@@ -128,7 +130,9 @@ Agent-runner already receives provider events (`text`, `tool_call`, `result`). L
 
 ### Runtime level change
 
-Agent-runner subscribes to `config.{agentId}` NATS subject (core NATS, not JetStream). On receiving `{ observabilityLevel: string }`, updates the current level in memory immediately. The override persists until agent restart.
+Agent-runner subscribes to `agent.{agentId}.config` NATS subject (core NATS, not JetStream — consistent with the `agent.>` subject namespace convention). On receiving `{ observabilityLevel: string }`, updates the current level in memory immediately. The override persists until agent restart.
+
+No NATS server ACL changes are required — `agent.>` is already an allowed subject pattern for agents.
 
 ---
 
@@ -142,8 +146,8 @@ Agent-runner subscribes to `config.{agentId}` NATS subject (core NATS, not JetSt
 ```
 
 **Behavior:**
-- `enabled: true` → publishes `config.{agentId}` with `{ observabilityLevel: "full" }`
-- `enabled: false` → publishes with `{ observabilityLevel: "<OBSERVABILITY_LEVEL env var>" }` (resets to global default)
+- `enabled: true` → publishes `agent.{agentId}.config` with `{ observabilityLevel: "full" }`
+- `enabled: false` → publishes with `{ observabilityLevel: "<OBSERVABILITY_LEVEL>" }` where the value is read from the control plane's own `OBSERVABILITY_LEVEL` env var. The control plane and all agent containers must be configured with the same `OBSERVABILITY_LEVEL` value (via docker-compose env block) for the reset to be correct. This is a documented constraint — not validated at runtime.
 
 **Response:** `200 { "agentId": "sd-developer", "observabilityLevel": "full" }`
 
@@ -194,6 +198,8 @@ environment:
   - OBSERVABILITY_LEVEL=standard  # off | summary | standard | full
 ```
 
+`LOKI_URL` and `OBSERVABILITY_LEVEL` must also be added to **both** `env = [` blocks in `agent-manager.ts` (the start path and the rollover/restart path). Agent containers are created dynamically by AgentManager — docker-compose env blocks alone are insufficient. This follows the same pattern as `HOST_DATA_DIR`, `HOST_CLAUDE_DIR`, and `HOST_OBSIDIAN_VAULT_PATH`.
+
 ---
 
 ## Grafana provisioning
@@ -203,11 +209,25 @@ Pre-configured as code under `grafana/provisioning/`:
 ```
 grafana/provisioning/
 ├── datasources/
-│   ├── prometheus.yaml   # existing
-│   └── loki.yaml         # new
+│   ├── prometheus.yaml       # existing
+│   └── loki.yaml             # new
 └── dashboards/
-    └── nano-agent-team.json   # new: agent logs dashboard
+    ├── dashboards.yaml       # new: Grafana dashboard provider config
+    └── nano-agent-team.json  # new: static dashboard export committed to repo
 ```
+
+`dashboards.yaml` tells Grafana to load dashboards from the provisioning folder:
+```yaml
+apiVersion: 1
+providers:
+  - name: nano-agent-team
+    folder: nano-agent-team
+    type: file
+    options:
+      path: /etc/grafana/provisioning/dashboards
+```
+
+`nano-agent-team.json` is a Grafana dashboard JSON export committed to the repository. It is not auto-generated — it must be hand-crafted or exported from Grafana and committed under `grafana/provisioning/dashboards/`.
 
 **`loki.yaml` data source:**
 ```yaml
@@ -240,7 +260,7 @@ datasources:
 
 Phase 2 adds capture of Claude's internal reasoning (extended thinking blocks) by intercepting at the credential proxy layer. The key design element is a **context holder**: a lightweight in-memory KV store in the control plane that maps `sessionId → { agentId, ticketId }`.
 
-Agent-runner registers context at task start via the context holder. The credential proxy reads `x-session-id` from incoming Anthropic API requests, looks up context, and pushes raw LLM stream events (including thinking blocks) to Loki with full labels.
+Agent-runner registers context at task start by POSTing to a new `/internal/log-context` endpoint on the control plane: `{ sessionId, agentId, ticketId }`. The control plane stores this in an in-memory Map. The credential proxy reads `x-session-id` from incoming Anthropic API requests (injected by agent-runner via Anthropic SDK `defaultHeaders`), looks up context in the control plane's Map, and pushes raw LLM stream events (including thinking blocks) to Loki with full labels.
 
 This is a separate spec. Phase 1 does not depend on it.
 
@@ -260,6 +280,6 @@ This is a separate spec. Phase 1 does not depend on it.
 |-----------|--------|
 | Grafana Loki Docker image | New service |
 | Grafana Docker image (or existing) | New service or extend existing |
-| `NATS core` subscription in agent-runner for `config.{agentId}` | New — agent-runner already uses NATS JetStream; core sub is a small addition |
+| `NATS core` subscription in agent-runner for `agent.{agentId}.config` | New — agent-runner already uses NATS JetStream; core sub is a small addition; no ACL changes needed |
 | Provider event hooks in agent-runner | Existing events, new listener |
 | `POST /api/agents/:id/debug` endpoint | New |
