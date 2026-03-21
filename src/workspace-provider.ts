@@ -192,37 +192,36 @@ export class WorkspaceProvider {
     // git clone --bare works for local paths (bare or non-bare) and remote URLs
     this.git(this.reposDir, `clone --bare ${url} ${path.basename(barePath)}`);
 
-    // Configure git credential helper for push access (uses GH_TOKEN env var)
+    // Configure git identity and ensure rc branch exists
     this.configureGitAuth(barePath);
+    this.ensureRcBranch(barePath);
 
     logger.info({ repoType, url, barePath }, 'Bare repo cloned');
     return barePath;
   }
 
   /**
-   * Configure git credential helper so worktrees can push.
-   * Uses GH_TOKEN env var if available; also sets user.name/email for commits.
+   * Configure git identity for worktree commits.
+   * GitHub push auth deferred to Secret Manager (future).
    */
   private configureGitAuth(bareRepoPath: string): void {
-    const ghToken = process.env.GH_TOKEN;
-    if (ghToken) {
-      // Use store credential helper with token-based URL
-      try {
-        const remoteUrl = this.git(bareRepoPath, 'remote get-url origin').trim();
-        const urlObj = new URL(remoteUrl);
-        const authedUrl = `https://x-access-token:${ghToken}@${urlObj.host}${urlObj.pathname}`;
-        this.git(bareRepoPath, `remote set-url origin ${authedUrl}`);
-        logger.info('Git credentials configured for push access');
-      } catch (err) {
-        logger.warn({ err }, 'Failed to configure git credentials');
-      }
-    }
-
-    // Set committer identity for worktree commits
     try {
       this.git(bareRepoPath, 'config user.email "pipeline@nano-agent-team"');
       this.git(bareRepoPath, 'config user.name "Pipeline Agent"');
     } catch { /* best effort */ }
+  }
+
+  /** Ensure the rc (release candidate) branch exists in the bare repo, branched from main. */
+  private ensureRcBranch(bareRepoPath: string): void {
+    try {
+      const branches = this.git(bareRepoPath, 'branch');
+      if (!branches.includes('rc')) {
+        this.git(bareRepoPath, 'branch rc main');
+        logger.info({ bareRepoPath }, 'Created rc branch from main');
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to create rc branch');
+    }
   }
 
   private barePath(repoType: string): string {
