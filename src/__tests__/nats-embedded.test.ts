@@ -111,7 +111,7 @@ describe('nats-embedded', () => {
     expect(url2).toBe('nats://localhost:4222');
     // spawn must NOT have been called a second time
     expect(cpMod.spawn).toHaveBeenCalledTimes(1);
-    // execSync (fuser) must not have been called
+    // execSync (pkill) must not have been called
     expect(cpMod.execSync).not.toHaveBeenCalled();
   });
 
@@ -126,17 +126,27 @@ describe('nats-embedded', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (cpMod.execSync as any).mockReturnValue(Buffer.from(''));
 
-    // isPortOpen → connect (orphan present), then waitForPort after spawn → connect
+    // Sequence: isPortOpen → connect (orphan), isPortOpen re-check → error (killed),
+    // waitForPort after spawn → connect
+    let callIdx = 0;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (netMod.default.createConnection as any).mockImplementation(makeSocketFactory('connect'));
+    (netMod.default.createConnection as any).mockImplementation(() => {
+      callIdx++;
+      // call 1: isPortOpen → orphan present (connect)
+      // call 2: isPortOpen re-check after pkill → port freed (error)
+      // call 3+: waitForPort after spawn → connect
+      if (callIdx === 1) return makeSocketFactory('connect')();
+      if (callIdx === 2) return makeSocketFactory('error')();
+      return makeSocketFactory('connect')();
+    });
 
     const { startEmbeddedNats } = await import('../nats-embedded.js');
     const url = await startEmbeddedNats();
 
     expect(url).toBe('nats://localhost:4222');
-    // fuser must have been called to kill the orphan
+    // pkill must have been called to kill the orphan
     expect(cpMod.execSync).toHaveBeenCalledWith(
-      expect.stringContaining('fuser -k 4222/tcp'),
+      expect.stringContaining('pkill -f nats-server'),
     );
     // spawn must have been called to start a fresh NATS
     expect(cpMod.spawn).toHaveBeenCalledTimes(1);
@@ -163,7 +173,7 @@ describe('nats-embedded', () => {
     const url = await startEmbeddedNats();
 
     expect(url).toBe('nats://localhost:4222');
-    // No orphan → fuser not called
+    // No orphan → pkill not called
     expect(cpMod.execSync).not.toHaveBeenCalled();
     // spawn called exactly once
     expect(cpMod.spawn).toHaveBeenCalledTimes(1);
@@ -223,12 +233,12 @@ describe('nats-embedded', () => {
     expect(proc1.kill).toHaveBeenCalledWith('SIGKILL');
     // spawn called a second time for the fresh instance
     expect(cpMod.spawn).toHaveBeenCalledTimes(2);
-    // port was closed after killing stale handle — fuser not needed
+    // port was closed after killing stale handle — pkill not needed
     expect(cpMod.execSync).not.toHaveBeenCalled();
   });
 
-  // ── Test 5: stopEmbeddedNats calls fuser ────────────────────────────────────
-  it('stopEmbeddedNats calls fuser as belt-and-suspenders fallback', async () => {
+  // ── Test 5: stopEmbeddedNats calls pkill ────────────────────────────────────
+  it('stopEmbeddedNats calls pkill as belt-and-suspenders fallback', async () => {
     const cpMod = await import('child_process');
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (cpMod.execSync as any).mockReturnValue(Buffer.from(''));
@@ -237,7 +247,7 @@ describe('nats-embedded', () => {
     stopEmbeddedNats();
 
     expect(cpMod.execSync).toHaveBeenCalledWith(
-      expect.stringContaining('fuser -k 4222/tcp'),
+      expect.stringContaining('pkill -f nats-server'),
     );
   });
 });

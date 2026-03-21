@@ -77,14 +77,16 @@ export async function startEmbeddedNats(): Promise<string> {
   if (portOpen) {
     console.warn('[nats-embedded] Orphan NATS detected on port 4222 — killing');
     try {
-      execSync(`fuser -k ${NATS_PORT}/tcp 2>/dev/null || true`);
-      // Give OS a moment to release the port
-      await sleep(500);
+      execSync('pkill -f nats-server 2>/dev/null');
     } catch {
-      console.error('[nats-embedded] Failed to kill orphan process on port 4222');
+      // pkill returns non-zero when no process matched — acceptable
+    }
+    // Give OS a moment to release the port
+    await sleep(500);
+    if (await isPortOpen(NATS_PORT)) {
       throw new Error(
-        `Port ${NATS_PORT} is in use by an external process. ` +
-        `Kill it manually: fuser -k ${NATS_PORT}/tcp`,
+        `Port ${NATS_PORT} is still in use after killing nats-server. ` +
+        `Kill it manually: pkill -9 -f nats-server`,
       );
     }
   }
@@ -127,8 +129,8 @@ export function stopEmbeddedNats(): void {
     natsProcess.kill('SIGTERM');
     natsProcess = null;
   }
-  // Belt-and-suspenders: also kill anything on the port
+  // Belt-and-suspenders: also kill any remaining nats-server processes
   try {
-    execSync(`fuser -k ${NATS_PORT}/tcp 2>/dev/null || true`);
-  } catch { /* ignore */ }
+    execSync('pkill -f nats-server 2>/dev/null');
+  } catch { /* pkill returns non-zero when no process matched — acceptable */ }
 }
