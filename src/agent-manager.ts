@@ -92,9 +92,9 @@ export class AgentManager {
     this.dispatcher = new WorkflowDispatcher(nc, () => this.getInstanceHeartbeats());
   }
 
-  /** Returns true when USE_CREDENTIAL_PROXY=true — agents use proxy instead of direct token */
+  /** Returns true when credentials.json exists — agents use proxy instead of direct token */
   private isProxyMode(): boolean {
-    return process.env.USE_CREDENTIAL_PROXY === 'true';
+    return fs.existsSync(path.join(DATA_DIR, 'credentials.json'));
   }
 
   /** Inspect Docker network to find the gateway IP that worker containers can reach */
@@ -125,7 +125,16 @@ export class AgentManager {
   private async resolveClaudeEnv(): Promise<string[]> {
     if (this.isProxyMode()) {
       const proxyHost = await this.getProxyHost();
-      return [`ANTHROPIC_BASE_URL=http://${proxyHost}:8082`];
+      const vars = [`ANTHROPIC_BASE_URL=http://${proxyHost}:8082`];
+      // SDK requires CLAUDE_CODE_OAUTH_TOKEN to pass its internal login check.
+      // The actual API auth is handled by the proxy — this token is just a gate-pass.
+      // Read current token from credentials.json so SDK doesn't refuse to start.
+      const credPath = path.join(DATA_DIR, 'credentials.json');
+      try {
+        const creds = JSON.parse(fs.readFileSync(credPath, 'utf8')) as { oauth_token?: string };
+        if (creds.oauth_token) vars.push(`CLAUDE_CODE_OAUTH_TOKEN=${creds.oauth_token}`);
+      } catch { /* ignore */ }
+      return vars;
     }
     const apiKey = await this.resolveApiKey();
     const vars: string[] = [];

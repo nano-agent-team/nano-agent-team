@@ -20,6 +20,7 @@ interface StoredCredentials {
   oauth_token: string | null;
   refresh_token: string | null;
   api_key: string | null;
+  organization_uuid: string | null;
   created_at: string;
   expires_at: string | null;
 }
@@ -159,19 +160,22 @@ export function createProxyServer(dataDir: string): http.Server {
     // Fire-and-forget background refresh
     maybeRefreshBackground(creds, dataDir);
 
-    // Copy incoming headers, strip hop-by-hop
+    // Copy incoming headers, strip hop-by-hop + override host
     const outHeaders: Record<string, string | string[]> = {};
     for (const [key, value] of Object.entries(req.headers)) {
-      if (!HOP_BY_HOP.has(key.toLowerCase()) && value !== undefined) {
+      if (!HOP_BY_HOP.has(key.toLowerCase()) && key.toLowerCase() !== 'host' && value !== undefined) {
         outHeaders[key] = value as string | string[];
       }
     }
+    outHeaders['host'] = 'api.anthropic.com';
 
-    // Inject auth
+    // Inject auth — replace any placeholder token with the real one
     if (creds.method === 'oauth' && creds.oauth_token) {
+      // SDK sends its own Authorization header (may be stale) — replace with fresh token
       outHeaders['authorization'] = `Bearer ${creds.oauth_token}`;
     } else if (creds.method === 'apikey' && creds.api_key) {
       outHeaders['x-api-key'] = creds.api_key;
+      delete outHeaders['authorization']; // remove any OAuth header
     }
 
     // Ensure anthropic-version header
@@ -182,10 +186,10 @@ export function createProxyServer(dataDir: string): http.Server {
     const proxyReq = https.request(
       {
         hostname: 'api.anthropic.com',
+        port: 443,
         path: req.url,
         method: req.method,
         headers: outHeaders,
-        rejectUnauthorized: false, // Alpine container may lack CA certs
       },
       (proxyRes) => {
         res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);

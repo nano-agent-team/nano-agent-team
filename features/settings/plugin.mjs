@@ -509,6 +509,7 @@ export default {
           oauth_token: tokenData.access_token,
           refresh_token: tokenData.refresh_token ?? null,
           api_key: null,
+          organization_uuid: tokenData.organization_uuid ?? null,
           created_at: new Date().toISOString(),
           expires_at: tokenData.expires_in
             ? new Date(Date.now() + tokenData.expires_in * 1000).toISOString()
