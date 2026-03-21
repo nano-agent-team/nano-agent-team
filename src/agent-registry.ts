@@ -79,6 +79,8 @@ export interface AgentManifest {
   mcp_access?: Record<string, string[] | '*'>;
   /** Path to MCP config JSON file (e.g. /app/mcp/config-mcp.json) with mcpServers definitions */
   mcp_config?: string;
+  /** Extra tools to allow for this agent (e.g. ["Skill"] for superpowers skills) */
+  allowedTools?: string[];
 }
 
 // ─── Workflow Binding ─────────────────────────────────────────────────────────

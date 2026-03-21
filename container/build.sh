@@ -34,6 +34,23 @@ find "${AGENTS_DIR}" -name "Dockerfile" | while read -r dockerfile; do
   echo "Built ${image_name}"
 done
 
+# Also scan hub agents for per-agent Dockerfiles
+HUB_AGENTS_DIR="${HUB_AGENTS_DIR:-${SCRIPT_DIR}/../../hub/agents}"
+if [ -d "$HUB_AGENTS_DIR" ]; then
+  echo "==> Scanning for hub agent Dockerfiles in ${HUB_AGENTS_DIR}..."
+  find "${HUB_AGENTS_DIR}" -name "Dockerfile" | while read -r dockerfile; do
+    agent_dir="$(dirname "$dockerfile")"
+    agent_id="$(basename "$agent_dir")"
+    image_name="nano-agent-${agent_id}:latest"
+    echo "==> Building ${image_name} from ${dockerfile}..."
+    docker build \
+      -t "${image_name}" \
+      -f "${dockerfile}" \
+      "${SCRIPT_DIR}"
+    echo "Built ${image_name}"
+  done
+fi
+
 echo ""
 echo "==> All images built:"
 docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}" | grep "nano-agent"

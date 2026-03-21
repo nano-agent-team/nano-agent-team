@@ -28,6 +28,8 @@ export interface ProviderRunOptions {
   systemPrompt?: string;
   /** Extra environment variables injected into the provider subprocess (e.g. GH_TOKEN). */
   extraEnv?: Record<string, string>;
+  /** Extra tools to allow beyond the provider defaults (e.g. ["Skill"] for superpowers skills). */
+  allowedTools?: string[];
 }
 
 export interface Provider {

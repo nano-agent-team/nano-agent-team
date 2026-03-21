@@ -707,6 +707,8 @@ export class AgentManager {
       })(),
       // Pass GitHub token if available (from team config or env vars, for gh CLI and git push)
       ...(githubToken ? [`GH_TOKEN=${githubToken}`] : []),
+      // Inject allowed tools from manifest (e.g. ["Skill"] for superpowers skills)
+      ...(agent.manifest.allowedTools?.length ? [`AGENT_ALLOWED_TOOLS=${agent.manifest.allowedTools.join(',')}`] : []),
       // Pass repo URL from config (set during team install)
       ...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
       // Observability: propagate OTel config to agent containers
