@@ -39,6 +39,7 @@ services:
       API_PORT: 3002
       MCP_GATEWAY_PORT: 3004
       HOST_CODEX_DIR: ${HOME}/.codex
+      HOST_CLAUDE_DIR: ${HOME}/.claude
       HOST_CLAUDE_JSON: ${HOME}/.claude.json
       SKIP_DOCKERD: "true"   # dev mode: use host Docker socket instead of internal dockerd
       # Hub catalog: use local mount for dev (no network dependency, uses current branch)
