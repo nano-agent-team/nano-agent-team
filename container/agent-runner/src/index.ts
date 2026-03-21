@@ -510,7 +510,13 @@ async function main(): Promise<void> {
       }
       if (firstMessageOfLifecycle) {
         firstMessageOfLifecycle = false;
-        log.info({ agentId: AGENT_ID }, 'First message completed — subsequent messages will resume session');
+        if (!sessionId) {
+          // First message failed without producing a session — clear stale file
+          try { fs.unlinkSync(path.join('/workspace/sessions', 'session_id')); } catch { /* ignore */ }
+          log.warn({ agentId: AGENT_ID }, 'First message failed without session — cleared stale session file');
+        } else {
+          log.info({ agentId: AGENT_ID }, 'First message completed — subsequent messages will resume session');
+        }
       }
       currentSessionId = undefined;
 
