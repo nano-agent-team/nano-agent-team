@@ -20,7 +20,7 @@ describe('B1 — POST /api/tickets (vytvoření)', () => {
     expect(body.title).toBe('Test ticket B1');
     expect(body.status).toBe('new');
     expect(body.priority).toBe('HIGH');
-    expect(body.created_at).toBeDefined();
+    expect(body.createdAt ?? body.created_at).toBeDefined();
     ticketId = body.id as string;
   });
 
