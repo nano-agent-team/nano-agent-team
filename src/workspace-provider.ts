@@ -142,7 +142,7 @@ export class WorkspaceProvider {
       const merged = this.git(bareRepoPath, 'branch --merged main');
       const mergedBranches = merged.split('\n').map((b) => b.trim().replace(/^\* /, ''));
       if (mergedBranches.includes(ws.branch)) {
-        this.git(bareRepoPath, `branch -D ${ws.branch}`);
+        this.git(bareRepoPath, `branch -d ${ws.branch}`);
         logger.info({ workspaceId, branch: ws.branch }, 'Branch deleted (was merged)');
       } else {
         logger.info({ workspaceId, branch: ws.branch }, 'Branch kept (not merged)');
@@ -189,17 +189,8 @@ export class WorkspaceProvider {
       return barePath;
     }
 
-    // If URL is a local path that already is a bare repo, use it directly
-    if (fs.existsSync(url) && this.isBarePath(url)) {
-      // Symlink or clone from local bare repo
-      this.git(this.reposDir, `clone --bare ${url} ${path.basename(barePath)}`);
-    } else if (fs.existsSync(url)) {
-      // Local non-bare repo — clone --bare from it
-      this.git(this.reposDir, `clone --bare ${url} ${path.basename(barePath)}`);
-    } else {
-      // Remote URL
-      this.git(this.reposDir, `clone --bare ${url} ${path.basename(barePath)}`);
-    }
+    // git clone --bare works for local paths (bare or non-bare) and remote URLs
+    this.git(this.reposDir, `clone --bare ${url} ${path.basename(barePath)}`);
 
     logger.info({ repoType, url, barePath }, 'Bare repo cloned');
     return barePath;
@@ -207,11 +198,6 @@ export class WorkspaceProvider {
 
   private barePath(repoType: string): string {
     return path.join(this.reposDir, `${repoType}.git`);
-  }
-
-  private isBarePath(dirPath: string): boolean {
-    // A bare repo has HEAD file directly in the directory
-    return fs.existsSync(path.join(dirPath, 'HEAD'));
   }
 
   private fetchAll(): void {
