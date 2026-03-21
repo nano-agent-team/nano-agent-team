@@ -56,12 +56,14 @@ agent-runner — changes level in-process, no restart
 
 Controlled by `OBSERVABILITY_LEVEL` env var (global, set at stack startup). Per-agent debug mode overrides this at runtime.
 
-| Level | Text output | Tool call name | Tool call params | Tool result | Thinking blocks |
-|-------|-------------|----------------|------------------|-------------|-----------------|
-| `off` | — | — | — | — | — |
-| `summary` | — | ✓ | — | — | — |
-| `standard` | ✓ | ✓ | ✓ | ✓ | — |
-| `full` | ✓ | ✓ | ✓ | ✓ | Phase 2 |
+| Level | Text output | Tool call name | Tool call params | Tool result | Thinking blocks | `done`/`error` events |
+|-------|-------------|----------------|------------------|-------------|-----------------|----------------------|
+| `off` | — | — | — | — | — | — |
+| `summary` | — | ✓ | — | — | — | ✓ |
+| `standard` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| `full` | ✓ | ✓ | ✓ | ✓ | Phase 2 | ✓ |
+
+`done` and `error` events are emitted at all levels except `off` — they are lifecycle signals, not content.
 
 Default: `standard`.
 
@@ -124,13 +126,17 @@ interface LogEntry {
 
 If `LOKI_URL` is unset, `loki-client.ts` becomes a no-op. Observability is disabled when Loki is not configured.
 
+`loki-client.ts` exposes a `flush()` method that sends any buffered entries synchronously before returning. The agent-runner calls `flush()` on graceful shutdown (before process exit) to drain the in-flight batch. For ephemeral agents that exit immediately after a task, this ensures the final events (e.g. `done`) are not silently dropped.
+
 ### Provider event hooks
 
 Agent-runner already receives provider events (`text`, `tool_call`, `result`). Loki client hooks into these events without modifying existing streaming or heartbeat logic.
 
 ### Runtime level change
 
-Agent-runner subscribes to `agent.{agentId}.config` NATS subject (core NATS, not JetStream — consistent with the `agent.>` subject namespace convention). On receiving `{ observabilityLevel: string }`, updates the current level in memory immediately. The override persists until agent restart.
+Agent-runner subscribes to `agent.{agentId}.config` on **core NATS** (not JetStream). The control plane publishes to this subject via **core NATS publish** as well — not via JetStream. This is intentional: config override messages are ephemeral and must not be persisted in the `AGENTS` JetStream stream.
+
+The `AGENTS` stream filter (`agent.>`) would otherwise capture these messages. To prevent this, the `AGENTS` stream must explicitly exclude `agent.*.config` subjects, or the stream filter must be narrowed. This is a new convention: `agent.{agentId}.{signal}` is the format for per-agent runtime signals delivered on core NATS only.
 
 No NATS server ACL changes are required — `agent.>` is already an allowed subject pattern for agents.
 
@@ -147,7 +153,7 @@ No NATS server ACL changes are required — `agent.>` is already an allowed subj
 
 **Behavior:**
 - `enabled: true` → publishes `agent.{agentId}.config` with `{ observabilityLevel: "full" }`
-- `enabled: false` → publishes with `{ observabilityLevel: "<OBSERVABILITY_LEVEL>" }` where the value is read from the control plane's own `OBSERVABILITY_LEVEL` env var. The control plane and all agent containers must be configured with the same `OBSERVABILITY_LEVEL` value (via docker-compose env block) for the reset to be correct. This is a documented constraint — not validated at runtime.
+- `enabled: false` → publishes with `{ observabilityLevel: "<value>" }` where the value is read from the control plane's own `OBSERVABILITY_LEVEL` env var at the time of the reset call. This is the correct default for agents that were started after the last control-plane restart. Agents that were started before the last control-plane restart, or with a manually overridden level, will not have their exact original value restored. This is an accepted limitation — debug mode is a temporary diagnostic tool, not a precision toggle.
 
 **Response:** `200 { "agentId": "sd-developer", "observabilityLevel": "full" }`
 
@@ -192,13 +198,16 @@ If Grafana is already running (e.g. for Prometheus), only Loki is added as a new
 
 ### Agent-runner env vars
 
+Agent containers are created dynamically by `AgentManager` — docker-compose env blocks do not reach agent containers. `LOKI_URL` and `OBSERVABILITY_LEVEL` must be added to **both** `env = [` blocks in `agent-manager.ts` (the start path and the rollover/restart path). This follows the same pattern as `HOST_DATA_DIR`, `HOST_CLAUDE_DIR`, and `HOST_OBSIDIAN_VAULT_PATH`.
+
+The control plane's own docker-compose service receives `LOKI_URL` and `OBSERVABILITY_LEVEL` as well — these are used by the debug reset endpoint to read the global default level.
+
 ```yaml
+# control-plane service in docker-compose.yml
 environment:
   - LOKI_URL=http://loki:3100
   - OBSERVABILITY_LEVEL=standard  # off | summary | standard | full
 ```
-
-`LOKI_URL` and `OBSERVABILITY_LEVEL` must also be added to **both** `env = [` blocks in `agent-manager.ts` (the start path and the rollover/restart path). Agent containers are created dynamically by AgentManager — docker-compose env blocks alone are insufficient. This follows the same pattern as `HOST_DATA_DIR`, `HOST_CLAUDE_DIR`, and `HOST_OBSIDIAN_VAULT_PATH`.
 
 ---
 
