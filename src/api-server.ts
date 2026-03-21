@@ -33,6 +33,7 @@ import { TicketRegistry } from './tickets/registry.js';
 import { LocalTicketProvider } from './tickets/local-provider.js';
 import type { AbstractStatus, TicketPriority as TP } from './tickets/types.js';
 import { resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
+import type { WorkflowManifest } from './agent-registry.js';
 import { loadWorkflow, expandInstances } from './workflow-registry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -343,6 +344,9 @@ export async function createApiApp(
     });
   }
 
+  // Current workflow manifest — updated each time reloadFeatures() runs
+  let currentWorkflow: WorkflowManifest | null = null;
+
   // Closure for re-use in /internal/reload
   const reloadFeatures = async (): Promise<void> => {
     const config = await configService.load();
@@ -423,6 +427,7 @@ export async function createApiApp(
 
         // Load workflow for this team (workflow.json → team.json fallback)
         const workflow = loadWorkflow(teamDir);
+        if (workflow) currentWorkflow = workflow;
 
         // Expand instances: workflow.instances block (if present) or fallback to agents list
         const instances = workflow
@@ -523,6 +528,12 @@ export async function createApiApp(
       logger.error({ err }, 'GET /api/health error');
       res.status(500).json({ error: 'Internal server error' });
     }
+  });
+
+  // ── Workflow endpoint ─────────────────────────────────────────────────────
+
+  app.get('/api/workflow', (_req: Request, res: Response) => {
+    res.json({ workflow: currentWorkflow });
   });
 
   // ── Agent config endpoints ────────────────────────────────────────────────

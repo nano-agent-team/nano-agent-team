@@ -1,37 +1,17 @@
 <template>
   <div class="workspace">
 
-    <!-- LEFT: Agent roster -->
-    <aside class="agents-panel">
+    <!-- LEFT: Workflow graph panel -->
+    <aside class="graph-panel">
       <div class="panel-head">
-        <span class="panel-title">AGENTS</span>
+        <span class="panel-title">WORKFLOW</span>
         <span class="count-badge">{{ agents.length }}</span>
       </div>
 
-      <div class="agent-list">
-        <div v-if="loading && agents.length === 0" class="list-empty">
-          <span class="blink">_</span> scanning...
-        </div>
-        <div v-else-if="agents.length === 0" class="list-empty">
-          no agents running
-        </div>
-        <button
-          v-for="agent in agents"
-          :key="agent.agentId"
-          class="agent-row"
-          :class="[`s-${agent.status}`, { busy: agent.busy }]"
-          @click="selectedAgentId = agent.agentId"
-        >
-          <span class="status-dot" :class="`dot-${agent.status}`" />
-          <span class="row-body">
-            <span class="row-id">{{ agent.agentId }}</span>
-            <span v-if="agent.busy && agent.task" class="row-task">{{ agent.task }}</span>
-            <span v-else class="row-status">{{ agent.status }}</span>
-          </span>
-          <span v-if="agent.restartCount > 0" class="restart-badge">{{ agent.restartCount }}r</span>
-          <span v-if="agent.busy" class="working-dots"><span /><span /><span /></span>
-        </button>
-      </div>
+      <WorkflowGraph
+        :agents="agents"
+        @select-agent="selectedAgentId = $event"
+      />
 
       <!-- Mini stats -->
       <div class="panel-foot">
@@ -174,6 +154,7 @@ import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import AgentModal from '../../components/AgentModal.vue'
+import WorkflowGraph from '../../components/WorkflowGraph.vue'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -414,7 +395,7 @@ onUnmounted(() => clearInterval(healthInterval))
 
 .workspace {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: minmax(400px, 1fr) 1fr;
   width: 100%;
   height: 100%;
   overflow: hidden;
@@ -422,7 +403,7 @@ onUnmounted(() => clearInterval(healthInterval))
 
 /* ── Left panel ─────────────────────────────────────────────────────────────── */
 
-.agents-panel {
+.graph-panel {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
@@ -455,116 +436,6 @@ onUnmounted(() => clearInterval(healthInterval))
   border: 1px solid var(--border);
 }
 
-.agent-list {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 0;
-}
-
-.agent-list::-webkit-scrollbar { width: 3px; }
-.agent-list::-webkit-scrollbar-track { background: transparent; }
-.agent-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
-
-.list-empty {
-  padding: 24px 16px;
-  font-size: 12px;
-  color: var(--text-muted);
-  text-align: center;
-}
-
-.agent-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 16px;
-  width: 100%;
-  background: none;
-  border: none;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.1s;
-  color: var(--text);
-  font-family: inherit;
-  font-size: 13px;
-  position: relative;
-}
-
-.agent-row:hover { background: var(--surface); }
-.agent-row.busy { background: rgba(240, 136, 62, 0.04); }
-
-/* Status dot */
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.dot-running    { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); animation: pulse-green 2.5s ease-in-out infinite; }
-.dot-dead       { background: var(--danger); }
-.dot-starting   { background: var(--accent); animation: pulse-blue 1.5s ease-in-out infinite; }
-.dot-restarting { background: var(--warning); animation: pulse-orange 1s ease-in-out infinite; }
-.dot-rolling-over { background: var(--warning); animation: pulse-orange 1s ease-in-out infinite; }
-
-@keyframes pulse-green  { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
-@keyframes pulse-blue   { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
-@keyframes pulse-orange { 0%,100% { opacity:1; } 50% { opacity:0.5; } }
-
-.row-body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.row-id {
-  font-size: 12px;
-  color: var(--text);
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.row-status {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-.row-task {
-  font-size: 10px;
-  color: #f0883e;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.restart-badge {
-  font-size: 9px;
-  color: var(--warning);
-  background: rgba(210, 153, 34, 0.15);
-  padding: 1px 5px;
-  border-radius: 8px;
-  flex-shrink: 0;
-}
-
-.working-dots {
-  display: flex;
-  gap: 2px;
-  align-items: center;
-  flex-shrink: 0;
-}
-.working-dots span {
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: #f0883e;
-  animation: wd 1.2s ease-in-out infinite;
-}
-.working-dots span:nth-child(2) { animation-delay: 0.2s; }
-.working-dots span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes wd { 0%,100% { opacity:0.2; } 50% { opacity:1; } }
 
 .panel-foot {
   display: flex;
