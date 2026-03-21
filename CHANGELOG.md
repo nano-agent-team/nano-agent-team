@@ -45,6 +45,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update ticket status assertion from native to abstract ([`80c2bb9`](https://github.com/nano-agent-team/nano-agent-team/commit/80c2bb95e6ef10f5ef5ee6b5f551ae64fe5c9765))
 - **ci:** Increase health check timeout and add agent readiness checks ([`d0bea99`](https://github.com/nano-agent-team/nano-agent-team/commit/d0bea99f906d0ab0c3ef814af9c2986350964fe8))
 - **ci:** Pre-build nano-agent image and import into DinD for fast E2E startup ([`dd352a0`](https://github.com/nano-agent-team/nano-agent-team/commit/dd352a09dca98db2ff4dfba783ed3511bcf6ba7a))
+- **ci:** Mount pre-built agent image tar into DinD container ([`9114c5a`](https://github.com/nano-agent-team/nano-agent-team/commit/9114c5ae70784ccd787182c8e1d5be32252b9de6))
 
 ### Documentation
 
@@ -72,6 +73,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`298be66`](https://github.com/nano-agent-team/nano-agent-team/commit/298be66b1895a1808a011cfd199c806f9a8c0acb))
 - **ci:** Update CHANGELOG [skip ci] ([`0eceabc`](https://github.com/nano-agent-team/nano-agent-team/commit/0eceabcc3a9c5c254658bfb330f35363a3c3438e))
 - **ci:** Update CHANGELOG [skip ci] ([`28d9585`](https://github.com/nano-agent-team/nano-agent-team/commit/28d95858aaf76c53ef40902599b001eeb4b72452))
+- **ci:** Update CHANGELOG [skip ci] ([`f30059f`](https://github.com/nano-agent-team/nano-agent-team/commit/f30059fddf99274290b1b2681cef542a2d42c13c))
 
 ### Features
 
