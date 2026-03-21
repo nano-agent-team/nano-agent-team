@@ -118,6 +118,13 @@ async function main(): Promise<void> {
   if (fs.existsSync(credPath)) {
     proxyServer = await startCredentialProxy(DATA_DIR);
     logger.info('Credential proxy started on :8082');
+
+    // Auto-refresh OAuth token before expiry, then reload agents with fresh token
+    const { startAutoRefresh } = await import('./credential-proxy.js');
+    startAutoRefresh(DATA_DIR, () => {
+      logger.info('Token auto-refreshed — reloading agents');
+      void fetch(`http://localhost:${process.env.API_PORT ?? '3001'}/internal/reload`, { method: 'POST' }).catch(() => {});
+    });
   }
 
   // ── 2. Start embedded NATS if needed, then connect ─────────────────────────
