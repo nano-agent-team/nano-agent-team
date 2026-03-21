@@ -22,6 +22,9 @@ import type { WorkflowManifest, LoadedAgent, AgentManifest } from '../../src/age
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:3001';
 const NATS_URL  = process.env.NATS_URL  ?? 'nats://localhost:4222';
 
+// CI environments are slower — scale timeouts accordingly
+const CI_MULT = process.env.CI ? 3 : 1;
+
 const __dirname        = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT     = path.resolve(__dirname, '..', '..');
 const DATA_DIR         = path.join(PROJECT_ROOT, 'data');
@@ -63,16 +66,15 @@ beforeAll(async () => {
   }
 
   // 2. Build nano-test-agent:latest on host, then load into nate's DinD
-  // (nate uses Docker-in-Docker, so host images are not visible to its internal daemon)
   console.log('[multi-instance] Building nano-test-agent:latest on host...');
   execFileSync('docker', ['build', '-t', 'nano-test-agent:latest', FIXTURE_AGENT_DIR], {
     stdio: 'inherit',
-    timeout: 120_000,
+    timeout: 120_000 * CI_MULT,
   });
   console.log('[multi-instance] Loading nano-test-agent:latest into nate DinD...');
   execSync('docker save nano-test-agent:latest | docker exec -i nate docker load', {
     stdio: ['pipe', 'inherit', 'inherit'],
-    timeout: 60_000,
+    timeout: 60_000 * CI_MULT,
   });
 
   // 3. Install test team
@@ -90,8 +92,7 @@ beforeAll(async () => {
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
   }
 
-  // 4. Wait for volume sync (OrbStack/Docker Desktop may lag on macOS)
-  // Verify the manifest is visible inside the nate container before reloading.
+  // 4. Wait for volume sync
   await pollUntil(
     async () => {
       try {
@@ -99,13 +100,13 @@ beforeAll(async () => {
         return true;
       } catch { return false; }
     },
-    { timeoutMs: 10_000, intervalMs: 200, label: 'test team files synced to container' },
+    { timeoutMs: 10_000 * CI_MULT, intervalMs: 200, label: 'test team files synced to container' },
   );
 
   // 5. Reload
   await fetch(`${BASE_URL}/internal/reload`, { method: 'POST' });
 
-  // 6. Wait for all 4 instances running (sequential Docker starts: ~10s each × 4 = ~50s)
+  // 6. Wait for all 4 instances running
   console.log('[multi-instance] Waiting for 4 test instances to start...');
   await pollUntil(
     async () => {
@@ -117,10 +118,10 @@ beforeAll(async () => {
         return TEST_INSTANCES.every(id => running.has(id));
       } catch { return false; }
     },
-    { timeoutMs: 120_000, intervalMs: 3_000, label: 'all 4 instances running' },
+    { timeoutMs: 120_000 * CI_MULT, intervalMs: 3_000, label: 'all 4 instances running' },
   );
 
-  // 7. Wait for heartbeats from worker-a and worker-b (least-busy needs lastHeartbeat)
+  // 7. Wait for heartbeats from worker-a and worker-b
   console.log('[multi-instance] Waiting for heartbeats from worker-a and worker-b...');
   await pollUntil(
     async () => {
@@ -133,16 +134,15 @@ beforeAll(async () => {
         );
       } catch { return false; }
     },
-    { timeoutMs: 30_000, intervalMs: 2_000, label: 'heartbeats from worker-a and worker-b' },
+    { timeoutMs: 30_000 * CI_MULT, intervalMs: 2_000, label: 'heartbeats from worker-a and worker-b' },
   );
 
   console.log('[multi-instance] Setup complete — integration tests ready');
-}, 180_000);
+}, 180_000 * CI_MULT);
 
 afterAll(async () => {
   if (!stackAvailable) return;
 
-  // Remove test team
   if (fs.existsSync(INSTALLED_TEAM)) fs.rmSync(INSTALLED_TEAM, { recursive: true, force: true });
 
   const configPath = path.join(DATA_DIR, 'config.json');
@@ -154,17 +154,14 @@ afterAll(async () => {
     }
   } catch { /* ignore */ }
 
-  // Stop test containers — nate uses Docker-in-Docker (DinD), so containers must be
-  // stopped via the inner daemon with `docker exec nate docker stop/rm`.
   for (const name of TEST_INSTANCES.map(id => `nano-agent-${id}`)) {
     try {
       execSync(`docker exec nate docker stop ${name} 2>/dev/null; docker exec nate docker rm ${name} 2>/dev/null`, { stdio: 'ignore' });
     } catch { /* ignore */ }
   }
 
-  // Reload after stopping — clears stale states so health monitor doesn't restart orphans.
   await fetch(`${BASE_URL}/internal/reload`, { method: 'POST' }).catch(() => {});
-}, 60_000);
+}, 60_000 * CI_MULT);
 
 // ─── NATS helpers ─────────────────────────────────────────────────────────────
 
@@ -344,9 +341,9 @@ describe('T6: resolveTopicsForAgent — entrypoint { from, to } binding', () => 
       { inputs: { direct: 'topic.direct', ep: { from: 'topic.ext', to: 'tickets' } } },
       'worker-a',
     );
-    expect(topics).toContain('topic.direct');           // plain string — direct subscription
-    expect(topics).toContain('agent.worker-a.tickets'); // entrypoint — dispatcher bridges
-    expect(topics).not.toContain('topic.ext');          // from subject — never in consumer filter
+    expect(topics).toContain('topic.direct');
+    expect(topics).toContain('agent.worker-a.tickets');
+    expect(topics).not.toContain('topic.ext');
   });
 });
 
@@ -365,7 +362,7 @@ describe('T6: Named instances started correctly', () => {
     for (const id of TEST_INSTANCES) {
       expect(running, `expected ${id} to be running`).toContain(id);
     }
-  }, 10_000);
+  }, 10_000 * CI_MULT);
 });
 
 describe('T7: Dispatch least-busy — routes to worker-a or worker-b', () => {
@@ -375,14 +372,14 @@ describe('T7: Dispatch least-busy — routes to worker-a or worker-b', () => {
 
     const payload = JSON.stringify({ text: 'least-busy-test', ts: Date.now() });
     const [received] = await Promise.all([
-      collectReceived(1, 10_000),
+      collectReceived(1, 10_000 * CI_MULT),
       sleep(200).then(() => publishToNats('topic.test.least-busy', payload)),
     ]);
 
     expect(received).toHaveLength(1);
     expect(['worker-a', 'worker-b']).toContain(received[0].instanceId);
     expect(['pool-worker-1', 'pool-worker-2']).not.toContain(received[0].instanceId);
-  }, 15_000);
+  }, 15_000 * CI_MULT);
 });
 
 describe('T8: Dispatch round-robin — alternates between instances', () => {
@@ -391,7 +388,7 @@ describe('T8: Dispatch round-robin — alternates between instances', () => {
     if (!(await natsAvailable())) { console.warn('T8 skipped — NATS not reachable'); return; }
 
     const [received] = await Promise.all([
-      collectReceived(4, 20_000),
+      collectReceived(4, 20_000 * CI_MULT),
       (async () => {
         for (let i = 0; i < 4; i++) {
           await publishToNats('topic.test.round-robin', JSON.stringify({ n: i, ts: Date.now() }));
@@ -405,7 +402,7 @@ describe('T8: Dispatch round-robin — alternates between instances', () => {
     const countB = received.filter(r => r.instanceId === 'worker-b').length;
     expect(countA).toBeGreaterThanOrEqual(1);
     expect(countB).toBeGreaterThanOrEqual(1);
-  }, 25_000);
+  }, 25_000 * CI_MULT);
 });
 
 describe('T9: Dispatch broadcast — both instances receive', () => {
@@ -415,7 +412,7 @@ describe('T9: Dispatch broadcast — both instances receive', () => {
 
     const payload = JSON.stringify({ text: 'broadcast-test', ts: Date.now() });
     const [received] = await Promise.all([
-      collectReceived(2, 15_000),
+      collectReceived(2, 15_000 * CI_MULT),
       sleep(200).then(() => publishToNats('topic.test.broadcast', payload)),
     ]);
 
@@ -423,7 +420,7 @@ describe('T9: Dispatch broadcast — both instances receive', () => {
     const ids = received.map(r => r.instanceId);
     expect(ids).toContain('worker-a');
     expect(ids).toContain('worker-b');
-  }, 20_000);
+  }, 20_000 * CI_MULT);
 });
 
 describe('T10: Direct binding — worker-a gets topic.test.direct-a', () => {
@@ -433,13 +430,13 @@ describe('T10: Direct binding — worker-a gets topic.test.direct-a', () => {
 
     const payload = JSON.stringify({ text: 'direct-a-test', ts: Date.now() });
     const [received] = await Promise.all([
-      collectReceived(1, 10_000),
+      collectReceived(1, 10_000 * CI_MULT),
       sleep(200).then(() => publishToNats('topic.test.direct-a', payload)),
     ]);
 
     expect(received).toHaveLength(1);
     expect(received[0].instanceId).toBe('worker-a');
-  }, 15_000);
+  }, 15_000 * CI_MULT);
 });
 
 describe('T11: Competing pool — messages distributed across pool-worker-1 and pool-worker-2', () => {
@@ -448,7 +445,7 @@ describe('T11: Competing pool — messages distributed across pool-worker-1 and 
     if (!(await natsAvailable())) { console.warn('T11 skipped — NATS not reachable'); return; }
 
     const [received] = await Promise.all([
-      collectReceived(4, 20_000),
+      collectReceived(4, 20_000 * CI_MULT),
       (async () => {
         for (let i = 0; i < 4; i++) {
           await publishToNats('topic.test.pool', JSON.stringify({ n: i, ts: Date.now() }));
@@ -459,13 +456,11 @@ describe('T11: Competing pool — messages distributed across pool-worker-1 and 
 
     expect(received.length).toBeGreaterThanOrEqual(2);
     const ids = new Set(received.map(r => r.instanceId));
-    // At least one pool instance received
     expect(['pool-worker-1', 'pool-worker-2'].some(id => ids.has(id))).toBe(true);
-    // All received messages must be from pool instances (not worker-a/b)
     for (const r of received) {
       expect(['pool-worker-1', 'pool-worker-2']).toContain(r.instanceId);
     }
-  }, 25_000);
+  }, 25_000 * CI_MULT);
 });
 
 describe('T12: Entrypoint route — { from, to } binding routes to agent.{id}.{portName}', () => {
@@ -475,13 +470,12 @@ describe('T12: Entrypoint route — { from, to } binding routes to agent.{id}.{p
 
     const payload = JSON.stringify({ text: 'entrypoint-test', ts: Date.now() });
     const [received] = await Promise.all([
-      collectReceived(1, 10_000),
+      collectReceived(1, 10_000 * CI_MULT),
       sleep(200).then(() => publishToNats('topic.test.entrypoint-a', payload)),
     ]);
 
     expect(received).toHaveLength(1);
-    // Dispatcher forwards to agent.worker-a.tickets; worker-a receives it
     expect(received[0].instanceId).toBe('worker-a');
     expect(received[0].subject).toBe('agent.worker-a.tickets');
-  }, 15_000);
+  }, 15_000 * CI_MULT);
 });

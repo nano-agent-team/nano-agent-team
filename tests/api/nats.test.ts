@@ -13,6 +13,9 @@ import { connect, StringCodec } from 'nats';
 const BASE = process.env.BASE_URL ?? 'http://localhost:3001';
 const NATS_URL = process.env.NATS_URL ?? 'nats://localhost:4222';
 
+// CI environments are slower — scale timeouts accordingly
+const CI_MULT = process.env.CI ? 3 : 1;
+
 describe('C1 — NATS konektivita', () => {
   test('připojí se k NATS serveru', async () => {
     const nc = await connect({ servers: NATS_URL });
@@ -49,7 +52,7 @@ describe('C2 — Heartbeat od agentů', () => {
       const timer = setTimeout(() => {
         sub.unsubscribe();
         resolve(false);
-      }, 60_000);
+      }, 60_000 * CI_MULT);
 
       void (async () => {
         for await (const msg of sub) {
@@ -65,7 +68,7 @@ describe('C2 — Heartbeat od agentů', () => {
 
     await nc.close();
     expect(received).toBe(true);
-  }, 65_000);
+  }, 65_000 * CI_MULT);
 });
 
 describe('C3 — SSE event při vytvoření ticketu', () => {
@@ -77,7 +80,7 @@ describe('C3 — SSE event při vytvoření ticketu', () => {
       const timer = setTimeout(() => {
         controller.abort();
         reject(new Error('SSE timeout — ticket_created event nedorazil do 10s'));
-      }, 10_000);
+      }, 10_000 * CI_MULT);
 
       void fetch(`${BASE}/api/events`, { signal: controller.signal })
         .then(async (res) => {
@@ -99,7 +102,6 @@ describe('C3 — SSE event při vytvoření ticketu', () => {
                 event = line.slice(7).trim();
               } else if (line.startsWith('data: ') && event === 'ticket_created') {
                 const data = JSON.parse(line.slice(6)) as Record<string, unknown>;
-                // Filter: only resolve for our specific ticket to avoid parallel test interference
                 if ((data as { ticket?: { title?: string } }).ticket?.title === expectedTitle) {
                   clearTimeout(timer);
                   resolve(data);
@@ -114,7 +116,6 @@ describe('C3 — SSE event při vytvoření ticketu', () => {
         });
     });
 
-    // Krátká pauza aby SSE spojení bylo navázáno
     await new Promise(r => setTimeout(r, 300));
 
     await fetch(`${BASE}/api/tickets`, {
@@ -125,5 +126,5 @@ describe('C3 — SSE event při vytvoření ticketu', () => {
 
     const event = await eventReceived;
     expect((event as { ticket?: { title?: string } }).ticket?.title).toBe(expectedTitle);
-  }, 15_000);
+  }, 15_000 * CI_MULT);
 });
