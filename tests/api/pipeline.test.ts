@@ -19,28 +19,8 @@ const MOCK_RESPONSE = process.env.MOCK_RESPONSE ?? 'Mock provider: task acknowle
 // CI environments are slower — scale timeouts accordingly
 const CI_MULT = process.env.CI ? 3 : 1;
 
-async function isAgentRunning(agentId: string): Promise<boolean> {
-  try {
-    const res = await fetch(`${BASE}/api/health`);
-    if (!res.ok) return false;
-    const health = await res.json() as {
-      agents: Array<{ agentId: string; status: string }>;
-    };
-    const agent = health.agents.find(a => a.agentId === agentId);
-    return agent?.status === 'running';
-  } catch {
-    return false;
-  }
-}
-
 describe('E1 — NATS → agent → MockProvider → response', () => {
   test('simple-chat agent odpoví přes NATS do 30s', async () => {
-    const running = await isAgentRunning('simple-chat');
-    if (!running) {
-      console.warn('simple-chat agent is not running — skipping test');
-      return;
-    }
-
     const nc = await connect({ servers: NATS_URL });
     const sc = StringCodec();
 
@@ -72,12 +52,6 @@ describe('E1 — NATS → agent → MockProvider → response', () => {
 
 describe('E2 — Agent restart po pádu', () => {
   test('orchestrátor detekuje pád agenta a restartuje ho do 90s', async () => {
-    const running = await isAgentRunning('simple-chat');
-    if (!running) {
-      console.warn('simple-chat agent is not running — skipping test');
-      return;
-    }
-
     const healthRes = await fetch(`${BASE}/api/health`);
     const health = await healthRes.json() as {
       agents: Array<{ agentId: string; status: string; containerId?: string; restartCount: number }>;
