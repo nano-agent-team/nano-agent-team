@@ -28,24 +28,32 @@ No new files. No Dockerfile changes. No schema changes.
 
 - [ ] **Step 1: Locate the insertion point**
 
-Open `src/agent-manager.ts`. Find `buildAgentEnvAndBinds` (line 933). Scroll to the env array (starts at line 1012). Find the block with `CONTEXT_MODE` and `PRELOAD_SKILLS` (lines 1029–1031):
+Open `src/agent-manager.ts`. Find `buildAgentEnvAndBinds` (line 933). Scroll to the env array (starts at line 1012). Find lines 1029–1035 — the new line goes between `PRELOAD_SKILLS` (line 1031) and `REPO_URL` (line 1033), **before** the large `!isDeterministic` block that starts at line 1037:
 
 ```ts
 // Enable context-mode MCP server for code search (opt-in via manifest) — LLM agents only
 ...(!isDeterministic && agent.manifest.context_mode ? ['CONTEXT_MODE=true'] : []),
 // Preload specific skills into systemPrompt (injected at startup) — LLM agents only
 ...(!isDeterministic && agent.manifest.preload_skills?.length ? [`PRELOAD_SKILLS=${agent.manifest.preload_skills.join(',')}`] : []),
+// Pass repo URL from config (set during team install)
+...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
+// Deterministic agent: inject handler module name, skip all LLM-specific vars
+...(isDeterministic && agent.manifest.handler ? [`HANDLER=${agent.manifest.handler}`] : []),
+// LLM-specific env vars (skipped for deterministic agents)
+...(!isDeterministic ? [
 ```
 
-- [ ] **Step 2: Add the env var after `PRELOAD_SKILLS`**
+- [ ] **Step 2: Insert the unconditional env var between `PRELOAD_SKILLS` and `REPO_URL`**
+
+The new line is unconditional (no `!isDeterministic` guard) — it must sit **outside** the `!isDeterministic` spread block at line 1037. Insert it at line 1032:
 
 ```ts
-// Enable context-mode MCP server for code search (opt-in via manifest) — LLM agents only
-...(!isDeterministic && agent.manifest.context_mode ? ['CONTEXT_MODE=true'] : []),
 // Preload specific skills into systemPrompt (injected at startup) — LLM agents only
 ...(!isDeterministic && agent.manifest.preload_skills?.length ? [`PRELOAD_SKILLS=${agent.manifest.preload_skills.join(',')}`] : []),
-// Agent teams: enable native Claude Code multi-agent coordination (unconditional — env var is ignored by deterministic agents that don't run LLM)
+// Agent teams: enable native Claude Code multi-agent coordination (unconditional)
 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
+// Pass repo URL from config (set during team install)
+...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
 ```
 
 - [ ] **Step 3: Verify TypeScript compiles**
@@ -79,7 +87,9 @@ Open `container/agent-runner/src/providers/claude.ts`. Find line 23:
 const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns];
 ```
 
-- [ ] **Step 2: Add `AGENT_TEAM_TOOLS` constant and spread into `defaultTools`**
+- [ ] **Step 2: Replace line 23 with the `AGENT_TEAM_TOOLS` constant + updated `defaultTools`**
+
+**Replace** the existing `const defaultTools = [...]` line (line 23) with:
 
 ```ts
 // Native Claude Code agent team tools (available when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1)
@@ -90,6 +100,8 @@ const AGENT_TEAM_TOOLS = [
 
 const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns, ...AGENT_TEAM_TOOLS];
 ```
+
+Do **not** leave the original `const defaultTools` line in place — that would create a duplicate `const` declaration and fail TypeScript compilation.
 
 - [ ] **Step 3: Verify TypeScript compiles**
 
@@ -130,20 +142,16 @@ const q = query({ prompt: options.prompt, options: sdkOptions });
 // and run in in-process mode (no tmux needed in containers).
 // Teammates load project-scope settings from cwd; they cannot access parent's sdkOptions at runtime.
 // Overwrite is safe — MCP config derives from env vars that are constant per container lifecycle.
-{
-  const settingsDir = path.join(options.cwd, '.claude');
-  const settingsPath = path.join(settingsDir, 'settings.json');
-  fs.mkdirSync(settingsDir, { recursive: true });
-  fs.writeFileSync(settingsPath, JSON.stringify({
-    mcpServers: options.mcpServers ?? {},
-    teammateMode: 'in-process',
-  }, null, 2), 'utf8');
-}
+const settingsDir = path.join(options.cwd, '.claude');
+const settingsPath = path.join(settingsDir, 'settings.json');
+fs.mkdirSync(settingsDir, { recursive: true });
+fs.writeFileSync(settingsPath, JSON.stringify({
+  mcpServers: options.mcpServers ?? {},
+  teammateMode: 'in-process',
+}, null, 2), 'utf8');
 
 const q = query({ prompt: options.prompt, options: sdkOptions });
 ```
-
-> The block scope `{ }` keeps `settingsDir`/`settingsPath` local and avoids polluting the surrounding scope.
 
 - [ ] **Step 3: Verify `path` and `fs` are already imported**
 
@@ -184,7 +192,9 @@ Use `/nat-agent-rebuild` skill or manually:
 docker build -t nano-agent:latest ./container/agent-runner/
 ```
 
-- [ ] **Step 2: Rebuild full stack**
+- [ ] **Step 2: Rebuild full stack (control plane only)**
+
+> Note: `docker compose up --build` rebuilds the control plane (`nano-agent-team`) image but does **NOT** rebuild `nano-agent:latest`. Step 1 must complete before this step to ensure agent containers pick up the changes from Tasks 2 and 3.
 
 ```bash
 cd /Users/rpridal/workspace/nano-agent-team-project/nano-agent-team
