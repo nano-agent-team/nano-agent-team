@@ -274,7 +274,7 @@ function buildMcpServer(
       'tickets_list',
       'List tickets with optional filters. Returns id, title, status, priority, assignee.',
       {
-        status:   z.string().optional().describe('Abstract status: new|approved|in_progress|review|done|rejected|pending_input'),
+        status:   z.string().optional().describe('Status: idea|waiting|in_progress|done|rejected'),
         priority: z.string().optional().describe('Priority: CRITICAL|HIGH|MED|LOW'),
         assignee: z.string().optional().describe('Filter by assignee agent id'),
       },
@@ -353,13 +353,13 @@ function buildMcpServer(
   if (canCallBuiltin(permissions, 'tickets', 'ticket_approve')) {
     server.tool(
       'ticket_approve',
-      'Approve a ticket. Transitions status to "approved" and triggers NATS pipeline event.',
+      'Approve a ticket. Transitions status to "waiting" and triggers NATS pipeline event.',
       {
         ticket_id: z.string().describe('Ticket ID'),
         assignee:  z.string().optional().describe('Assign to this agent (e.g. "architect")'),
       },
       async ({ ticket_id, assignee }) => {
-        const ticket = await registry.updateTicket(ticket_id, { status: 'approved', assignee }, agentId);
+        const ticket = await registry.updateTicket(ticket_id, { status: 'waiting', assignee }, agentId);
         return { content: [{ type: 'text' as const, text: JSON.stringify(ticket, null, 2) }] };
       },
     );
