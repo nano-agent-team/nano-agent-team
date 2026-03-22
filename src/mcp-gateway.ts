@@ -331,19 +331,21 @@ function buildMcpServer(
       'ticket_update',
       'Update ticket fields. Pass status to transition: "in_progress" triggers Developer (spec-ready), "review" triggers Reviewer, "done" closes the ticket.',
       {
-        ticket_id: z.string().describe('Ticket ID'),
-        title:     z.string().optional().describe('New title'),
-        body:      z.string().optional().describe('New body / tech spec (replaces existing)'),
-        priority:  z.string().optional().describe('New priority: CRITICAL|HIGH|MED|LOW'),
-        assignee:  z.string().optional().describe('New assignee agent id'),
-        status:    z.string().optional().describe('New status: in_progress | review | done'),
+        ticket_id:       z.string().describe('Ticket ID'),
+        title:           z.string().optional().describe('New title'),
+        body:            z.string().optional().describe('New body / tech spec (replaces existing)'),
+        priority:        z.string().optional().describe('New priority: CRITICAL|HIGH|MED|LOW'),
+        assignee:        z.string().optional().describe('New assignee agent id'),
+        status:          z.string().optional().describe('New status: idea | waiting | in_progress | done | rejected'),
+        expected_status: z.string().optional().describe('Optimistic lock: only update if current status matches. Returns error on mismatch.'),
       },
-      async ({ ticket_id, title, body, priority, assignee, status }) => {
+      async ({ ticket_id, title, body, priority, assignee, status, expected_status }) => {
         const ticket = await registry.updateTicket(ticket_id, {
           title, body,
           priority: priority as TicketPriority | undefined,
           assignee,
           status: status as import('./tickets/types.js').AbstractStatus | undefined,
+          expected_status: expected_status as import('./tickets/types.js').AbstractStatus | undefined,
         }, agentId);
         return { content: [{ type: 'text' as const, text: JSON.stringify(ticket, null, 2) }] };
       },
@@ -931,7 +933,7 @@ export class McpGateway {
       tools.push({ name: 'ticket_create', description: 'Create a new ticket.', inputSchema: { type: 'object', required: ['title'], properties: { title: { type: 'string' }, body: { type: 'string' }, priority: { type: 'string' }, type: { type: 'string' } } } });
     }
     if (canCallBuiltin(permissions, 'tickets', 'ticket_update')) {
-      tools.push({ name: 'ticket_update', description: 'Update ticket fields. Pass status to transition pipeline: "in_progress" triggers Developer, "review" triggers Reviewer, "done" closes.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, priority: { type: 'string' }, assignee: { type: 'string' }, status: { type: 'string' } } } });
+      tools.push({ name: 'ticket_update', description: 'Update ticket fields. Pass status to transition pipeline: "in_progress" triggers Developer, "review" triggers Reviewer, "done" closes.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, priority: { type: 'string' }, assignee: { type: 'string' }, status: { type: 'string' }, expected_status: { type: 'string' } } } });
     }
     if (canCallBuiltin(permissions, 'tickets', 'ticket_approve')) {
       tools.push({ name: 'ticket_approve', description: 'Approve a ticket.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' }, assignee: { type: 'string' } } } });
