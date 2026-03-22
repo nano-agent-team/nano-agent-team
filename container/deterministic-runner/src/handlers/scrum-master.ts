@@ -14,8 +14,11 @@ interface TicketRow {
   id: string;
   title: string;
   status: string;
-  assigned_to: string | null;
-  updated_at: string;
+  // MCP returns 'assignee', DB returns 'assigned_to' — handle both
+  assignee?: string | null;
+  assigned_to?: string | null;
+  updatedAt?: string;
+  updated_at?: string;
 }
 
 interface CommentCountRow {
@@ -44,6 +47,15 @@ async function callMcpTool(
   return text ? JSON.parse(text) : null;
 }
 
+/** Get assignee from ticket (MCP returns 'assignee', DB returns 'assigned_to') */
+function getAssignee(t: TicketRow): string | null {
+  return t.assignee ?? t.assigned_to ?? null;
+}
+/** Get updated timestamp (MCP returns 'updatedAt', DB returns 'updated_at') */
+function getUpdatedAt(t: TicketRow): string {
+  return t.updatedAt ?? t.updated_at ?? '';
+}
+
 const handle: Handler = async (payload, ctx) => {
   const { agentId, db, mcp, nc, log } = ctx;
   const js = nc.jetstream();
@@ -51,9 +63,14 @@ const handle: Handler = async (payload, ctx) => {
   let queueSize = 0;
 
   // ── 1. Dispatch waiting tickets ──────────────────────────────────
-  const waitingTickets = db
-    .prepare('SELECT id, title, status, assigned_to, updated_at FROM tickets WHERE status = ?')
-    .all('waiting') as TicketRow[];
+  // Use MCP tickets_list (not direct DB) to see tickets from ALL providers (local + GitHub)
+  let waitingTickets: TicketRow[] = [];
+  try {
+    const rawTickets = await callMcpTool(mcp, 'tickets_list', { status: 'waiting' }) as TicketRow[];
+    waitingTickets = Array.isArray(rawTickets) ? rawTickets : [];
+  } catch (err) {
+    log.error({ err }, 'Failed to list waiting tickets via MCP');
+  }
 
   queueSize = waitingTickets.length;
 
@@ -67,11 +84,12 @@ const handle: Handler = async (payload, ctx) => {
   }
 
   for (const ticket of waitingTickets) {
-    if (!ticket.assigned_to) continue;
+    const assignee = getAssignee(ticket);
+    if (!assignee) continue;
 
     // Skip if assigned_to points to unknown agent
-    if (knownAgents.size > 0 && !knownAgents.has(ticket.assigned_to)) {
-      log.warn({ ticketId: ticket.id, assignedTo: ticket.assigned_to }, 'Unknown agent — skipping dispatch');
+    if (knownAgents.size > 0 && !knownAgents.has(assignee)) {
+      log.warn({ ticketId: ticket.id, assignedTo: assignee }, 'Unknown agent — skipping dispatch');
       continue;
     }
 
@@ -91,10 +109,10 @@ const handle: Handler = async (payload, ctx) => {
     // Dispatch to agent via NATS
     try {
       await js.publish(
-        `agent.${ticket.assigned_to}.task`,
+        `agent.${assignee}.task`,
         codec.encode(JSON.stringify({ ticket_id: ticket.id, title: ticket.title })),
       );
-      log.info({ ticketId: ticket.id, agent: ticket.assigned_to }, 'Dispatched ticket');
+      log.info({ ticketId: ticket.id, agent: assignee }, 'Dispatched ticket');
       workFound = true;
     } catch (err) {
       // Revert claim on dispatch failure
@@ -111,9 +129,13 @@ const handle: Handler = async (payload, ctx) => {
   }
 
   // ── 2. Orphan detection ──────────────────────────────────────────
-  const inProgressTickets = db
-    .prepare('SELECT id, title, status, assigned_to, updated_at FROM tickets WHERE status = ?')
-    .all('in_progress') as TicketRow[];
+  let inProgressTickets: TicketRow[] = [];
+  try {
+    const rawInProgress = await callMcpTool(mcp, 'tickets_list', { status: 'in_progress' }) as TicketRow[];
+    inProgressTickets = Array.isArray(rawInProgress) ? rawInProgress : [];
+  } catch (err) {
+    log.error({ err }, 'Failed to list in_progress tickets via MCP');
+  }
 
   // Get system status once for all orphan checks
   let agentStates: AgentState[] = [];
@@ -131,19 +153,19 @@ const handle: Handler = async (payload, ctx) => {
 
   for (const ticket of inProgressTickets) {
     // Grace period: skip recently updated tickets
-    const updatedAt = new Date(ticket.updated_at).getTime();
+    const updatedAt = new Date(getUpdatedAt(ticket)).getTime();
     if (now - updatedAt < GRACE_PERIOD_MS) continue;
 
+    const orphanAssignee = getAssignee(ticket);
+
     // Check if the assigned agent type is alive (running and responsive)
-    // For persistent agents: ticketId may be cleared after processing but agent is still alive
-    // True orphan = assigned agent is dead/missing, not just idle
     const assignedAgentAlive = agentStates.some(
-      (a) => a.agentId === ticket.assigned_to && a.status === 'running',
+      (a) => a.agentId === orphanAssignee && a.status === 'running',
     );
     if (assignedAgentAlive) continue;
 
     // Orphan detected
-    log.warn({ ticketId: ticket.id, assignedTo: ticket.assigned_to }, 'Orphan ticket detected');
+    log.warn({ ticketId: ticket.id, assignedTo: orphanAssignee }, 'Orphan ticket detected');
 
     // Count previous recoveries
     const countRow = db
