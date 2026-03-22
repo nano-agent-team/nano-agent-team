@@ -153,9 +153,11 @@ fs.writeFileSync(settingsPath, JSON.stringify({
 const q = query({ prompt: options.prompt, options: sdkOptions });
 ```
 
-- [ ] **Step 3: Verify `path` and `fs` are already imported**
+- [ ] **Step 3: Verify `path`, `fs`, and `options.cwd` are ready**
 
 Check the top of `claude.ts` — both `import fs from 'fs'` and `import path from 'path'` should already be present (they are, lines 7–8). No new imports needed.
+
+`options.cwd` is always `/workspace` — confirmed in `container/agent-runner/src/index.ts` at line 235 (ephemeral) and line 570 (persistent). No null guard needed.
 
 - [ ] **Step 4: Verify TypeScript compiles**
 
@@ -243,6 +245,8 @@ ls /Users/rpridal/workspace/nano-agent-team-project/nano-agent-team/data/workspa
 # pick the most recently created ws-* dir:
 cat /Users/rpridal/workspace/nano-agent-team-project/nano-agent-team/data/workspaces/active/ws-<id>/.claude/settings.json
 ```
+
+> The settings.json is written by the container at `/workspace/.claude/settings.json`. The workspace worktree is bind-mounted from `data/workspaces/active/ws-<id>/` on the host, so writes inside the container appear at the host path above. The file is visible on the host immediately after the first `query()` call completes.
 
 Expected: JSON with `mcpServers` and `teammateMode: "in-process"`.
 
