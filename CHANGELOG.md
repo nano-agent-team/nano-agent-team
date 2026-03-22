@@ -77,6 +77,7 @@ All notable changes to this project will be documented in this file.
 - Idea status filter must include issues with status:idea label ([`d083fc7`](https://github.com/nano-agent-team/nano-agent-team/commit/d083fc74760ad848d95447f631d4c6a167503f1c))
 - Status change was overwriting assigned: label in GitHub provider ([`c9e6dc2`](https://github.com/nano-agent-team/nano-agent-team/commit/c9e6dc2ad4c3e870ce78fc4265f22991f72cccec))
 - Scrum-master uses MCP tickets_list instead of direct DB queries ([`694c87d`](https://github.com/nano-agent-team/nano-agent-team/commit/694c87d3ceedec460a38e7e43d7da35564c96b15))
+- Translate agent.dir to host path for bind mount ([`96185d2`](https://github.com/nano-agent-team/nano-agent-team/commit/96185d2a05b2eb324204ef55a39b0b1dddcc1913))
 
 ### Documentation
 
@@ -151,6 +152,7 @@ All notable changes to this project will be documented in this file.
 - Add routing agent design spec ([`9020ef4`](https://github.com/nano-agent-team/nano-agent-team/commit/9020ef45bf5ff9d58d57d8d81430fde9e4dc11bb))
 - Add routing agent implementation plan ([`d91acca`](https://github.com/nano-agent-team/nano-agent-team/commit/d91accaafd16ec2078472d4abf936da1365e08c4))
 - **ci:** Update CHANGELOG [skip ci] ([`73211ff`](https://github.com/nano-agent-team/nano-agent-team/commit/73211ffed80c25108014cb6940934deb40ad0885))
+- **ci:** Update CHANGELOG [skip ci] ([`aa5a863`](https://github.com/nano-agent-team/nano-agent-team/commit/aa5a863ede87807532ebddb1b34d667267653d6e))
 
 ### Features
 
