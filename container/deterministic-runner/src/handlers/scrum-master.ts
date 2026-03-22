@@ -7,8 +7,10 @@
  *   3. Set next alarm with adaptive interval
  */
 
+import fs from 'fs';
+import path from 'path';
 import { StringCodec } from 'nats';
-import type { Handler } from '../types.js';
+import type { Handler, HandlerContext } from '../types.js';
 
 interface TicketRow {
   id: string;
@@ -36,6 +38,33 @@ const codec = StringCodec();
 const GRACE_PERIOD_MS = 5 * 60_000; // 5 minutes — LLM agents need time to process
 const MAX_ORPHAN_RECOVERIES = 3;
 
+type PipelineRoute = { next: string | null; retry?: string };
+type PipelineConfig = Record<string, PipelineRoute>;
+
+/** Load pipeline config from workflow.json on disk. Falls back to empty. */
+function loadPipeline(dbPath: string, log: HandlerContext['log']): PipelineConfig {
+  // workflow.json is at /workspace/db/teams/*/workflow.json
+  // DB_PATH is /workspace/db/nano-agent-team.db → parent is /workspace/db/
+  const dataDir = path.dirname(dbPath);
+  const teamsDir = path.join(dataDir, 'teams');
+  try {
+    const teams = fs.readdirSync(teamsDir);
+    for (const team of teams) {
+      const wfPath = path.join(teamsDir, team, 'workflow.json');
+      if (fs.existsSync(wfPath)) {
+        const wf = JSON.parse(fs.readFileSync(wfPath, 'utf8')) as { pipeline?: PipelineConfig };
+        if (wf.pipeline) {
+          log.info({ team, routes: Object.keys(wf.pipeline).length }, 'Loaded pipeline config from workflow.json');
+          return wf.pipeline;
+        }
+      }
+    }
+  } catch (err) {
+    log.warn({ err }, 'Failed to load pipeline config — no routing for done tickets');
+  }
+  return {};
+}
+
 async function callMcpTool(
   mcp: Parameters<Handler>[1]['mcp'],
   name: string,
@@ -58,6 +87,8 @@ function getUpdatedAt(t: TicketRow): string {
 
 const handle: Handler = async (payload, ctx) => {
   const { agentId, db, mcp, nc, log } = ctx;
+  const dbPath = process.env.DB_PATH ?? '/workspace/db/nano-agent-team.db';
+  const pipeline = loadPipeline(dbPath, log);
   const js = nc.jetstream();
   let workFound = false;
   let queueSize = 0;
@@ -204,7 +235,66 @@ const handle: Handler = async (payload, ctx) => {
     }
   }
 
-  // ── 3. Set next alarm with adaptive interval ─────────────────────
+  // ── 3. Route done tickets (deterministic handoff) ───────────────
+  if (Object.keys(pipeline).length > 0) {
+    let doneTickets: TicketRow[] = [];
+    try {
+      const rawDone = await callMcpTool(mcp, 'tickets_list', { status: 'done' }) as TicketRow[];
+      doneTickets = Array.isArray(rawDone) ? rawDone : [];
+    } catch (err) {
+      log.error({ err }, 'Failed to list done tickets');
+    }
+
+    for (const ticket of doneTickets) {
+      const completedBy = getAssignee(ticket);
+      if (!completedBy) continue;
+
+      const route = pipeline[completedBy];
+      if (!route) continue; // Agent not in pipeline config — skip
+
+      // Read last comment verdict via ticket_get (includes comments)
+      let verdict: string | undefined;
+      try {
+        const ticketData = await callMcpTool(mcp, 'ticket_get', { ticket_id: ticket.id }) as {
+          comments?: Array<{ verdict?: string }>;
+        };
+        const lastComment = ticketData?.comments?.slice(-1)[0];
+        verdict = lastComment?.verdict ?? undefined;
+      } catch { /* ignore — default to next */ }
+
+      if (verdict === 'rejected') {
+        try {
+          await callMcpTool(mcp, 'ticket_update', { ticket_id: ticket.id, status: 'rejected', expected_status: 'done' });
+          log.info({ ticketId: ticket.id, completedBy, verdict }, 'Pipeline: ticket rejected');
+        } catch { /* ignore */ }
+        continue;
+      }
+
+      const nextAgent = (verdict === 'rework' && route.retry) ? route.retry : route.next;
+
+      if (!nextAgent) {
+        // Pipeline complete — leave as done
+        log.info({ ticketId: ticket.id, completedBy }, 'Pipeline complete');
+        continue;
+      }
+
+      // Route to next agent
+      try {
+        await callMcpTool(mcp, 'ticket_update', {
+          ticket_id: ticket.id,
+          status: 'waiting',
+          assignee: nextAgent,
+          expected_status: 'done',
+        });
+        log.info({ ticketId: ticket.id, from: completedBy, to: nextAgent, verdict: verdict ?? 'default' }, 'Pipeline: routed done ticket');
+        workFound = true;
+      } catch (err) {
+        log.warn({ ticketId: ticket.id, err }, 'Failed to route done ticket');
+      }
+    }
+  }
+
+  // ── 4. Set next alarm with adaptive interval ─────────────────────
   let interval: number;
   if (queueSize > 5) {
     interval = 15;
