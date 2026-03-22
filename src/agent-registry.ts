@@ -58,6 +58,10 @@ export interface AgentManifest {
   entrypoints?: string[];
   /** Mount host SSH keys (~/.ssh) into container for git SSH access */
   ssh_mount?: boolean;
+  /** Enable context-mode MCP server (FTS5 code search) in agent container */
+  context_mode?: boolean;
+  /** Skills to preload into systemPrompt (injected at startup, not via Skill tool) */
+  preload_skills?: string[];
   /** Capability tags for auto model selection: 'fast', 'cheap', 'reasoning', 'long-context', ... */
   capabilities?: string[];
   /** LLM provider: provider name or 'auto' (default: 'auto' = use primaryProvider) */
@@ -81,6 +85,9 @@ export interface AgentManifest {
   mcp_config?: string;
   /** Extra tools to allow for this agent (e.g. ["Skill"] for superpowers skills) */
   allowedTools?: string[];
+  /** Mount worktree from workspace provider based on ticket_id in NATS payload.
+   *  When set, agent runs as ephemeral: new container per task, workspace resolved from message payload. */
+  workspace_source?: 'ticket';
   /** Handler module name for deterministic agents. Required when kind === 'deterministic'. */
   handler?: string;
 }

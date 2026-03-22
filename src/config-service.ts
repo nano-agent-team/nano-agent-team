@@ -35,6 +35,8 @@ export interface NanoConfig {
     createdAt: string;
     setupCompletedAt: string | null;
   };
+  /** Bare repo URLs for workspace provider (repoType → git URL) */
+  workspaceRepos?: Record<string, string>;
 }
 
 function createDefaultConfig(): NanoConfig {

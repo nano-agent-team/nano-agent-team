@@ -6,6 +6,7 @@
  *   GET  /api/events        — SSE stream
  *   POST /api/chat/settings — NATS bridge for settings agent
  *   POST /internal/reload   — live reload tools after setup_complete
+ *   POST /internal/restart  — graceful restart with pending-deploy tracking
  *   GET  /                  — static dashboard/dist/
  *
  * Plugin routes are registered via loadTool() from features/{id}/plugin.mjs
@@ -13,7 +14,9 @@
  */
 
 import fs from 'fs';
+import http from 'http';
 import path from 'path';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 import express, { type Request, type Response, type NextFunction } from 'express';
@@ -28,6 +31,7 @@ import type { ConfigService } from './config-service.js';
 import type { SetupMode } from './setup-detector.js';
 import type { McpManager } from './mcp-manager.js';
 import type { McpGateway } from './mcp-gateway.js';
+import type { WorkspaceProvider } from './workspace-provider.js';
 import { listTickets, getTicket, addComment, listComments, type TicketPriority, type TicketType } from './db.js';
 import { TicketRegistry } from './tickets/registry.js';
 import { LocalTicketProvider } from './tickets/local-provider.js';
@@ -298,7 +302,7 @@ export async function createApiApp(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
 ): Promise<express.Application> {
   const app = express();
   app.use(express.json());
@@ -1008,6 +1012,65 @@ export async function createApiApp(
     }
   });
 
+  // ── Workspace management ──────────────────────────────────────────────────
+  if (opts.workspaceProvider) {
+    const wsp = opts.workspaceProvider;
+
+    // IMPORTANT: by-owner route must be before /:id to avoid "by-owner" matching as ID
+    app.get('/internal/workspaces/by-owner/:ownerId', (req: Request, res: Response) => {
+      try {
+        const ws = wsp.findByOwner(req.params.ownerId);
+        if (!ws) return res.status(404).json({ error: 'No active workspace for owner' });
+        res.json(ws);
+      } catch (err) {
+        logger.error({ err }, 'GET /internal/workspaces/by-owner/:ownerId error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.post('/internal/workspaces', async (req: Request, res: Response) => {
+      try {
+        const { repoType, ownerId, branch } = req.body as { repoType: string; ownerId?: string; branch?: string };
+        if (!repoType) return res.status(400).json({ error: 'repoType is required' });
+        const ws = await wsp.create(repoType, ownerId ?? 'anonymous', branch);
+        res.status(201).json(ws);
+      } catch (err) {
+        logger.error({ err }, 'POST /internal/workspaces error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.get('/internal/workspaces', (_req: Request, res: Response) => {
+      try {
+        res.json(wsp.list());
+      } catch (err) {
+        logger.error({ err }, 'GET /internal/workspaces error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.get('/internal/workspaces/:id', (req: Request, res: Response) => {
+      try {
+        const ws = wsp.get(req.params.id);
+        if (!ws) return res.status(404).json({ error: 'Workspace not found' });
+        res.json(ws);
+      } catch (err) {
+        logger.error({ err }, 'GET /internal/workspaces/:id error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+
+    app.delete('/internal/workspaces/:id', (req: Request, res: Response) => {
+      try {
+        wsp.returnWorkspace(req.params.id);
+        res.json({ ok: true });
+      } catch (err) {
+        logger.error({ err }, 'DELETE /internal/workspaces/:id error');
+        res.status(500).json({ error: String(err) });
+      }
+    });
+  }
+
   app.post('/internal/reload', async (_req: Request, res: Response) => {
     try {
       await reloadFeatures(); // includes loadWorkflowPlugins
@@ -1017,6 +1080,76 @@ export async function createApiApp(
       res.json({ ok: true });
     } catch (err) {
       logger.error({ err }, 'Live reload failed');
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // ── Ephemeral freeze/status — used by release manager before deploy ──────
+
+  app.post('/internal/ephemeral/freeze', (_req: Request, res: Response) => {
+    manager.freezeEphemeral();
+    res.json({ ok: true, frozen: true });
+  });
+
+  app.post('/internal/ephemeral/unfreeze', (_req: Request, res: Response) => {
+    manager.unfreezeEphemeral();
+    res.json({ ok: true, frozen: false });
+  });
+
+  app.get('/internal/ephemeral/status', (_req: Request, res: Response) => {
+    res.json(manager.getEphemeralStatus());
+  });
+
+  // ── POST /internal/restart — graceful restart with deploy tracking ───────
+  app.post('/internal/restart', async (req: Request, res: Response) => {
+    try {
+      const { ticket_id, workspaceId } = req.body ?? {};
+
+      // Determine current main commit from bare repo (for rollback reference)
+      let mainCommit = 'unknown';
+      try {
+        const bareRepoDir = path.join(DATA_DIR, 'workspaces', 'repos', 'nano-agent-team.git');
+        mainCommit = execSync('git rev-parse main', { cwd: bareRepoDir, encoding: 'utf8' }).trim();
+      } catch {
+        logger.warn('Could not determine main commit from bare repo');
+      }
+
+      // Write pending-deploy.json with deploy context
+      const pendingDeploy = {
+        ticket_id: ticket_id ?? null,
+        workspaceId: workspaceId ?? null,
+        previousMainCommit: mainCommit,
+        timestamp: new Date().toISOString(),
+      };
+      fs.writeFileSync(
+        path.join(DATA_DIR, 'pending-deploy.json'),
+        JSON.stringify(pendingDeploy, null, 2),
+      );
+      logger.info({ pendingDeploy }, 'Pending deploy written, restart scheduled');
+
+      // Respond before shutting down
+      res.json({ ok: true, message: 'Restart scheduled' });
+
+      // Graceful shutdown after a short delay to allow response to flush
+      setTimeout(async () => {
+        try {
+          logger.info('Performing graceful shutdown for restart...');
+          await manager.stopAll();
+          await manager.stopAllDispatches();
+          nc.drain().catch(() => {});
+          // Close the HTTP server if available
+          const httpServer = (app as unknown as { _httpServer?: http.Server })._httpServer;
+          if (httpServer) {
+            httpServer.close();
+          }
+          process.exit(0);
+        } catch (err) {
+          logger.error({ err }, 'Error during restart shutdown');
+          process.exit(1);
+        }
+      }, 500);
+    } catch (err) {
+      logger.error({ err }, 'POST /internal/restart error');
       res.status(500).json({ error: String(err) });
     }
   });
@@ -1066,14 +1199,16 @@ export async function startApiServer(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry },
-): Promise<void> {
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
+): Promise<http.Server> {
   const app = await createApiApp(manager, nc, configService, opts);
 
-  await new Promise<void>((resolve) => {
-    app.listen(API_PORT, () => {
+  return new Promise<http.Server>((resolve) => {
+    const server = app.listen(API_PORT, () => {
       logger.info({ port: API_PORT }, 'API server listening');
-      resolve();
+      // Expose server reference for /internal/restart shutdown
+      (app as unknown as { _httpServer?: http.Server })._httpServer = server;
+      resolve(server);
     });
   });
 }

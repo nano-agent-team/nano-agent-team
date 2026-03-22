@@ -31,6 +31,9 @@ export class ClaudeProvider implements Provider {
       allowedTools: allTools,
       maxTurns: options.maxTurns ?? 50,
       includePartialMessages: true,
+      // Load skills from ~/.claude/skills/ (user) and .claude/skills/ (project)
+      // Without this, the SDK never discovers skills even if Skill is in allowedTools
+      settingSources: ['user', 'project'],
     };
 
     // Add MCP servers if provided

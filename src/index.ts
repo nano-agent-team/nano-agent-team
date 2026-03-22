@@ -35,6 +35,7 @@ import { startEmbeddedNats, stopEmbeddedNats } from './nats-embedded.js';
 import { SecretStore } from './secret-store.js';
 import { McpServerRegistry } from './mcp-server-registry.js';
 import { McpManager } from './mcp-manager.js';
+import { WorkspaceProvider } from './workspace-provider.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -229,18 +230,9 @@ async function main(): Promise<void> {
     // ── 5b. Ready mode ─────────────────────────────────────────────────────────
     const appConfig = await configService.load();
 
-    // Load all agents from /data/agents/ (installed from hub — no built-ins in core)
-    const agents: ReturnType<typeof loadAgents> = [];
-    const dataAgentsDir = path.join(DATA_DIR, 'agents');
-    if (fs.existsSync(dataAgentsDir)) {
-      agents.push(...loadAgents(dataAgentsDir));
-    }
-
-    for (const agent of agents) {
-      const topics = resolveTopicsForAgent(agent.manifest, agent.binding);
-      await ensureConsumer(nc, 'AGENTS', getInstanceId(agent), topics);
-      logger.info({ id: getInstanceId(agent), topics }, 'Agent consumer ready');
-    }
+    // Agent loading is deferred to reloadFeatures() (called by startApiServer)
+    // which handles workflow bindings, team context, and proper consumer setup.
+    // Do NOT load agents here — it would create consumers without bindings.
 
     // Start MCP server containers for all registered servers that have their secrets ready
     for (const mcpServer of mcpServerRegistry.getAll()) {
@@ -255,13 +247,7 @@ async function main(): Promise<void> {
       await mcpManager.start(mcpServer);
     }
 
-    await manager.startAll(agents);
     manager.startHealthMonitoring();
-
-    logger.info(
-      { agents: agents.map((a) => a.manifest.id) },
-      'nano-agent-team ready',
-    );
 
     // Publish health.check every 30 minutes (Scrum Master agent listens)
     setInterval(() => {
@@ -278,15 +264,100 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── 5c. Workspace Provider (if workspaceRepos configured) ──────────────────
+  let workspaceProvider: WorkspaceProvider | undefined;
+  {
+    const cfg = await configService.load();
+    const workspaceRepos = cfg?.workspaceRepos;
+    if (workspaceRepos && Object.keys(workspaceRepos).length > 0) {
+      workspaceProvider = new WorkspaceProvider(path.join(DATA_DIR, 'workspaces'), workspaceRepos);
+      workspaceProvider.startPeriodicFetch();
+      logger.info({ repos: Object.keys(workspaceRepos) }, 'WorkspaceProvider started');
+    }
+  }
+
   // ── 6. Start API server ─────────────────────────────────────────────────────
   // Settings feature is always loaded inside startApiServer
-  await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry });
+  const httpServer = await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry, workspaceProvider });
+
+  // ── 6b. Post-restart deploy verification ──────────────────────────────────
+  const pendingDeployPath = path.join(DATA_DIR, 'pending-deploy.json');
+  if (fs.existsSync(pendingDeployPath)) {
+    try {
+      const deployContext = JSON.parse(fs.readFileSync(pendingDeployPath, 'utf8'));
+      logger.info({ deployContext }, 'Pending deploy detected — running health check');
+
+      // Small delay to let everything settle
+      await new Promise((r) => setTimeout(r, 2000));
+
+      // Health check via internal API
+      let healthy = false;
+      try {
+        const apiPort = process.env.API_PORT ?? '3001';
+        const healthRes = await fetch(`http://localhost:${apiPort}/api/health`);
+        healthy = healthRes.ok;
+      } catch (err) {
+        logger.error({ err }, 'Health check request failed');
+      }
+
+      if (healthy) {
+        logger.info('Post-restart health check passed — deploy successful');
+        await publish(nc, 'topic.deploy.done', JSON.stringify({
+          ticket_id: deployContext.ticket_id,
+          workspaceId: deployContext.workspaceId,
+          previousCommit: deployContext.previousMainCommit,
+          timestamp: new Date().toISOString(),
+        }));
+      } else {
+        logger.error('Post-restart health check FAILED — attempting rollback');
+
+        // Attempt rollback: revert HEAD in a temp worktree from bare repo
+        let rollbackAttempted = false;
+        try {
+          const bareRepoDir = path.join(DATA_DIR, 'workspaces', 'repos', 'nano-agent-team.git');
+          if (fs.existsSync(bareRepoDir)) {
+            const { execFileSync: efs } = await import('child_process');
+            const tmpWorktree = path.join(DATA_DIR, 'workspaces', 'tmp-rollback');
+            try {
+              efs('git', ['worktree', 'add', tmpWorktree, 'main'], { cwd: bareRepoDir, timeout: 30_000 });
+              efs('git', ['revert', 'HEAD', '--no-edit'], { cwd: tmpWorktree, timeout: 30_000 });
+              efs('git', ['worktree', 'remove', tmpWorktree, '--force'], { cwd: bareRepoDir, timeout: 10_000 });
+              rollbackAttempted = true;
+              logger.info('Rollback revert committed on main');
+            } catch (revertErr) {
+              logger.error({ err: revertErr }, 'Rollback revert failed');
+              // Clean up worktree if it exists
+              try { efs('git', ['worktree', 'remove', tmpWorktree, '--force'], { cwd: bareRepoDir, timeout: 10_000 }); } catch { /* ignore */ }
+            }
+          }
+        } catch (err) {
+          logger.error({ err }, 'Rollback attempt error');
+        }
+
+        await publish(nc, 'topic.deploy.failed', JSON.stringify({
+          ticket_id: deployContext.ticket_id,
+          workspaceId: deployContext.workspaceId,
+          previousCommit: deployContext.previousMainCommit,
+          rollbackAttempted,
+          timestamp: new Date().toISOString(),
+        }));
+      }
+
+      // Clean up pending-deploy file regardless of outcome
+      try { fs.unlinkSync(pendingDeployPath); } catch { /* ignore */ }
+    } catch (err) {
+      logger.error({ err }, 'Error processing pending deploy');
+      try { fs.unlinkSync(pendingDeployPath); } catch { /* ignore */ }
+    }
+  }
 
   // ── Graceful shutdown ───────────────────────────────────────────────────────
   const shutdown = async (signal: string): Promise<void> => {
     logger.info({ signal }, 'Shutting down...');
+    workspaceProvider?.shutdown();
     stopAutoRefresh();
     proxyServer?.close();
+    httpServer.close();
     mcpGateway.stop();
     await mcpManager.stopAll();
     await manager.stopAll();
