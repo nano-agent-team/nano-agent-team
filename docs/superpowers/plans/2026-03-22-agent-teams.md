@@ -89,7 +89,9 @@ const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch
 
 - [ ] **Step 2: Replace line 23 with the `AGENT_TEAM_TOOLS` constant + updated `defaultTools`**
 
-**Replace** the existing `const defaultTools = [...]` line (line 23) with:
+Both `AGENT_TEAM_TOOLS` and `defaultTools` must stay **inside the `run()` method** (which starts at line 20), after `mcpToolPatterns` on line 22. Do NOT place them at module or class scope — `mcpToolPatterns` (line 22) must be defined before `AGENT_TEAM_TOOLS` spreads it in `defaultTools`.
+
+**Replace** the existing `const defaultTools = [...]` line (line 23) with these two lines:
 
 ```ts
 // Native Claude Code agent team tools (available when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1)
@@ -231,6 +233,8 @@ CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 - [ ] **Step 5: Send a test ticket to trigger an ephemeral agent**
 
 The settings.json is written inside `query()` — it only appears after an ephemeral task runs. Send a minimal test ticket via the tickets API:
+
+> `pipeline-ready` is the correct entry label for this project — it triggers sd-pm to pick up the ticket and route it through the pipeline. Confirmed in sd-pm's CLAUDE.md and scrum-master manifest.
 
 ```bash
 curl -s -X POST http://localhost:3001/api/tickets \
