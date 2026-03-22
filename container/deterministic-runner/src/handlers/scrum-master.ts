@@ -30,7 +30,7 @@ interface AgentState {
 
 const codec = StringCodec();
 
-const GRACE_PERIOD_MS = 30_000;
+const GRACE_PERIOD_MS = 5 * 60_000; // 5 minutes — LLM agents need time to process
 const MAX_ORPHAN_RECOVERIES = 3;
 
 async function callMcpTool(
@@ -57,8 +57,23 @@ const handle: Handler = async (payload, ctx) => {
 
   queueSize = waitingTickets.length;
 
+  // Get known agents for validation
+  let knownAgents: Set<string>;
+  try {
+    const status = await callMcpTool(mcp, 'get_system_status', {}) as { agents?: Array<{ agentId: string }> };
+    knownAgents = new Set((status?.agents ?? []).map(a => a.agentId));
+  } catch {
+    knownAgents = new Set();
+  }
+
   for (const ticket of waitingTickets) {
     if (!ticket.assigned_to) continue;
+
+    // Skip if assigned_to points to unknown agent
+    if (knownAgents.size > 0 && !knownAgents.has(ticket.assigned_to)) {
+      log.warn({ ticketId: ticket.id, assignedTo: ticket.assigned_to }, 'Unknown agent — skipping dispatch');
+      continue;
+    }
 
     // Claim via expected_status CAS
     try {
@@ -119,11 +134,13 @@ const handle: Handler = async (payload, ctx) => {
     const updatedAt = new Date(ticket.updated_at).getTime();
     if (now - updatedAt < GRACE_PERIOD_MS) continue;
 
-    // Check if any running agent is working on this ticket
-    const hasActiveAgent = agentStates.some(
-      (a) => a.ticketId === ticket.id && a.status === 'running',
+    // Check if the assigned agent type is alive (running and responsive)
+    // For persistent agents: ticketId may be cleared after processing but agent is still alive
+    // True orphan = assigned agent is dead/missing, not just idle
+    const assignedAgentAlive = agentStates.some(
+      (a) => a.agentId === ticket.assigned_to && a.status === 'running',
     );
-    if (hasActiveAgent) continue;
+    if (assignedAgentAlive) continue;
 
     // Orphan detected
     log.warn({ ticketId: ticket.id, assignedTo: ticket.assigned_to }, 'Orphan ticket detected');
