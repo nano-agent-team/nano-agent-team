@@ -8,7 +8,6 @@
  */
 
 import fs from 'fs';
-import path from 'path';
 import { StringCodec } from 'nats';
 import type { Handler, HandlerContext } from '../types.js';
 
@@ -41,26 +40,17 @@ const MAX_ORPHAN_RECOVERIES = 3;
 type PipelineRoute = { next: string | null; retry?: string };
 type PipelineConfig = Record<string, PipelineRoute>;
 
-/** Load pipeline config from workflow.json on disk. Falls back to empty. */
-function loadPipeline(dbPath: string, log: HandlerContext['log']): PipelineConfig {
-  // workflow.json is at /workspace/db/teams/*/workflow.json
-  // DB_PATH is /workspace/db/nano-agent-team.db → parent is /workspace/db/
-  const dataDir = path.dirname(dbPath);
-  const teamsDir = path.join(dataDir, 'teams');
+/** Load pipeline config from agent manifest (/workspace/agent/manifest.json) */
+function loadPipeline(log: HandlerContext['log']): PipelineConfig {
+  const manifestPath = '/workspace/agent/manifest.json';
   try {
-    const teams = fs.readdirSync(teamsDir);
-    for (const team of teams) {
-      const wfPath = path.join(teamsDir, team, 'workflow.json');
-      if (fs.existsSync(wfPath)) {
-        const wf = JSON.parse(fs.readFileSync(wfPath, 'utf8')) as { pipeline?: PipelineConfig };
-        if (wf.pipeline) {
-          log.info({ team, routes: Object.keys(wf.pipeline).length }, 'Loaded pipeline config from workflow.json');
-          return wf.pipeline;
-        }
-      }
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { pipeline?: PipelineConfig };
+    if (manifest.pipeline) {
+      log.info({ routes: Object.keys(manifest.pipeline).length }, 'Loaded pipeline config from manifest');
+      return manifest.pipeline;
     }
   } catch (err) {
-    log.warn({ err }, 'Failed to load pipeline config — no routing for done tickets');
+    log.warn({ err }, 'Failed to read manifest — no pipeline routing');
   }
   return {};
 }
@@ -87,8 +77,7 @@ function getUpdatedAt(t: TicketRow): string {
 
 const handle: Handler = async (payload, ctx) => {
   const { agentId, db, mcp, nc, log } = ctx;
-  const dbPath = process.env.DB_PATH ?? '/workspace/db/nano-agent-team.db';
-  const pipeline = loadPipeline(dbPath, log);
+  const pipeline = loadPipeline(log);
   const js = nc.jetstream();
   let workFound = false;
   let queueSize = 0;
