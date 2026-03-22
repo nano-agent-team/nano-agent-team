@@ -75,6 +75,7 @@ All notable changes to this project will be documented in this file.
 - Store agent assignee as GitHub label instead of GitHub assignees ([`a7cef3b`](https://github.com/nano-agent-team/nano-agent-team/commit/a7cef3b3137244ab55a37d924a6455f0c0496ab0))
 - Make assignee required in ticket_approve MCP tool ([`c0c1b4a`](https://github.com/nano-agent-team/nano-agent-team/commit/c0c1b4ac4768f186dcc9bbeb6d234dad79e856f9))
 - Idea status filter must include issues with status:idea label ([`d083fc7`](https://github.com/nano-agent-team/nano-agent-team/commit/d083fc74760ad848d95447f631d4c6a167503f1c))
+- Status change was overwriting assigned: label in GitHub provider ([`c9e6dc2`](https://github.com/nano-agent-team/nano-agent-team/commit/c9e6dc2ad4c3e870ce78fc4265f22991f72cccec))
 
 ### Documentation
 
@@ -141,6 +142,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`2d28dc3`](https://github.com/nano-agent-team/nano-agent-team/commit/2d28dc3b03e499dfb51a06ea87e34993964cdd70))
 - **ci:** Update CHANGELOG [skip ci] ([`2e5f690`](https://github.com/nano-agent-team/nano-agent-team/commit/2e5f6900a7e893e1c052ca66a36e3aa6c1fc5a5c))
 - **ci:** Update CHANGELOG [skip ci] ([`f4cde55`](https://github.com/nano-agent-team/nano-agent-team/commit/f4cde556fcc4338cdf2ab6e1db1c6c8c85ce1480))
+- **ci:** Update CHANGELOG [skip ci] ([`2ebdf70`](https://github.com/nano-agent-team/nano-agent-team/commit/2ebdf70534cc7b3f0b4cea785c14e480672f1902))
 
 ### Features
 
