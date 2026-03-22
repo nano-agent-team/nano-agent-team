@@ -26,18 +26,19 @@ import {
 // ─── Local status mapper (1:1) ────────────────────────────────────────────────
 
 /**
- * The local DB stores the same values as the abstract model,
- * with "idea" mapping to "new" and "verified" → "done".
+ * The local DB stores the same values as the abstract model (1:1 mapping).
+ * Statuses: idea, waiting, in_progress, done, rejected.
  */
 export class LocalStatusMapper implements StatusMapper<string> {
   toNative(abstract: AbstractStatus): string {
-    if (abstract === 'new') return 'idea';
     return abstract;
   }
 
+  toAbstract(native: string): AbstractStatus {
+    return native as AbstractStatus;
+  }
+
   fromNative(native: string): AbstractStatus {
-    if (native === 'idea') return 'new';
-    if (native === 'epic' || native === 'verified') return 'done';
     return native as AbstractStatus;
   }
 }
@@ -95,7 +96,7 @@ export class LocalTicketProvider implements TicketProvider {
     `).run({
       id,
       title: data.title,
-      status: statusMapper.toNative('new'),
+      status: statusMapper.toNative('idea'),
       priority: data.priority ?? 'MED',
       type: data.type ?? 'task',
       parent_id: data.parentId ?? null,
@@ -121,6 +122,16 @@ export class LocalTicketProvider implements TicketProvider {
     const db = openDb();
     const existing = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id) as DbTicket | undefined;
     if (!existing) throw new Error(`Ticket ${id} not found`);
+
+    // Optimistic lock (GH-103): reject if current status doesn't match expected
+    if (data.expected_status !== undefined) {
+      const expectedNative = statusMapper.toNative(data.expected_status);
+      if (existing.status !== expectedNative) {
+        const err = new Error(`Status conflict: expected '${data.expected_status}' but found '${statusMapper.toAbstract(existing.status)}'`);
+        (err as any).statusCode = 409;
+        throw err;
+      }
+    }
 
     const now = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
     const updates: string[] = ['updated_at = @updated_at'];

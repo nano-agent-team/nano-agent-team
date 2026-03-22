@@ -81,6 +81,8 @@ export interface AgentManifest {
   mcp_config?: string;
   /** Extra tools to allow for this agent (e.g. ["Skill"] for superpowers skills) */
   allowedTools?: string[];
+  /** Handler module name for deterministic agents. Required when kind === 'deterministic'. */
+  handler?: string;
 }
 
 // ─── Workflow Binding ─────────────────────────────────────────────────────────

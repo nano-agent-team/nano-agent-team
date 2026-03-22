@@ -65,7 +65,17 @@ beforeAll(async () => {
     return;
   }
 
-  // 2. Ensure nano-test-agent:latest is in DinD
+  // 2. Ensure DinD (nate container) is available — required for integration tests
+  //    Skip gracefully in dev mode (docker-compose.dev.yml has no DinD)
+  try {
+    execSync('docker exec nate docker version', { stdio: 'ignore', timeout: 5000 });
+  } catch {
+    console.warn('[multi-instance] DinD (nate) not available — integration tests will be skipped (see GH-105)');
+    stackAvailable = false;
+    return;
+  }
+
+  // 3. Ensure nano-test-agent:latest is in DinD
   //    CI pre-builds and imports it; locally we build + load on demand
   try {
     execSync('docker exec nate docker image inspect nano-test-agent:latest', { stdio: 'ignore' });

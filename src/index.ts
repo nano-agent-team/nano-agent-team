@@ -142,7 +142,12 @@ async function main(): Promise<void> {
   logger.info('Stream AGENTS ready');
 
   const configService = new ConfigService(DATA_DIR);
-  const manager = new AgentManager(nc, configService);
+
+  // ── Alarm Clock ───────────────────────────────────────────────────────────
+  const { AlarmClock } = await import('./alarm-clock.js');
+  const alarmClock = new AlarmClock(nc, DATA_DIR);
+
+  const manager = new AgentManager(nc, configService, alarmClock);
 
   // ── Secret store + MCP server registry + MCP manager ────────────────────────
   const secretStore = new SecretStore();
@@ -178,10 +183,6 @@ async function main(): Promise<void> {
   }
 
   ticketRegistry.registerGlobal(ticketProxy);
-
-  // ── Alarm Clock ───────────────────────────────────────────────────────────
-  const { AlarmClock } = await import('./alarm-clock.js');
-  const alarmClock = new AlarmClock(nc, DATA_DIR);
 
   const gatewayOpts: GatewayOptions = {
     dataDir: DATA_DIR,

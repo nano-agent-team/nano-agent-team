@@ -56,7 +56,7 @@ server.tool(
   'tickets_list',
   'List tickets. Use filters to narrow results. Returns id, title, status, priority, assigned_to.',
   {
-    status: z.string().optional().describe('Filter by status: idea|approved|spec_ready|in_progress|review|done|rejected|verified|pending_input'),
+    status: z.string().optional().describe('Filter by status: idea|waiting|in_progress|done|rejected'),
     priority: z.string().optional().describe('Filter by priority: CRITICAL|HIGH|MED|LOW'),
     assigned_to: z.string().optional().describe('Filter by assigned agent id'),
   },
@@ -153,20 +153,22 @@ server.tool(
   'ticket_update',
   'Update a ticket. Can change status, assigned_to, body (tech spec), priority, etc. Status changes are logged in history and trigger pipeline events.',
   {
-    ticket_id: z.string().describe('Ticket ID to update'),
-    status: z.string().optional().describe('New status: idea|approved|spec_ready|in_progress|review|done|rejected|verified|pending_input'),
-    priority: z.string().optional().describe('New priority: CRITICAL|HIGH|MED|LOW'),
-    assigned_to: z.string().optional().describe('New assignee agent id'),
-    body: z.string().optional().describe('New body content (replaces existing)'),
-    title: z.string().optional().describe('New title'),
+    ticket_id:       z.string().describe('Ticket ID to update'),
+    status:          z.string().optional().describe('New status: idea|waiting|in_progress|done|rejected'),
+    priority:        z.string().optional().describe('New priority: CRITICAL|HIGH|MED|LOW'),
+    assigned_to:     z.string().optional().describe('New assignee agent id'),
+    body:            z.string().optional().describe('New body content (replaces existing)'),
+    title:           z.string().optional().describe('New title'),
+    expected_status: z.string().optional().describe('Optimistic lock: only update if current status matches. Returns error on mismatch.'),
   },
-  async ({ ticket_id, status, priority, assigned_to, body, title }) => {
+  async ({ ticket_id, status, priority, assigned_to, body, title, expected_status }) => {
     const patchBody: Record<string, unknown> = { changed_by: AGENT_ID };
     if (status !== undefined) patchBody['status'] = status;
     if (priority !== undefined) patchBody['priority'] = priority;
     if (assigned_to !== undefined) patchBody['assigned_to'] = assigned_to;
     if (body !== undefined) patchBody['body'] = body;
     if (title !== undefined) patchBody['title'] = title;
+    if (expected_status !== undefined) patchBody['expected_status'] = expected_status;
 
     try {
       const res = await fetch(`${API_URL}/api/tickets/${encodeURIComponent(ticket_id)}`, {

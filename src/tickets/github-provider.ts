@@ -36,19 +36,17 @@ export interface GitHubProviderConfig {
 
 interface GitHubNativeStatus {
   state: 'open' | 'closed';
-  label?: string;  // "status:approved", "status:in_progress", ...
+  label?: string;  // "status:idea", "status:waiting", "status:in_progress", ...
 }
 
 const STATUS_LABEL_PREFIX = 'status:';
 
 const ABSTRACT_TO_LABEL: Record<AbstractStatus, string | null> = {
-  new:           null,            // open issues without a status label = "new"
-  approved:      'status:approved',
-  in_progress:   'status:in_progress',
-  review:        'status:review',
-  done:          null,           // closed, no extra label
-  rejected:      'status:rejected',
-  pending_input: 'status:pending-input',
+  idea:        'status:idea',
+  waiting:     'status:waiting',
+  in_progress: 'status:in_progress',
+  done:        null,           // closed, no extra label
+  rejected:    'status:rejected',
 };
 
 export class GitHubStatusMapper implements StatusMapper<GitHubNativeStatus> {
@@ -62,15 +60,13 @@ export class GitHubStatusMapper implements StatusMapper<GitHubNativeStatus> {
     if (native.state === 'closed') {
       return native.label === 'status:rejected' ? 'rejected' : 'done';
     }
-    if (!native.label) return 'new';
+    if (!native.label) return 'idea';
     const map: Record<string, AbstractStatus> = {
-      'status:new':           'new',
-      'status:approved':      'approved',
-      'status:in_progress':   'in_progress',
-      'status:review':        'review',
-      'status:pending-input': 'pending_input',
+      'status:idea':        'idea',
+      'status:waiting':     'waiting',
+      'status:in_progress': 'in_progress',
     };
-    return map[native.label] ?? 'new';
+    return map[native.label] ?? 'idea';
   }
 }
 
@@ -226,6 +222,18 @@ export class GitHubIssuesProvider implements TicketProvider {
     const number = this.parseId(id);
     const existing = await this.getTicket(id);
     if (!existing) throw new Error(`Ticket ${id} not found`);
+
+    // Optimistic lock: check expected_status before applying update.
+    // NOTE: GitHub Issues API does not support atomic conditional updates,
+    // so there is a TOCTOU race between the read above and the write below.
+    // This is best-effort conflict detection, not a true atomic lock.
+    if (data.expected_status !== undefined && existing.status !== data.expected_status) {
+      const err = new Error(
+        `Ticket ${id} status conflict: expected '${data.expected_status}', got '${existing.status}'`
+      );
+      (err as NodeJS.ErrnoException & { statusCode?: number }).statusCode = 409;
+      throw err;
+    }
 
     const patch: Record<string, unknown> = {};
 

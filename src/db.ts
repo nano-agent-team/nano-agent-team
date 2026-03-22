@@ -16,12 +16,117 @@ import { logger } from './logger.js';
 
 let db: Database.Database;
 
+/**
+ * Migrate tickets table from the old 9-status schema to the new 5-status model.
+ * Idempotent — skips if the table already has the new schema (no 'approved' column value in CHECK).
+ *
+ * Old → New status mapping:
+ *   approved      → waiting
+ *   spec_ready    → waiting
+ *   review        → waiting
+ *   verified      → done
+ *   pending_input → waiting
+ *   epic          → idea
+ *   new           → idea
+ *   (rest stays)
+ */
+function migrateStatuses(database: Database.Database): void {
+  // Check whether the old schema is still in place by inspecting the CREATE TABLE statement
+  const tableInfo = database
+    .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='tickets'`)
+    .get() as { sql: string } | undefined;
+
+  if (!tableInfo) {
+    // Table doesn't exist yet — nothing to migrate
+    return;
+  }
+
+  // If the old CHECK constraint with 'approved' is not present, migration already done
+  if (!tableInfo.sql.includes("'approved'")) {
+    return;
+  }
+
+  logger.info('Migrating tickets table to 5-state status model...');
+
+  // Disable FK checks during table recreation (ticket_comments, ticket_history reference tickets)
+  database.pragma('foreign_keys = OFF');
+
+  database.transaction(() => {
+    // 1. Create new table with updated CHECK constraint
+    database.exec(`
+      CREATE TABLE tickets_new (
+        id          TEXT PRIMARY KEY,
+        title       TEXT NOT NULL,
+        status      TEXT NOT NULL CHECK(status IN ('idea','waiting','in_progress','done','rejected')),
+        priority    TEXT NOT NULL DEFAULT 'MED' CHECK(priority IN ('CRITICAL','HIGH','MED','LOW')),
+        type        TEXT NOT NULL DEFAULT 'task' CHECK(type IN ('epic','story','task','bug','idea')),
+        parent_id   TEXT REFERENCES tickets(id),
+        blocked_by  TEXT,
+        author      TEXT,
+        assigned_to TEXT,
+        labels      TEXT,
+        body        TEXT,
+        model_hint  TEXT,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+
+    // 2. Copy data with status mapping
+    database.exec(`
+      INSERT INTO tickets_new
+        SELECT
+          id,
+          title,
+          CASE status
+            WHEN 'approved'      THEN 'waiting'
+            WHEN 'spec_ready'    THEN 'waiting'
+            WHEN 'review'        THEN 'waiting'
+            WHEN 'verified'      THEN 'done'
+            WHEN 'pending_input' THEN 'waiting'
+            WHEN 'epic'          THEN 'idea'
+            WHEN 'new'           THEN 'idea'
+            ELSE status
+          END,
+          priority,
+          type,
+          parent_id,
+          blocked_by,
+          author,
+          assigned_to,
+          labels,
+          body,
+          model_hint,
+          created_at,
+          updated_at
+        FROM tickets
+    `);
+
+    // 3. Drop old table and rename new one
+    database.exec(`DROP TABLE tickets`);
+    database.exec(`ALTER TABLE tickets_new RENAME TO tickets`);
+
+    // 4. Recreate indexes
+    database.exec(`
+      CREATE INDEX IF NOT EXISTS idx_tickets_status   ON tickets(status);
+      CREATE INDEX IF NOT EXISTS idx_tickets_assigned ON tickets(assigned_to);
+      CREATE INDEX IF NOT EXISTS idx_tickets_parent   ON tickets(parent_id);
+      CREATE INDEX IF NOT EXISTS idx_tickets_type     ON tickets(type);
+    `);
+  })();
+
+  // Re-enable FK checks
+  database.pragma('foreign_keys = ON');
+
+  logger.info('Tickets table migration to 5-state model complete.');
+}
+
 function createSchema(database: Database.Database): void {
   database.exec(`
     CREATE TABLE IF NOT EXISTS tickets (
       id          TEXT PRIMARY KEY,
       title       TEXT NOT NULL,
-      status      TEXT NOT NULL CHECK(status IN ('idea','approved','in_progress','review','done','rejected','epic','verified','pending_input')),
+      status      TEXT NOT NULL CHECK(status IN ('idea','waiting','in_progress','done','rejected')),
       priority    TEXT NOT NULL DEFAULT 'MED' CHECK(priority IN ('CRITICAL','HIGH','MED','LOW')),
       type        TEXT NOT NULL DEFAULT 'task' CHECK(type IN ('epic','story','task','bug','idea')),
       parent_id   TEXT REFERENCES tickets(id),
@@ -75,6 +180,7 @@ export function openDb(): Database.Database {
   fs.mkdirSync(dir, { recursive: true });
 
   db = new Database(DB_PATH);
+  migrateStatuses(db);
   createSchema(db);
 
   logger.info({ path: DB_PATH }, 'SQLite database opened');
@@ -88,8 +194,11 @@ export function openDb(): Database.Database {
  */
 export function nextTicketId(): string {
   const database = openDb();
-  const row = database.prepare('SELECT COUNT(*) as cnt FROM tickets').get() as { cnt: number };
-  const num = (row.cnt + 1).toString().padStart(4, '0');
+  // Use MAX to find highest TICK-NNNN number, not COUNT (which breaks when non-TICK IDs exist)
+  const row = database.prepare(
+    "SELECT MAX(CAST(SUBSTR(id, 6) AS INTEGER)) as maxNum FROM tickets WHERE id LIKE 'TICK-%'"
+  ).get() as { maxNum: number | null };
+  const num = ((row.maxNum ?? 0) + 1).toString().padStart(4, '0');
   return `TICK-${num}`;
 }
 
@@ -97,14 +206,10 @@ export function nextTicketId(): string {
 
 export type TicketStatus =
   | 'idea'
-  | 'approved'
+  | 'waiting'
   | 'in_progress'
-  | 'review'
   | 'done'
-  | 'rejected'
-  | 'epic'
-  | 'verified'
-  | 'pending_input';
+  | 'rejected';
 
 export type TicketPriority = 'CRITICAL' | 'HIGH' | 'MED' | 'LOW';
 export type TicketType = 'epic' | 'story' | 'task' | 'bug' | 'idea';
