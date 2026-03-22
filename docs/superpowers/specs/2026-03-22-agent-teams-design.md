@@ -17,7 +17,7 @@ Enable all nano-agent-team agents to use Claude Code's native agent teams featur
 - All agents can use agent teams when the LLM determines parallel work adds value
 - Teammates inherit the same MCP servers (context MCP, tickets MCP, obsidian, etc.) as the lead
 - No changes to the NATS pipeline, ticket lifecycle, or after-work hook
-- Minimal changes to existing code — env vars + settings.json injection + Dockerfile
+- Minimal changes to existing code — env vars + settings.json injection + allowedTools
 
 ---
 
@@ -40,6 +40,8 @@ Agent teams are a Claude Code feature that lets one session (the **team lead**) 
 
 **Token cost:** Scales linearly with teammate count (~3x for a 3-teammate team). The LLM decides when the benefit justifies the cost.
 
+**Team state storage:** Team config (`~/.claude/teams/`) and task list (`~/.claude/tasks/`) are stored in the container's home dir. For ephemeral agents this is per-container and is cleaned up naturally on container exit. For persistent agents it persists across messages but is lost on container restart (acceptable — team state is transient working memory, not source of truth).
+
 ---
 
 ## Architecture
@@ -50,11 +52,11 @@ Agent teams are a Claude Code feature that lets one session (the **team lead**) 
 NATS/EPHEMERAL → agent-runner
   │
   ├─ Write /workspace/.claude/settings.json
-  │   (MCP servers + agent teams env vars)
+  │   (MCP servers so teammates can inherit them)
   │
   └─ query() → Lead Claude Code session
        │
-       ├─ Reads CLAUDE.md + .claude/settings.json
+       ├─ Reads CLAUDE.md + .claude/settings.json (project scope)
        ├─ Receives ticket as prompt
        │
        ├─ [simple ticket] → works alone → result
@@ -62,7 +64,7 @@ NATS/EPHEMERAL → agent-runner
        └─ [complex ticket] → spawns team
             TeamCreate("ticket-{id}")
             TaskCreate × N  (each with explicit file ownership)
-            Task × N        (spawn teammates)
+            Task × N        (spawn teammates in-process)
             teammates work in parallel on /workspace
             teammates mark tasks completed
             lead synthesises → TeamDelete
@@ -71,48 +73,63 @@ NATS/EPHEMERAL → agent-runner
   └─ after-work hook: ticket → done  (unchanged)
 ```
 
-### MCP Inheritance Problem and Solution
+### MCP Inheritance: Problem and Solution
 
 In nano-agent-team, MCP servers are passed programmatically via `sdkOptions.mcpServers` in `query()`. Teammates are separate Claude Code processes — they cannot access runtime objects from their parent. They load MCP config from files.
 
-**Solution:** agent-runner writes `.claude/settings.json` to the workspace before `query()`. Teammates spawned in the same `cwd` load this file automatically and inherit all MCP servers.
+**Solution:** agent-runner writes `.claude/settings.json` to the workspace before `query()`. Teammates spawned in the same `cwd` load this file automatically (project-scope settings) and inherit all MCP servers.
+
+**Proxy mode interaction:** In proxy mode, the host's `~/.claude/settings.json` is bind-mounted as user-scope settings at `/home/agent/.claude/settings.json`. The project-scope file written to `/workspace/.claude/settings.json` is a different file at a different path. Claude Code merges both — project-scope `mcpServers` and user-scope `mcpServers` — with no collision. There is no conflict between the two files.
 
 ---
 
 ## Changes
 
-### 1. `agent-manager.ts` — both `env =` blocks
+### 1. `src/agent-manager.ts` — `buildAgentEnvAndBinds()` (line 1012, single function)
 
-Add to all agents (both start path and rollover/restart path):
-
-```
-CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
-CLAUDE_CODE_TEAMMATE_MODE=in-process
-```
-
-> Both env blocks must be updated — the same two-block pattern as `HOST_DATA_DIR` and `HOST_OBSIDIAN_VAULT_PATH`. Missing one block is a known silent failure mode.
-
-### 2. `container/agent-runner/src/providers/claude.ts`
-
-Before calling `query()`, write the settings file so teammates can inherit MCP config:
+Add to the `env` array inside `buildAgentEnvAndBinds()` (function signature at line 933, env array starts at line 1012) — this single function is called by all three agent start paths (persistent line 310, ephemeral line 671, rollover line 839). No other location needs updating.
 
 ```ts
-// Write .claude/settings.json so spawned teammates inherit MCP servers
+// Agent teams: enable native Claude Code multi-agent coordination
+'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
+```
+
+Add alongside the existing `CONTEXT_MODE` and `PRELOAD_SKILLS` conditional vars (lines 1029–1031). This var is unconditional (all agents get it) — the LLM decides when to use teams.
+
+> **Note:** `CLAUDE_CODE_TEAMMATE_MODE` is NOT a real env var. In-process mode is configured via `teammateMode` in `settings.json` (see Step 2 below). The default "auto" mode already uses in-process when tmux is not available, so this is handled by the settings.json write.
+
+> **Note:** Only one change needed — `buildAgentEnvAndBinds()` is the single source of env vars for all agent lifecycle paths. The historical "dual env block" warning in other specs does not apply here.
+
+### 2. `container/agent-runner/src/providers/claude.ts` — before `query()`
+
+Write project-scope settings so spawned teammates inherit MCP servers. Insert before the `const q = query(...)` call:
+
+```ts
+// Write .claude/settings.json so spawned teammates inherit MCP server config.
+// Teammates load project-scope settings from cwd automatically; they cannot
+// access the parent's sdkOptions.mcpServers at runtime.
+// Overwrite is intentional — MCP config is derived from env vars which don't
+// change between query() calls in the same container lifecycle.
 const settingsDir = path.join(options.cwd, '.claude');
 const settingsPath = path.join(settingsDir, 'settings.json');
 fs.mkdirSync(settingsDir, { recursive: true });
 fs.writeFileSync(settingsPath, JSON.stringify({
   mcpServers: options.mcpServers ?? {},
-  env: {
-    CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: '1',
-    CLAUDE_CODE_TEAMMATE_MODE: 'in-process',
-  },
+  teammateMode: 'in-process',
 }, null, 2), 'utf8');
 ```
 
-### 3. `container/agent-runner/src/index.ts` — `allowedTools`
+> `teammateMode: "in-process"` is written here (not as an env var) — the correct way to configure this is via `settings.json` or `--teammate-mode` CLI flag. The default "auto" mode already falls back to in-process when tmux is unavailable, but explicit configuration is safer in containers.
 
-Add agent team tools to the default tool list in both the NATS loop path and the ephemeral path:
+> The `env:` key is NOT written to settings.json — Claude Code does not honour an `env` field in project settings.json. The agent teams feature is activated by the process env var injected by agent-manager (Step 1 above).
+
+> `options.cwd` is `/workspace` for both ephemeral (line 235) and persistent (line 570) agents — confirmed. The settings file lands at `/workspace/.claude/settings.json` in all cases.
+
+> The `/workspace/.claude/` directory is created at runtime by `mkdirSync({ recursive: true })`. No Dockerfile change needed.
+
+### 3. `container/agent-runner/src/providers/claude.ts` — `defaultTools`
+
+Add agent team tools to `defaultTools` (line 23 in `claude.ts`, not in `index.ts`):
 
 ```ts
 const AGENT_TEAM_TOOLS = [
@@ -127,15 +144,7 @@ const defaultTools = [
 ];
 ```
 
-### 4. `container/Dockerfile`
-
-Create workspace directories for team state:
-
-```dockerfile
-RUN mkdir -p /workspace/teams /workspace/tasks
-```
-
-Team state (`~/.claude/teams/` and `~/.claude/tasks/`) is redirected to `/workspace/teams/` and `/workspace/tasks/` via env vars `CLAUDE_TEAMS_DIR` and `CLAUDE_TASKS_DIR`. This makes team state persist across session restarts (same bind-mount as `sessions/session_id`).
+This single change covers both the NATS loop path and the ephemeral path since both call `provider.run()` which delegates to `claude.ts`.
 
 ---
 
@@ -150,7 +159,7 @@ Spawn a teammate with prompt: "You are a test writer. Your only job is to write
 unit tests for src/auth/login.ts. Do not modify any other files."
 ```
 
-No changes to existing `CLAUDE.md` files are required. The spawn prompt takes precedence over the shared identity.
+No changes to existing `CLAUDE.md` files are required. The spawn prompt takes precedence over the shared identity for the teammate's specific task.
 
 ---
 
@@ -176,6 +185,7 @@ Do NOT modify any other files. Do NOT write tests.
 - **Not a change to the after-work hook** — teammates complete inside `query()`, hook fires normally after
 - **Not forced** — agents only use teams when the LLM decides the complexity warrants it
 - **Not per-manifest opt-in** — feature is available to all agents; LLM decides when to use it
+- **Not persistent team state** — team dirs in `~/.claude/teams/` are transient; ephemeral containers clean up on exit, persistent containers lose state on restart (acceptable)
 
 ---
 
@@ -183,9 +193,9 @@ Do NOT modify any other files. Do NOT write tests.
 
 | Dependency | Status | Notes |
 |-----------|--------|-------|
-| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` feature | Available in Claude Code v2.1.32+ | Verify version in container |
-| Both `env =` blocks in `agent-manager.ts` | Existing pattern | See `Feedback/agent-manager-dual-env-blocks.md` |
-| `/workspace` bind mount | Existing | Team state dirs added to existing mount |
+| `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` feature | Available — container pins `@anthropic-ai/claude-code@2.1.76` (minimum is 2.1.32) | No version change needed |
+| `buildAgentEnvAndBinds()` in `agent-manager.ts` | Existing single function (signature line 933, env array line 1012) | Called by all three agent start paths |
+| `/workspace` bind mount | Existing | `.claude/settings.json` written here at runtime |
 
 ---
 
@@ -193,7 +203,8 @@ Do NOT modify any other files. Do NOT write tests.
 
 | Risk | Mitigation |
 |------|-----------|
-| LLM over-uses teams on simple tickets | Agents use better/larger models (sonnet+); haiku agents unlikely to benefit |
-| Teammates write to same files | Lead's spawn prompts must include explicit file ownership |
-| `.claude/settings.json` overwritten by other tooling | Write only before `query()`, not at startup; use merge if file exists |
-| Team state accumulates if TeamDelete is not called | Workspace is recreated per ephemeral ticket — stale state auto-cleared |
+| LLM over-uses teams on simple tickets | Sonnet+ models are self-regulating; haiku agents unlikely to use teams at all |
+| Teammates write to same files | Lead's spawn prompts must include explicit file ownership per task |
+| settings.json overwrite between query() calls | Overwrite is safe — MCP config is derived from env vars that don't change mid-lifecycle |
+| Proxy mode settings.json conflict | No conflict: proxy mounts user-scope (`~/.claude/settings.json`), we write project-scope (`/workspace/.claude/settings.json`); Claude Code merges both |
+| Team state lost on persistent agent restart | Acceptable — teams are transient working memory, not source of truth; ticket system is authoritative |
