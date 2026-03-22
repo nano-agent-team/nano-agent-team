@@ -277,14 +277,27 @@ export class GitHubIssuesProvider implements TicketProvider {
     if (filters.status) {
       const native = this.statusMapper.toNative(filters.status);
       params.set('state', native.state);
-      if (native.label) params.set('labels', native.label);
+      // For 'idea' status: don't filter by label on GitHub API —
+      // issues without any status:* label are implicitly 'idea'.
+      // Filter client-side instead (exclude issues that have other status labels).
+      if (native.label && filters.status !== 'idea') {
+        params.set('labels', native.label);
+      }
     } else {
       params.set('state', 'all');
     }
 
     if (filters.assignee) params.set('assignee', filters.assignee);
 
-    const issues = await this.ghFetch<GHIssue[]>(`/issues?${params}`);
+    let issues = await this.ghFetch<GHIssue[]>(`/issues?${params}`);
+
+    // Client-side filter for 'idea' status: exclude issues that have explicit status labels
+    if (filters.status === 'idea') {
+      issues = issues.filter(i =>
+        !i.labels.some(l => l.name.startsWith(STATUS_LABEL_PREFIX)),
+      );
+    }
+
     return issues.map(i => this.issueToTicket(i));
   }
 
