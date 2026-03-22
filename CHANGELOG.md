@@ -101,6 +101,9 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`8d67242`](https://github.com/nano-agent-team/nano-agent-team/commit/8d672420c414f4f820aa5bafd686a0115171ffb6))
 - **ci:** Update CHANGELOG [skip ci] ([`89091a8`](https://github.com/nano-agent-team/nano-agent-team/commit/89091a80dde5874635caa6b02447095804ac2276))
 - **ci:** Update CHANGELOG [skip ci] ([`afe9717`](https://github.com/nano-agent-team/nano-agent-team/commit/afe9717bfe5ee73514ecdbd74103529033d83a84))
+- **ci:** Update CHANGELOG [skip ci] ([`a196c64`](https://github.com/nano-agent-team/nano-agent-team/commit/a196c649dc10780a89d8a35bd88349b80aedf5b8))
+- Add workspace provider & deployment pipeline design spec ([`32777ac`](https://github.com/nano-agent-team/nano-agent-team/commit/32777ac5d80e73126c48e101d3ef7ddfa0de972c))
+- Add workspace provider implementation plan (14 tasks) ([`0d45923`](https://github.com/nano-agent-team/nano-agent-team/commit/0d45923dc86d64b63f6b4ecd3a1795e1d36d7147))
 
 ### Features
 
