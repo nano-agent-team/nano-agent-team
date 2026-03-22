@@ -205,6 +205,8 @@ docker compose down && docker compose up --build -d
 
 `docker compose up --build` restarts the control plane but does NOT restart already-running persistent agent containers. The new env var is injected at container start by `buildAgentEnvAndBinds()` — existing containers have the old env. Restart each persistent agent:
 
+> Port: production stack = 3001, dev stack (`docker-compose.dev.yml`) = 3002. Adjust if running dev.
+
 ```bash
 curl -s -X POST http://localhost:3001/api/agents/sd-pm/restart
 curl -s -X POST http://localhost:3001/api/agents/sd-architect/restart
@@ -224,13 +226,21 @@ Expected output:
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 ```
 
-- [ ] **Step 5: Verify settings.json write in ephemeral agent**
+- [ ] **Step 5: Send a test ticket to trigger an ephemeral agent**
 
-Send a test ticket through the pipeline and check the resulting workspace:
+The settings.json is written inside `query()` — it only appears after an ephemeral task runs. Send a minimal test ticket via the tickets API:
+
+```bash
+curl -s -X POST http://localhost:3001/api/tickets \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Agent teams smoke test","body":"Just say hello and exit.","labels":["pipeline-ready"]}' | jq '.id'
+```
+
+Wait ~30s for the pipeline to pick it up, then check the created workspace:
 
 ```bash
 ls /Users/rpridal/workspace/nano-agent-team-project/nano-agent-team/data/workspaces/active/
-# pick a ws-* dir and use the full absolute path:
+# pick the most recently created ws-* dir:
 cat /Users/rpridal/workspace/nano-agent-team-project/nano-agent-team/data/workspaces/active/ws-<id>/.claude/settings.json
 ```
 
