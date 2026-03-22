@@ -45,7 +45,7 @@ async function callMcpTool(
 }
 
 const handle: Handler = async (payload, ctx) => {
-  const { db, mcp, nc, log } = ctx;
+  const { agentId, db, mcp, nc, log } = ctx;
   const js = nc.jetstream();
   let workFound = false;
   let queueSize = 0;
@@ -177,6 +177,7 @@ const handle: Handler = async (payload, ctx) => {
 
   try {
     await callMcpTool(mcp, 'alarm_set', {
+      agent_id: agentId,
       delay_seconds: interval,
       payload: { type: 'poll' },
     });
