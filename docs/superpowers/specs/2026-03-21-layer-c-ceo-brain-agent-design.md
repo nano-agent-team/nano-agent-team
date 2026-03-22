@@ -1,8 +1,10 @@
 # Layer C — CEO/Brain Agent
 
 **Date:** 2026-03-21
-**Status:** Draft
-**GH Issue:** TBD
+**Status:** Superseded by `2026-03-22-consciousness-architecture-design.md` (GH #102)
+**GH Issue:** N/A
+
+> **Note:** The consciousness architecture spec (GH #102) covers all responsibilities of this agent in a more complete form: always-on instead of weekly cron, conscience as a dedicated values-gate agent instead of the 2-approval adaptive autonomy rule, direct user channel instead of Foreman-as-intermediary, and idea lifecycle tracking in Obsidian instead of pending.md. GH #86 (`send_foreman_message`) and GH #87 (`list_agents`) remain valid as separate MCP tool implementation tickets — they are needed by the strategist agent.
 
 ---
 

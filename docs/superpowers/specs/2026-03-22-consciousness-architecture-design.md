@@ -82,6 +82,7 @@ Both must be added to the AGENTS stream alongside `soul.>`.
 **What it does:**
 - Wakes up periodically (AlarmClock or fallback polling) and on NATS kicks
 - Reads inputs: creative agents output, research agents, Obsidian memory, daily system context, user messages
+- Reads **Layer A signal files** from `/vault/Signals/YYYY-MM-DD-{topic}.md` — written by the Memory Agent when it detects recurring patterns. On each wakeup, consciousness processes unprocessed signal files (those without `processed: true` frontmatter) and marks them processed after evaluation. This is the handoff point between Layer A (memory/patterns) and the soul layer (strategic synthesis).
 - Synthesizes inputs into ideas — each idea written as a file in Obsidian before sending any NATS message
 - Sends kick to conscience for evaluation (never sends idea content over NATS — only pointer)
 - Learns from conscience rejections and user feedback — updates Obsidian accordingly
@@ -300,3 +301,4 @@ AlarmClock interval adapts to queue depth — busy queue → short interval, idl
 | Obsidian vault mounted in agent containers | Existing (`HOST_OBSIDIAN_VAULT_PATH`) | |
 | Hub team: `consciousness-layer` with startup ordering | New | conscience starts before consciousness |
 | Pipeline agent polling loop adoption | New | Affects all sd-* agents; additive to existing JetStream consumers |
+| Layer A signal files (`/vault/Signals/`) | Spec done (Layer A), not implemented | Memory Agent writes signals; consciousness reads + marks processed |
