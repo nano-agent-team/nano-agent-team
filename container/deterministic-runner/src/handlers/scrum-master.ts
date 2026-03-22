@@ -40,19 +40,29 @@ const MAX_ORPHAN_RECOVERIES = 3;
 type PipelineRoute = { next: string | null; retry?: string };
 type PipelineConfig = Record<string, PipelineRoute>;
 
-/** Load pipeline config from agent manifest (/workspace/agent/manifest.json) */
-function loadPipeline(log: HandlerContext['log']): PipelineConfig {
+type RoutesConfig = Record<string, string>; // sourceTopic → targetAgentId
+
+interface ManifestConfig {
+  pipeline?: PipelineConfig;
+  routes?: RoutesConfig;
+}
+
+let _manifestCache: ManifestConfig | null = null;
+
+function loadManifest(log: HandlerContext['log']): ManifestConfig {
+  if (_manifestCache) return _manifestCache;
   const manifestPath = '/workspace/agent/manifest.json';
   try {
-    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as { pipeline?: PipelineConfig };
-    if (manifest.pipeline) {
-      log.info({ routes: Object.keys(manifest.pipeline).length }, 'Loaded pipeline config from manifest');
-      return manifest.pipeline;
-    }
+    _manifestCache = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as ManifestConfig;
+    log.info({
+      pipelineRoutes: Object.keys(_manifestCache.pipeline ?? {}).length,
+      eventRoutes: Object.keys(_manifestCache.routes ?? {}).length,
+    }, 'Loaded config from manifest');
   } catch (err) {
-    log.warn({ err }, 'Failed to read manifest — no pipeline routing');
+    log.warn({ err }, 'Failed to read manifest');
+    _manifestCache = {};
   }
-  return {};
+  return _manifestCache;
 }
 
 async function callMcpTool(
@@ -77,8 +87,25 @@ function getUpdatedAt(t: TicketRow): string {
 
 const handle: Handler = async (payload, ctx) => {
   const { agentId, db, mcp, nc, log } = ctx;
-  const pipeline = loadPipeline(log);
   const js = nc.jetstream();
+  const manifest = loadManifest(log);
+  const pipeline = manifest.pipeline ?? {};
+  const routes = manifest.routes ?? {};
+
+  // ── 0. Route forwarding (non-alarm messages) ─────────────────────
+  const incomingSubject = (payload as Record<string, unknown>).__subject as string | undefined;
+  if (incomingSubject && routes[incomingSubject]) {
+    const target = routes[incomingSubject];
+    try {
+      const forwardPayload = { ...(payload as Record<string, unknown>) };
+      delete forwardPayload.__subject;
+      await js.publish(`agent.${target}.task`, codec.encode(JSON.stringify(forwardPayload)));
+      log.info({ from: incomingSubject, to: target }, 'Route: forwarded message');
+    } catch (err) {
+      log.error({ err, from: incomingSubject, to: target }, 'Route: forward failed');
+    }
+    return;
+  }
   let workFound = false;
   let queueSize = 0;
 

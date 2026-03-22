@@ -118,6 +118,10 @@ async function main(): Promise<void> {
     let payload: unknown;
     try {
       payload = JSON.parse(codec.decode(msg.data));
+      // Inject original NATS subject so handler can do route-based forwarding
+      if (payload && typeof payload === 'object') {
+        (payload as Record<string, unknown>).__subject = msg.subject;
+      }
     } catch {
       log.warn({ subject: msg.subject }, 'Non-JSON message — skipping');
       msg.ack();
