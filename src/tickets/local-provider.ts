@@ -73,6 +73,7 @@ function dbCommentToComment(row: DbComment): TicketComment {
     ticketId: row.ticket_id,
     author: row.author,
     body: row.body,
+    ...((row as unknown as { verdict?: string }).verdict ? { verdict: (row as unknown as { verdict: string }).verdict as TicketComment['verdict'] } : {}),
     createdAt: row.created_at,
   };
 }
@@ -182,13 +183,13 @@ export class LocalTicketProvider implements TicketProvider {
     return (db.prepare(sql).all(...params) as DbTicket[]).map(dbToTicket);
   }
 
-  async addComment(ticketId: string, body: string, author: string): Promise<TicketComment> {
+  async addComment(ticketId: string, body: string, author: string, verdict?: string): Promise<TicketComment> {
     const db = openDb();
     const now = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
     const result = db.prepare(`
-      INSERT INTO ticket_comments (ticket_id, author, body, created_at)
-      VALUES (?, ?, ?, ?)
-    `).run(ticketId, author, body, now);
+      INSERT INTO ticket_comments (ticket_id, author, body, verdict, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(ticketId, author, body, verdict ?? null, now);
 
     return dbCommentToComment(
       db.prepare('SELECT * FROM ticket_comments WHERE id = ?').get(result.lastInsertRowid) as DbComment,

@@ -93,8 +93,8 @@ export class TicketProxy implements TicketProvider {
     return results.flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
   }
 
-  async addComment(ticketId: string, body: string, author: string): Promise<TicketComment> {
-    return this.route(ticketId).addComment(ticketId, body, author);
+  async addComment(ticketId: string, body: string, author: string, verdict?: string): Promise<TicketComment> {
+    return this.route(ticketId).addComment(ticketId, body, author, verdict);
   }
 
   async getComments(ticketId: string): Promise<TicketComment[]> {

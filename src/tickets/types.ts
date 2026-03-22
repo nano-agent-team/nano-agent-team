@@ -37,11 +37,14 @@ export interface Ticket {
   updatedAt: string;
 }
 
+export type CommentVerdict = 'approved' | 'rejected' | 'rework';
+
 export interface TicketComment {
   id: string;
   ticketId: string;
   author: string;
   body: string;
+  verdict?: CommentVerdict;
   createdAt: string;
 }
 

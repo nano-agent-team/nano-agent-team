@@ -35,7 +35,7 @@ export interface TicketProvider {
   getTicket(id: string): Promise<Ticket | null>;
   updateTicket(id: string, data: UpdateTicketData, changedBy?: string): Promise<Ticket>;
   listTickets(filters?: TicketFilters): Promise<Ticket[]>;
-  addComment(ticketId: string, body: string, author: string): Promise<TicketComment>;
+  addComment(ticketId: string, body: string, author: string, verdict?: string): Promise<TicketComment>;
   getComments(ticketId: string): Promise<TicketComment[]>;
 
   /** Optional: some providers support hard deletion (e.g. close a GitHub issue) */

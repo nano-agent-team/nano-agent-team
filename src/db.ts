@@ -160,10 +160,20 @@ function createSchema(database: Database.Database): void {
       ticket_id   TEXT NOT NULL REFERENCES tickets(id),
       author      TEXT NOT NULL,
       body        TEXT NOT NULL,
+      verdict     TEXT CHECK(verdict IN ('approved','rejected','rework') OR verdict IS NULL),
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
     CREATE INDEX IF NOT EXISTS idx_comments_ticket ON ticket_comments(ticket_id);
   `);
+
+  // Migration: add verdict column to ticket_comments if missing
+  try {
+    const cols = database.pragma('table_info(ticket_comments)') as Array<{ name: string }>;
+    if (!cols.some(c => c.name === 'verdict')) {
+      database.exec("ALTER TABLE ticket_comments ADD COLUMN verdict TEXT CHECK(verdict IN ('approved','rejected','rework') OR verdict IS NULL)");
+      logger.info('Added verdict column to ticket_comments');
+    }
+  } catch { /* table may not exist yet */ }
 
   // Enable WAL mode for concurrent access
   try {

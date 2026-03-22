@@ -336,14 +336,17 @@ export class GitHubIssuesProvider implements TicketProvider {
     return issues.map(i => this.issueToTicket(i));
   }
 
-  async addComment(ticketId: string, body: string, _author: string): Promise<TicketComment> {
+  async addComment(ticketId: string, body: string, _author: string, verdict?: string): Promise<TicketComment> {
     const number = this.parseId(ticketId);
-    const comment = await this.ghFetch<GHComment>(`/issues/${number}/comments`, 'POST', { body });
+    // Embed verdict in comment body as metadata (GitHub has no custom fields on comments)
+    const fullBody = verdict ? `<!-- verdict:${verdict} -->\n${body}` : body;
+    const comment = await this.ghFetch<GHComment>(`/issues/${number}/comments`, 'POST', { body: fullBody });
     return {
       id: String(comment.id),
       ticketId,
       author: comment.user?.login ?? _author,
       body: comment.body,
+      verdict: verdict as TicketComment['verdict'],
       createdAt: comment.created_at,
     };
   }

@@ -135,8 +135,8 @@ export class TicketRegistry {
     return this.getProvider(teamId).listTickets(filters);
   }
 
-  async addComment(ticketId: string, body: string, author: string, teamId?: string): Promise<TicketComment> {
-    return this.getProvider(teamId).addComment(ticketId, body, author);
+  async addComment(ticketId: string, body: string, author: string, teamId?: string, verdict?: string): Promise<TicketComment> {
+    return this.getProvider(teamId).addComment(ticketId, body, author, verdict);
   }
 
   async getComments(ticketId: string, teamId?: string): Promise<TicketComment[]> {
