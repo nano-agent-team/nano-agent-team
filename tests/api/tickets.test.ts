@@ -18,7 +18,7 @@ describe('B1 — POST /api/tickets (vytvoření)', () => {
     const body = await res.json() as Record<string, unknown>;
     expect(body.id).toMatch(/^TICK-\d{4}$/);
     expect(body.title).toBe('Test ticket B1');
-    expect(body.status).toBe('new');
+    expect(body.status).toBe('idea');
     expect(body.priority).toBe('HIGH');
     expect(body.createdAt ?? body.created_at).toBeDefined();
     ticketId = body.id as string;
@@ -74,44 +74,53 @@ describe('B3 — PATCH /api/tickets/:id (update statusu)', () => {
     ticketId = body.id;
   });
 
-  test('změní status na approved', async () => {
+  test('změní status na waiting', async () => {
     const res = await fetch(`${BASE}/api/tickets/${ticketId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'approved', changed_by: 'test' }),
+      body: JSON.stringify({ status: 'waiting', changed_by: 'test' }),
     });
     expect(res.status).toBe(200);
     const body = await res.json() as { status: string };
-    expect(body.status).toBe('approved');
+    expect(body.status).toBe('waiting');
   });
 
   test('vrátí 400 pro neplatný status', async () => {
     const res = await fetch(`${BASE}/api/tickets/${ticketId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'invalid_status' }),
+      body: JSON.stringify({ status: 'approved' }),  // 'approved' no longer valid
     });
     expect(res.status).toBe(400);
   });
 });
 
 describe('B4 — GET /api/tickets (seznam s filtrem)', () => {
+  let waitingTicketId: string;
+
   beforeAll(async () => {
-    // Vytvoř ticket se statusem approved
-    await fetch(`${BASE}/api/tickets`, {
+    // Vytvoř ticket a přesuň ho do stavu waiting
+    const res = await fetch(`${BASE}/api/tickets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Filtered ticket B4', status: 'approved' }),
+      body: JSON.stringify({ title: 'Filtered ticket B4' }),
+    });
+    const body = await res.json() as { id: string };
+    waitingTicketId = body.id;
+    await fetch(`${BASE}/api/tickets/${waitingTicketId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'waiting' }),
     });
   });
 
   test('filtruje podle statusu', async () => {
-    const res = await fetch(`${BASE}/api/tickets?status=approved`);
+    const res = await fetch(`${BASE}/api/tickets?status=waiting`);
     expect(res.status).toBe(200);
     const tickets = await res.json() as Array<{ status: string }>;
     expect(tickets.length).toBeGreaterThan(0);
     for (const t of tickets) {
-      expect(t.status).toBe('approved');
+      expect(t.status).toBe('waiting');
     }
   });
 
