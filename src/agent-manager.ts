@@ -1081,7 +1081,9 @@ export class AgentManager {
     ];
 
     // Volume: agent dir → /workspace/agent (read-only)
-    const binds = [`${agent.dir}:/workspace/agent:ro`];
+    // Translate container path to host path (agent.dir is relative to DATA_DIR inside container)
+    const hostAgentDir = agent.dir.replace(DATA_DIR, hostDataDir);
+    const binds = [`${hostAgentDir}:/workspace/agent:ro`];
 
     // Volume: DB dir → /workspace/db (read-write, for MCP tickets server)
     binds.push(`${hostDataDir}:/workspace/db:rw`);
