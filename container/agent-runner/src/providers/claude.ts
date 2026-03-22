@@ -20,7 +20,13 @@ export class ClaudeProvider implements Provider {
   async *run(options: ProviderRunOptions): AsyncGenerator<ProviderEvent> {
     // Build per-namespace MCP tool patterns (mcp__* glob doesn't match across __ delimiters)
     const mcpToolPatterns = Object.keys(options.mcpServers ?? {}).map((name) => `mcp__${name}__*`);
-    const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns];
+    // Native Claude Code agent team tools (available when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1)
+    const AGENT_TEAM_TOOLS = [
+      'TeamCreate', 'TaskCreate', 'TaskUpdate', 'TaskList',
+      'Task', 'SendMessage', 'TeamDelete',
+    ];
+
+    const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns, ...AGENT_TEAM_TOOLS];
     const extraTools = options.allowedTools ?? [];
     // Merge defaults + extras (deduplicated)
     const allTools = [...new Set([...defaultTools, ...extraTools])];
