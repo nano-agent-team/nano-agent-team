@@ -48,6 +48,10 @@ echo ""
 echo "==> Building NATE..."
 docker build -t nano-agent-team . 2>&1 | tail -5
 
+echo "==> Building deterministic runner..."
+(cd container/deterministic-runner && npm ci && npm run build) 2>&1 | tail -3
+docker build -t nano-deterministic:latest container/deterministic-runner/ 2>&1 | tail -5
+
 echo "==> Starting container..."
 docker rm -f "$INSTANCE" 2>/dev/null || true
 # Kill any other container blocking the port
