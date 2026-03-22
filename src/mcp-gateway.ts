@@ -711,6 +711,52 @@ function buildMcpServer(
       );
     }
 
+    // ── Ticket transfer tool ─────────────────────────────────────────────────
+
+    server.tool(
+      'ticket_transfer',
+      'Transfer a GH issue to a local ticket. Creates a local copy with full title+body, marks the GH issue as transferred (in_progress + label), and returns the new local ticket. Idempotent: errors if already transferred.',
+      { source_ticket_id: z.string().regex(/^GH-\d+$/, 'Must be a GH issue ID like GH-110') },
+      async ({ source_ticket_id }) => {
+        // 1. Load source ticket
+        const source = await registry.getTicket(source_ticket_id);
+        if (!source) throw new Error(`Ticket ${source_ticket_id} not found`);
+
+        // 2. Idempotency guard — check local DB for existing transfer
+        const existing = await registry.listTickets({});
+        const alreadyLocal = existing.find(t => t.source_id === source_ticket_id);
+        if (alreadyLocal) {
+          throw new Error(`Already transferred to ${alreadyLocal.id}`);
+        }
+
+        // 3. Idempotency guard — check GH label
+        if (source.labels?.some(l => l.startsWith('transferred:'))) {
+          throw new Error(`GH issue ${source_ticket_id} already has a transferred: label`);
+        }
+
+        // 4. Create local ticket (source_id stored, backend forced to local)
+        const local = await registry.createTicket({
+          title: source.title,
+          body: source.body ?? undefined,
+          backend: 'local',
+          source_id: source_ticket_id,
+        });
+
+        // 5. Update GH issue: add label + set in_progress (prevents re-transfer)
+        try {
+          await registry.updateTicket(source_ticket_id, {
+            status: 'in_progress',
+            labels: [...(source.labels ?? []), `transferred:${local.id}`],
+          });
+        } catch (err) {
+          // GH update failed — log and continue (local ticket created, label cosmetic)
+          logger.warn({ err, source_ticket_id, local_id: local.id }, 'ticket_transfer: GH label update failed (non-fatal)');
+        }
+
+        return { content: [{ type: 'text' as const, text: JSON.stringify(local, null, 2) }] };
+      },
+    );
+
     // ── Workspace tools ─────────────────────────────────────────────────────
 
     server.tool(
@@ -1097,6 +1143,9 @@ export class McpGateway {
         tools.push({ name: 'alarm_cancel', description: 'Cancel an alarm by ID.', inputSchema: { type: 'object', required: ['alarm_id'], properties: { alarm_id: { type: 'string' } } } });
         tools.push({ name: 'alarm_list', description: 'List active alarms, optionally filtered by agent_id.', inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } } } });
       }
+
+      // Ticket transfer tool
+      tools.push({ name: 'ticket_transfer', description: 'Transfer a GH issue to a local ticket. Creates a local copy with full title+body, marks the GH issue as transferred (in_progress + label), and returns the new local ticket. Idempotent: errors if already transferred.', inputSchema: { type: 'object', required: ['source_ticket_id'], properties: { source_ticket_id: { type: 'string', description: 'GH issue ID like GH-110' } } } });
 
       // Workspace tools
       tools.push({ name: 'workspace_create', description: 'Create a git worktree workspace for an agent. Returns workspace metadata including path.', inputSchema: { type: 'object', required: ['repoType'], properties: { repoType: { type: 'string' }, ownerId: { type: 'string' }, branch: { type: 'string' } } } });
