@@ -382,13 +382,14 @@ function buildMcpServer(
   if (canCallBuiltin(permissions, 'tickets', 'ticket_comment')) {
     server.tool(
       'ticket_comment',
-      'Add a comment to a ticket.',
+      'Add a comment to a ticket. Optional verdict for pipeline routing (approved/rework/rejected).',
       {
         ticket_id: z.string().describe('Ticket ID'),
         body:      z.string().describe('Comment text'),
+        verdict:   z.enum(['approved', 'rejected', 'rework']).optional().describe('Pipeline verdict: approved (proceed), rework (send back), rejected (stop)'),
       },
-      async ({ ticket_id, body }) => {
-        const comment = await registry.addComment(ticket_id, body, agentId);
+      async ({ ticket_id, body, verdict }) => {
+        const comment = await registry.addComment(ticket_id, body, agentId, undefined, verdict);
         return { content: [{ type: 'text' as const, text: JSON.stringify(comment, null, 2) }] };
       },
     );
@@ -1055,7 +1056,7 @@ export class McpGateway {
       tools.push({ name: 'ticket_reject', description: 'Reject a ticket.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' } } } });
     }
     if (canCallBuiltin(permissions, 'tickets', 'ticket_comment')) {
-      tools.push({ name: 'ticket_comment', description: 'Add a comment to a ticket.', inputSchema: { type: 'object', required: ['ticket_id', 'body'], properties: { ticket_id: { type: 'string' }, body: { type: 'string' } } } });
+      tools.push({ name: 'ticket_comment', description: 'Add a comment with optional verdict.', inputSchema: { type: 'object', required: ['ticket_id', 'body'], properties: { ticket_id: { type: 'string' }, body: { type: 'string' }, verdict: { type: 'string', enum: ['approved', 'rejected', 'rework'] } } } });
     }
 
     if (this.gatewayOpts && permissions['config'] !== undefined) {

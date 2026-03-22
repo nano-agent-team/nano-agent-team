@@ -190,12 +190,13 @@ server.tool(
 // ticket_comment
 server.tool(
   'ticket_comment',
-  'Add a comment to a ticket. Use to document decisions, link PRs, or report progress.',
+  'Add a comment to a ticket. Optional verdict for pipeline routing.',
   {
     ticket_id: z.string().describe('Ticket ID'),
     body: z.string().describe('Comment text'),
+    verdict: z.enum(['approved', 'rejected', 'rework']).optional().describe('Pipeline verdict: approved (proceed), rework (send back), rejected (stop)'),
   },
-  async ({ ticket_id, body }) => {
+  async ({ ticket_id, body, verdict }) => {
     const db = openDb();
     const ticket = db.prepare('SELECT id FROM tickets WHERE id = ?').get(ticket_id);
     if (!ticket) {
@@ -204,9 +205,9 @@ server.tool(
 
     const now = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
     const result = db.prepare(`
-      INSERT INTO ticket_comments (ticket_id, author, body, created_at)
-      VALUES (?, ?, ?, ?)
-    `).run(ticket_id, AGENT_ID, body, now);
+      INSERT INTO ticket_comments (ticket_id, author, body, verdict, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(ticket_id, AGENT_ID, body, verdict ?? null, now);
 
     const comment = db.prepare('SELECT * FROM ticket_comments WHERE id = ?').get(result.lastInsertRowid);
     return {
