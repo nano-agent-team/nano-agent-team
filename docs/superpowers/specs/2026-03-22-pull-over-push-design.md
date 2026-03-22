@@ -112,7 +112,7 @@ Alarm payload: `{type: "poll"}`. The scrum-master sets its own next alarm after 
   2. Query `tickets WHERE status = 'in_progress'` → orphan detection (see below)
   3. `alarm_set` for next wakeup (adaptive interval: work found → 30s, idle → 300s, queue > 5 → 15s)
 
-**Dispatch mechanism:** Scrum-master publishes a NATS message to `agent.{assigned_to}.task` with the ticket payload. The existing ephemeral consumer in agent-manager intercepts it and spawns a container. No new dispatch mechanism needed.
+**Dispatch mechanism:** Scrum-master publishes a NATS message to `agent.{assigned_to}.task` with the ticket payload. This subject falls under the AGENTS JetStream stream (wildcard filter `agent.>`). The existing ephemeral consumer in agent-manager — which creates a consumer with `filter_subject: agent.{id}.>` — intercepts it and spawns a container. No new dispatch mechanism or consumer configuration needed. The `task` entrypoint is already declared in all sd-* manifests (`entrypoints: ["inbox", "task"]`).
 
 **Pipeline routing:** Scrum-master does NOT determine `assigned_to`. Each agent sets `assigned_to: next_agent` when completing its work (encoded in agent's CLAUDE.md instructions). The scrum-master only dispatches to whoever `assigned_to` points to.
 
@@ -188,7 +188,7 @@ On each poll wakeup, scrum-master checks all `in_progress` tickets:
 3. If yes → ok, leave it
 4. If no → orphan → revert `status: waiting` (keeps same `assigned_to` so same agent type picks it up again)
 
-**Heartbeat matching:** Add `ticketId` field to heartbeat payload (alongside existing `task` field) for reliable matching. Agent-runner extracts `ticket_id` from incoming message payload and includes it in heartbeats.
+**Heartbeat matching:** Add `ticketId` field to heartbeat payload (alongside existing `task` field) for reliable matching. Agent-runner extracts `ticket_id` from incoming message payload and includes it in heartbeats. The `get_system_status` MCP tool response (in `src/mcp-gateway.ts`) must include the `ticketId` field from heartbeat data so the scrum-master can correlate running agents with in-progress tickets.
 
 **Retry limit:** Track orphan recovery count via ticket comments (e.g., "Orphan recovery #2"). After 3 recoveries, set `status: rejected` with comment explaining the failure pattern. sd-pm or foreman can investigate.
 
@@ -207,7 +207,7 @@ The earlier per-agent polling mechanism (`AGENT_POLL_INTERVAL_SECONDS`, `AGENT_P
 | `src/tickets/local-provider.ts` | Modify | Add `expected_status` support, update LocalStatusMapper |
 | `src/tickets/github-provider.ts` | Modify | Update status label mappings |
 | `src/api-server.ts` | Modify | Pass `expected_status` from PATCH body, return 409 on mismatch |
-| `src/mcp-gateway.ts` | Modify | Add `expected_status` to ticket_update Zod schema |
+| `src/mcp-gateway.ts` | Modify | Add `expected_status` to ticket_update Zod schema, expose `ticketId` in `get_system_status` response |
 | `src/agent-registry.ts` | Modify | Add `handler?: string` field to AgentManifest |
 | `src/agent-manager.ts` | Modify | Handle `kind: 'deterministic'` (image, env vars), bootstrap alarm |
 | `src/db.ts` | Modify | Migrate status values, update CHECK constraint |
@@ -244,7 +244,7 @@ The earlier per-agent polling mechanism (`AGENT_POLL_INTERVAL_SECONDS`, `AGENT_P
 - Agent-manager: skip LLM env vars for `kind: 'deterministic'`, add HANDLER env var
 - Agent-manager: use `manifest.image` for image selection (already supported)
 - Agent-manager: bootstrap alarm with idempotent `cancelForAgent()` + `set()`
-- Build pipeline: add deterministic-runner to build commands
+- Build pipeline: add deterministic-runner image build to `docker-compose.yml`, `install.sh`, and `/nat-rebuild` skill. Add `/nat-deterministic-rebuild` skill for standalone image rebuild.
 
 ### Phase 3: Scrum-master agent
 - Implement `scrum-master` handler: poll → claim → dispatch → orphan detect → alarm
