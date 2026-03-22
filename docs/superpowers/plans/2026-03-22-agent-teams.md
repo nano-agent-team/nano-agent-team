@@ -44,11 +44,9 @@ Open `src/agent-manager.ts`. Find `buildAgentEnvAndBinds` (line 933). Scroll to 
 ...(!isDeterministic && agent.manifest.context_mode ? ['CONTEXT_MODE=true'] : []),
 // Preload specific skills into systemPrompt (injected at startup) — LLM agents only
 ...(!isDeterministic && agent.manifest.preload_skills?.length ? [`PRELOAD_SKILLS=${agent.manifest.preload_skills.join(',')}`] : []),
-// Agent teams: enable native Claude Code multi-agent coordination — LLM agents only
-...(!isDeterministic ? ['CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1'] : []),
+// Agent teams: enable native Claude Code multi-agent coordination (unconditional — env var is ignored by deterministic agents that don't run LLM)
+'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
 ```
-
-> Note: wrapped in `!isDeterministic` guard — deterministic agents (workspace-manager) don't run LLM, feature is irrelevant for them.
 
 - [ ] **Step 3: Verify TypeScript compiles**
 
@@ -183,7 +181,7 @@ cd /Users/rpridal/workspace/nano-agent-team-project/nano-agent-team
 Use `/nat-agent-rebuild` skill or manually:
 
 ```bash
-cd container && docker build -t nano-agent:latest .
+docker build -t nano-agent:latest ./container/agent-runner/
 ```
 
 - [ ] **Step 2: Rebuild full stack**
@@ -222,19 +220,10 @@ Expected: JSON with `mcpServers` and `teammateMode: "in-process"`.
 
 ## Task 5: Create GitHub issue
 
-- [ ] **Step 1: Create GH issue in core repo**
+- [ ] **Step 1: Write issue body to `/tmp/agent-teams-issue.md`**
 
 ```bash
-gh issue create \
-  --repo nano-agent-team/nano-agent-team \
-  --title "feat: enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS for all LLM agents" \
-  --label "enhancement" \
-  --body-file /tmp/agent-teams-issue.md
-```
-
-Issue body template (`/tmp/agent-teams-issue.md`):
-
-```markdown
+cat > /tmp/agent-teams-issue.md << 'EOF'
 ## Summary
 
 Enable all nano-agent-team LLM agents to use Claude Code's native agent teams feature.
@@ -242,7 +231,7 @@ Each agent can now autonomously spawn teammate sub-instances for complex tickets
 
 ## Changes
 
-- `src/agent-manager.ts` — `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` added to all LLM agent envs
+- `src/agent-manager.ts` — `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` added to all agent envs
 - `container/agent-runner/src/providers/claude.ts` — `AGENT_TEAM_TOOLS` in `defaultTools`; settings.json write for teammate MCP inheritance
 
 ## Design
@@ -253,4 +242,15 @@ Spec: `docs/superpowers/specs/2026-03-22-agent-teams-design.md`
 
 - Verify env var present in running agent containers
 - Verify `.claude/settings.json` written in workspace dir on first query()
+EOF
+```
+
+- [ ] **Step 2: Create GH issue in core repo**
+
+```bash
+gh issue create \
+  --repo nano-agent-team/nano-agent-team \
+  --title "feat: enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS for all LLM agents" \
+  --label "enhancement" \
+  --body-file /tmp/agent-teams-issue.md
 ```
