@@ -315,11 +315,12 @@ export class GitHubIssuesProvider implements TicketProvider {
       issues = issues.filter(i => i.labels.some(l => l.name === targetLabel));
     }
 
-    // Client-side filter for 'idea' status: exclude issues that have explicit status labels
+    // Client-side filter for 'idea' status: include issues with NO status label OR with status:idea
     if (filters.status === 'idea') {
-      issues = issues.filter(i =>
-        !i.labels.some(l => l.name.startsWith(STATUS_LABEL_PREFIX)),
-      );
+      issues = issues.filter(i => {
+        const statusLabels = i.labels.filter(l => l.name.startsWith(STATUS_LABEL_PREFIX));
+        return statusLabels.length === 0 || statusLabels.some(l => l.name === 'status:idea');
+      });
     }
 
     return issues.map(i => this.issueToTicket(i));
