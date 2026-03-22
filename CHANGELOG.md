@@ -148,6 +148,9 @@ All notable changes to this project will be documented in this file.
 - Add deterministic handoff design spec ([`79e6642`](https://github.com/nano-agent-team/nano-agent-team/commit/79e66421ab060e149f3589312f982281528e005b))
 - Add deterministic handoff implementation plan ([`e0acc45`](https://github.com/nano-agent-team/nano-agent-team/commit/e0acc4546b40aa01b95ec98ef7c02f8372b7159c))
 - **ci:** Update CHANGELOG [skip ci] ([`5463e33`](https://github.com/nano-agent-team/nano-agent-team/commit/5463e33b220dcdf6f6250509157df705231c3a27))
+- Add routing agent design spec ([`9020ef4`](https://github.com/nano-agent-team/nano-agent-team/commit/9020ef45bf5ff9d58d57d8d81430fde9e4dc11bb))
+- Add routing agent implementation plan ([`d91acca`](https://github.com/nano-agent-team/nano-agent-team/commit/d91accaafd16ec2078472d4abf936da1365e08c4))
+- **ci:** Update CHANGELOG [skip ci] ([`73211ff`](https://github.com/nano-agent-team/nano-agent-team/commit/73211ffed80c25108014cb6940934deb40ad0885))
 
 ### Features
 
@@ -230,6 +233,7 @@ All notable changes to this project will be documented in this file.
 - Add verdict to ticket_comment MCP tool Zod schemas ([`4e5190b`](https://github.com/nano-agent-team/nano-agent-team/commit/4e5190bac1d18c50377632f2dd0eb68084f75a27))
 - Agent-runner after-work hook sets done for ephemeral agents ([`0a20b33`](https://github.com/nano-agent-team/nano-agent-team/commit/0a20b33a20f07de05546abb193afa0cbe0cd3b53))
 - Scrum-master routes done tickets via pipeline config from workflow.json ([`3865d64`](https://github.com/nano-agent-team/nano-agent-team/commit/3865d64da4935414297703d1aa87dada7813b6a4))
+- Scrum-master forwards NATS events based on routes config ([`5b22004`](https://github.com/nano-agent-team/nano-agent-team/commit/5b22004647fce39f93c90f069cdba121d5c2543e))
 
 ### Miscellaneous
 
