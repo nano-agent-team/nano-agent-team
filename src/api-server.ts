@@ -1079,6 +1079,22 @@ export async function createApiApp(
     }
   });
 
+  // ── Ephemeral freeze/status — used by release manager before deploy ──────
+
+  app.post('/internal/ephemeral/freeze', (_req: Request, res: Response) => {
+    manager.freezeEphemeral();
+    res.json({ ok: true, frozen: true });
+  });
+
+  app.post('/internal/ephemeral/unfreeze', (_req: Request, res: Response) => {
+    manager.unfreezeEphemeral();
+    res.json({ ok: true, frozen: false });
+  });
+
+  app.get('/internal/ephemeral/status', (_req: Request, res: Response) => {
+    res.json(manager.getEphemeralStatus());
+  });
+
   // ── POST /internal/restart — graceful restart with deploy tracking ───────
   app.post('/internal/restart', async (req: Request, res: Response) => {
     try {

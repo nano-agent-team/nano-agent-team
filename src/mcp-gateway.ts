@@ -760,6 +760,38 @@ function buildMcpServer(
       },
     );
 
+    // ── Ephemeral freeze/status tools ────────────────────────────────────────
+
+    server.tool(
+      'freeze_ephemeral',
+      'Freeze ephemeral agents — stop accepting new tasks. Running containers finish normally. Call before restart_self.',
+      {},
+      async () => {
+        const data = await callInternal('POST', '/internal/ephemeral/freeze');
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data) }] };
+      },
+    );
+
+    server.tool(
+      'unfreeze_ephemeral',
+      'Unfreeze ephemeral agents — resume accepting new tasks.',
+      {},
+      async () => {
+        const data = await callInternal('POST', '/internal/ephemeral/unfreeze');
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data) }] };
+      },
+    );
+
+    server.tool(
+      'ephemeral_status',
+      'Get ephemeral agent status: frozen flag + list of running containers with ticket IDs.',
+      {},
+      async () => {
+        const data = await callInternal('GET', '/internal/ephemeral/status');
+        return { content: [{ type: 'text' as const, text: JSON.stringify(data, null, 2) }] };
+      },
+    );
+
     // ── Restart & Health tools ──────────────────────────────────────────────
 
     server.tool(
@@ -1070,8 +1102,13 @@ export class McpGateway {
       tools.push({ name: 'workspace_return', description: 'Return (release) a workspace. Cleans up the worktree.', inputSchema: { type: 'object', required: ['workspaceId'], properties: { workspaceId: { type: 'string' } } } });
       tools.push({ name: 'workspace_list', description: 'List all active workspaces.', inputSchema: { type: 'object', properties: {} } });
 
+      // Ephemeral freeze/status tools
+      tools.push({ name: 'freeze_ephemeral', description: 'Freeze ephemeral agents — stop accepting new tasks. Running containers finish normally.', inputSchema: { type: 'object', properties: {} } });
+      tools.push({ name: 'unfreeze_ephemeral', description: 'Unfreeze ephemeral agents — resume accepting new tasks.', inputSchema: { type: 'object', properties: {} } });
+      tools.push({ name: 'ephemeral_status', description: 'Get ephemeral status: frozen flag + list of running containers with ticket IDs.', inputSchema: { type: 'object', properties: {} } });
+
       // Restart & Health tools
-      tools.push({ name: 'restart_self', description: 'Graceful restart of the control plane.', inputSchema: { type: 'object', properties: { ticket_id: { type: 'string' }, workspaceId: { type: 'string' } } } });
+      tools.push({ name: 'restart_self', description: 'Graceful restart of the control plane. Call freeze_ephemeral first and wait for running containers to finish.', inputSchema: { type: 'object', properties: { ticket_id: { type: 'string' }, workspaceId: { type: 'string' } } } });
       tools.push({ name: 'health_check', description: 'Check system health. Returns health status of all components.', inputSchema: { type: 'object', properties: { timeout_ms: { type: 'number' } } } });
     }
 

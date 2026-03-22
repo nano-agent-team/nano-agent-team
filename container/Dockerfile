@@ -43,6 +43,9 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.76 --ignore-scripts 2>/dev/null
 RUN npm install -g @openai/codex@0.114.0 --ignore-scripts 2>/dev/null || \
     npm install -g @openai/codex@0.114.0
 
+# Context-mode MCP server — FTS5 code search for agents
+RUN npm install -g context-mode@1.0.46
+
 # Copy package files and install production dependencies
 COPY agent-runner/package.json agent-runner/package-lock.json* ./
 RUN npm install --omit=dev

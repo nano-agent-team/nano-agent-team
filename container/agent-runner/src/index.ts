@@ -26,6 +26,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { connect, StringCodec, headers as natsHeaders } from 'nats';
 import type { Consumer } from 'nats';
+import type { McpServerConfig } from './providers/types.js';
 import pino from 'pino';
 import { isTracingEnabled } from './tracing/init.js';
 import { extractTraceContext, startSpan, startChildSpan, injectTraceContext } from './tracing/nats-context.js';
@@ -77,8 +78,14 @@ const agentMcpServers: Record<string, unknown> = (() => {
   try { return JSON.parse(raw) as Record<string, unknown>; } catch { return {}; }
 })();
 
-/** All MCP servers: tickets + any agent-specific servers */
-const allMcpServers = { tickets: ticketsMcpServer, ...agentMcpServers };
+/** All MCP servers: tickets + context-mode (opt-in) + any agent-specific servers */
+const allMcpServers: Record<string, McpServerConfig> = {
+  tickets: ticketsMcpServer,
+  ...(agentMcpServers as Record<string, McpServerConfig>),
+  ...(process.env.CONTEXT_MODE === 'true'
+    ? { 'context-mode': { command: 'context-mode', args: [] } }
+    : {}),
+};
 
 // ─── Logger ──────────────────────────────────────────────────────────────────
 
@@ -226,7 +233,7 @@ async function main(): Promise<void> {
         modelExplicit: MODEL_EXPLICIT,
         cwd: '/workspace',
         prompt,
-        maxTurns: 200,
+        maxTurns: 0, // unlimited — watchdog agent will handle stuck loops in the future
         systemPrompt: claudeMdContent || undefined,
         ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
         ...(AGENT_ALLOWED_TOOLS.length > 0 ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),
@@ -538,7 +545,7 @@ async function main(): Promise<void> {
           cwd: '/workspace',
           prompt,
           sessionId: existingSessionId,
-          maxTurns: 200,
+          maxTurns: 0, // unlimited — watchdog agent will handle stuck loops in the future
           systemPrompt: claudeMdContent || undefined,
           ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
           ...(AGENT_ALLOWED_TOOLS.length > 0 ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),

@@ -106,6 +106,11 @@ export class AgentManager {
   private proxyHost: string | null = null;
   private dispatcher: WorkflowDispatcher;
 
+  /** When true, ephemeral consumer loops stop pulling new messages (existing containers finish) */
+  private ephemeralFrozen = false;
+  /** Tracks running ephemeral containers by containerName → ticketId */
+  private runningEphemeralContainers = new Map<string, string>();
+
   constructor(
     private readonly nc: NatsConnection,
     private readonly configService?: ConfigService,
@@ -400,6 +405,26 @@ export class AgentManager {
     }));
   }
 
+  /** Freeze ephemeral agents — consumer loops stop pulling new messages. Running containers finish normally. */
+  freezeEphemeral(): void {
+    this.ephemeralFrozen = true;
+    logger.info('Ephemeral agents frozen — no new containers will be started');
+  }
+
+  /** Unfreeze ephemeral agents — consumer loops resume pulling. */
+  unfreezeEphemeral(): void {
+    this.ephemeralFrozen = false;
+    logger.info('Ephemeral agents unfrozen — accepting new tasks');
+  }
+
+  /** Returns status of ephemeral containers: frozen flag + list of running containers. */
+  getEphemeralStatus(): { frozen: boolean; running: { containerName: string; ticketId: string }[] } {
+    return {
+      frozen: this.ephemeralFrozen,
+      running: [...this.runningEphemeralContainers.entries()].map(([containerName, ticketId]) => ({ containerName, ticketId })),
+    };
+  }
+
   async stopAll(): Promise<void> {
     if (this.healthTimer) {
       clearInterval(this.healthTimer);
@@ -543,6 +568,15 @@ export class AgentManager {
         break;
       }
 
+      // Freeze check: if frozen, nak the message so it's redelivered later
+      if (this.ephemeralFrozen) {
+        logger.info({ agentId }, 'Ephemeral agents frozen — nacking message for later redelivery');
+        msg.nak();
+        // Wait a bit before pulling next (avoid tight nak loop)
+        await new Promise(resolve => setTimeout(resolve, 5000));
+        continue;
+      }
+
       let ticketId: string | undefined;
       try {
         const payload = JSON.parse(codec.decode(msg.data)) as Record<string, unknown>;
@@ -559,6 +593,9 @@ export class AgentManager {
         continue;
       }
 
+      const containerName = `nano-agent-${agentId}-${ticketId}`;
+      this.runningEphemeralContainers.set(containerName, ticketId);
+
       try {
         await this.runEphemeralContainer(agent, agentId, ticketId, msg.data, msg.headers);
         msg.ack();
@@ -566,6 +603,8 @@ export class AgentManager {
       } catch (err) {
         logger.error({ err, agentId, ticketId }, 'Ephemeral container failed');
         msg.nak();
+      } finally {
+        this.runningEphemeralContainers.delete(containerName);
       }
     }
   }
@@ -628,22 +667,14 @@ export class AgentManager {
 
     await container.start();
 
-    // 5. Wait for container to exit (with timeout)
-    const EPHEMERAL_TIMEOUT_MS = 600_000; // 10 minutes max
-    const exited = await Promise.race([
-      new Promise<boolean>((resolve) => {
-        void container.wait().then(() => resolve(true)).catch(() => resolve(true));
-      }),
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), EPHEMERAL_TIMEOUT_MS)),
-    ]);
+    // 5. Wait for container to exit (no timeout — watchdog agent will handle stuck containers in the future)
+    await container.wait().catch(() => {});
+    const exited = true;
 
-    // 6. Check exit code and clean up
+    // 6. Check exit code
     try {
-      const info = await container.inspect() as { State: { ExitCode: number; Running: boolean } };
-      if (!exited) {
-        logger.warn({ agentId, ticketId, containerName }, 'Ephemeral container timed out — force removing');
-        await container.stop({ t: 10 }).catch(() => {});
-      } else if (info.State.ExitCode !== 0) {
+      const info = await container.inspect() as { State: { ExitCode: number } };
+      if (info.State.ExitCode !== 0) {
         logger.warn({ agentId, ticketId, exitCode: info.State.ExitCode }, 'Ephemeral container exited with error');
       }
     } catch {
@@ -997,6 +1028,10 @@ export class AgentManager {
       ...(githubToken ? [`GH_TOKEN=${githubToken}`] : []),
       // Inject allowed tools from manifest (e.g. ["Skill"] for superpowers skills)
       ...(agent.manifest.allowedTools?.length ? [`AGENT_ALLOWED_TOOLS=${agent.manifest.allowedTools.join(',')}`] : []),
+      // Enable context-mode MCP server for code search (opt-in via manifest)
+      ...(agent.manifest.context_mode ? ['CONTEXT_MODE=true'] : []),
+      // Preload specific skills into systemPrompt (injected at startup)
+      ...(agent.manifest.preload_skills?.length ? [`PRELOAD_SKILLS=${agent.manifest.preload_skills.join(',')}`] : []),
       // Pass repo URL from config (set during team install)
       ...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
       // Observability: propagate OTel config to agent containers
@@ -1024,10 +1059,11 @@ export class AgentManager {
     // Volume: Provider-specific credentials
     // Claude Code credentials → /home/agent/.claude (read-write for session cache)
     // Claude Code 2.x also needs ~/.claude.json (OAuth token file)
-    // Skip in proxy mode: agents use ANTHROPIC_BASE_URL instead of direct auth
+    const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
+    const hostClaudeDir = process.env.HOST_CLAUDE_DIR ?? claudeDir;
+
     if ((providerName === 'claude' || providerName === 'auto' || !providerName) && !this.isProxyMode()) {
-      const claudeDir = path.join(process.env.HOME ?? '/root', '.claude');
-      const hostClaudeDir = process.env.HOST_CLAUDE_DIR ?? claudeDir;
+      // Direct auth mode: mount entire .claude dir (rw) for credentials + session cache
       if (fs.existsSync(claudeDir)) {
         binds.push(`${hostClaudeDir}:/home/agent/.claude:rw`);
         logger.debug({ agentId, hostClaudeDir }, 'Mounting .claude dir (rw)');
@@ -1037,6 +1073,19 @@ export class AgentManager {
       if (fs.existsSync(claudeJson)) {
         binds.push(`${hostClaudeJson}:/home/agent/.claude.json:rw`);
         logger.debug({ agentId, hostClaudeJson }, 'Mounting .claude.json (rw)');
+      }
+    } else {
+      // Proxy mode: mount only plugins + settings (read-only) for superpowers/skills.
+      // Don't mount entire .claude dir — that would shadow baked-in skills from the image.
+      const pluginsDir = path.join(claudeDir, 'plugins');
+      if (fs.existsSync(pluginsDir)) {
+        binds.push(`${hostClaudeDir}/plugins:/home/agent/.claude/plugins:ro`);
+        logger.debug({ agentId }, 'Mounting .claude/plugins (ro) for superpowers');
+      }
+      const settingsPath = path.join(claudeDir, 'settings.json');
+      if (fs.existsSync(settingsPath)) {
+        binds.push(`${hostClaudeDir}/settings.json:/home/agent/.claude/settings.json:ro`);
+        logger.debug({ agentId }, 'Mounting .claude/settings.json (ro) for plugin config');
       }
     }
 
