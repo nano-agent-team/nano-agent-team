@@ -1029,6 +1029,8 @@ export class AgentManager {
       ...(!isDeterministic && agent.manifest.context_mode ? ['CONTEXT_MODE=true'] : []),
       // Preload specific skills into systemPrompt (injected at startup) — LLM agents only
       ...(!isDeterministic && agent.manifest.preload_skills?.length ? [`PRELOAD_SKILLS=${agent.manifest.preload_skills.join(',')}`] : []),
+      // Agent teams: enable native Claude Code multi-agent coordination (unconditional)
+      'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1',
       // Pass repo URL from config (set during team install)
       ...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
       // Deterministic agent: inject handler module name, skip all LLM-specific vars

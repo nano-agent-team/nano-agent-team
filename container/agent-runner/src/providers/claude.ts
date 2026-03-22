@@ -9,6 +9,17 @@ import path from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Provider, ProviderRunOptions, ProviderEvent } from './types.js';
 
+// Native Claude Code agent team tools — only functional when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+const agentTeamTools = [
+  'TeamCreate',
+  'TaskCreate',
+  'TaskUpdate',
+  'TaskList',
+  'Task',
+  'SendMessage',
+  'TeamDelete',
+];
+
 export class ClaudeProvider implements Provider {
   readonly name = 'claude';
 
@@ -20,7 +31,8 @@ export class ClaudeProvider implements Provider {
   async *run(options: ProviderRunOptions): AsyncGenerator<ProviderEvent> {
     // Build per-namespace MCP tool patterns (mcp__* glob doesn't match across __ delimiters)
     const mcpToolPatterns = Object.keys(options.mcpServers ?? {}).map((name) => `mcp__${name}__*`);
-    const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns];
+
+    const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns, ...agentTeamTools];
     const extraTools = options.allowedTools ?? [];
     // Merge defaults + extras (deduplicated)
     const allTools = [...new Set([...defaultTools, ...extraTools])];
@@ -55,6 +67,18 @@ export class ClaudeProvider implements Provider {
     if (options.extraEnv && Object.keys(options.extraEnv).length > 0) {
       sdkOptions.env = { ...process.env, ...options.extraEnv };
     }
+
+    // Write project-scope .claude/settings.json so spawned teammates inherit MCP server config
+    // and run in in-process mode (no tmux needed in containers).
+    // Teammates load project-scope settings from cwd; they cannot access parent's sdkOptions at runtime.
+    // Overwrite is safe — MCP config derives from env vars that are constant per container lifecycle.
+    const settingsDir = path.join(options.cwd, '.claude');
+    const settingsPath = path.join(settingsDir, 'settings.json');
+    fs.mkdirSync(settingsDir, { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      mcpServers: options.mcpServers ?? {},
+      teammateMode: 'in-process',
+    }, null, 2), 'utf8');
 
     const q = query({ prompt: options.prompt, options: sdkOptions });
 
