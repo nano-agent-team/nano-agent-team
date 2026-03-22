@@ -48,6 +48,9 @@ function migrateStatuses(database: Database.Database): void {
 
   logger.info('Migrating tickets table to 5-state status model...');
 
+  // Disable FK checks during table recreation (ticket_comments, ticket_history reference tickets)
+  database.pragma('foreign_keys = OFF');
+
   database.transaction(() => {
     // 1. Create new table with updated CHECK constraint
     database.exec(`
@@ -111,6 +114,9 @@ function migrateStatuses(database: Database.Database): void {
       CREATE INDEX IF NOT EXISTS idx_tickets_type     ON tickets(type);
     `);
   })();
+
+  // Re-enable FK checks
+  database.pragma('foreign_keys = ON');
 
   logger.info('Tickets table migration to 5-state model complete.');
 }
@@ -188,8 +194,11 @@ export function openDb(): Database.Database {
  */
 export function nextTicketId(): string {
   const database = openDb();
-  const row = database.prepare('SELECT COUNT(*) as cnt FROM tickets').get() as { cnt: number };
-  const num = (row.cnt + 1).toString().padStart(4, '0');
+  // Use MAX to find highest TICK-NNNN number, not COUNT (which breaks when non-TICK IDs exist)
+  const row = database.prepare(
+    "SELECT MAX(CAST(SUBSTR(id, 6) AS INTEGER)) as maxNum FROM tickets WHERE id LIKE 'TICK-%'"
+  ).get() as { maxNum: number | null };
+  const num = ((row.maxNum ?? 0) + 1).toString().padStart(4, '0');
   return `TICK-${num}`;
 }
 
