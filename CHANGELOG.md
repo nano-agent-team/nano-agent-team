@@ -153,6 +153,7 @@ All notable changes to this project will be documented in this file.
 - Add routing agent implementation plan ([`d91acca`](https://github.com/nano-agent-team/nano-agent-team/commit/d91accaafd16ec2078472d4abf936da1365e08c4))
 - **ci:** Update CHANGELOG [skip ci] ([`73211ff`](https://github.com/nano-agent-team/nano-agent-team/commit/73211ffed80c25108014cb6940934deb40ad0885))
 - **ci:** Update CHANGELOG [skip ci] ([`aa5a863`](https://github.com/nano-agent-team/nano-agent-team/commit/aa5a863ede87807532ebddb1b34d667267653d6e))
+- **ci:** Update CHANGELOG [skip ci] ([`db5cefd`](https://github.com/nano-agent-team/nano-agent-team/commit/db5cefd64e467b7f4fc0244bee56adbb0f1c9064))
 
 ### Features
 
@@ -236,6 +237,9 @@ All notable changes to this project will be documented in this file.
 - Agent-runner after-work hook sets done for ephemeral agents ([`0a20b33`](https://github.com/nano-agent-team/nano-agent-team/commit/0a20b33a20f07de05546abb193afa0cbe0cd3b53))
 - Scrum-master routes done tickets via pipeline config from workflow.json ([`3865d64`](https://github.com/nano-agent-team/nano-agent-team/commit/3865d64da4935414297703d1aa87dada7813b6a4))
 - Scrum-master forwards NATS events based on routes config ([`5b22004`](https://github.com/nano-agent-team/nano-agent-team/commit/5b22004647fce39f93c90f069cdba121d5c2543e))
+- Add source_id field to tickets for GH transfer tracking ([`7dd3174`](https://github.com/nano-agent-team/nano-agent-team/commit/7dd3174f8935743f5a3b1823f4c0f21fda33281d))
+- Add ticket_transfer MCP tool in management namespace ([`f147282`](https://github.com/nano-agent-team/nano-agent-team/commit/f147282597d409ccda92e249a2d533ceef16a7f8))
+- Add workspace-manager deterministic handler ([`6ebd021`](https://github.com/nano-agent-team/nano-agent-team/commit/6ebd021a56b57cb009147f10abfde5bbf584d16c))
 
 ### Miscellaneous
 
