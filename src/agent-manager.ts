@@ -634,13 +634,29 @@ export class AgentManager {
     messageData: Uint8Array,
     messageHeaders?: import('nats').MsgHdrs,
   ): Promise<void> {
-    // 1. Resolve workspace path from workspace provider
+    // 1. Resolve workspace path from workspace provider (create-if-not-exists)
     const apiPort = API_PORT;
     const workspaceUrl = `http://localhost:${apiPort}/internal/workspaces/by-owner/${encodeURIComponent(ticketId)}`;
 
-    const resp = await fetch(workspaceUrl);
+    let resp = await fetch(workspaceUrl);
     if (!resp.ok) {
-      throw new Error(`Workspace not found for ticket ${ticketId}: ${resp.status} ${await resp.text()}`);
+      // Workspace doesn't exist yet — create it automatically (GH-103: scrum-master dispatches without pre-creating workspaces)
+      logger.info({ ticketId, agentId }, 'Workspace not found — creating automatically');
+      const defaultRepoType = process.env.DEFAULT_WORKSPACE_REPO ?? 'nano-agent-team';
+      const createResp = await fetch(`http://localhost:${apiPort}/internal/workspaces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoType: defaultRepoType, ownerId: ticketId }),
+      });
+      if (!createResp.ok) {
+        const detail = await createResp.text().catch(() => '');
+        throw new Error(`Failed to create workspace for ticket ${ticketId}: ${createResp.status} ${detail}`);
+      }
+      // Re-fetch by owner to get the full workspace info
+      resp = await fetch(workspaceUrl);
+      if (!resp.ok) {
+        throw new Error(`Workspace still not found after creation for ticket ${ticketId}`);
+      }
     }
     const workspace = await resp.json() as WorkspaceInfo;
 
