@@ -66,6 +66,7 @@ All notable changes to this project will be documented in this file.
 - NextTicketId uses MAX instead of COUNT, FK disabled during migration ([`968ea97`](https://github.com/nano-agent-team/nano-agent-team/commit/968ea9776b01deb4d1b4525a4709bbf4c41a6f0c))
 - Skip multi-instance integration tests when DinD unavailable ([`401925b`](https://github.com/nano-agent-team/nano-agent-team/commit/401925b9039443e628a9a3698021a09320f78e0a))
 - Add agent_id to alarm_set call in scrum-master handler ([`4d06723`](https://github.com/nano-agent-team/nano-agent-team/commit/4d067231b07c64968b3d254bd143a3bf2e1c86fc))
+- Increase orphan grace period to 5min, validate agent existence ([`8d5c46d`](https://github.com/nano-agent-team/nano-agent-team/commit/8d5c46db28f0429949a1e556f7ea098fe935ab94))
 
 ### Documentation
 
@@ -113,6 +114,7 @@ All notable changes to this project will be documented in this file.
 - Address remaining review issues in pull-over-push spec ([`4410e1b`](https://github.com/nano-agent-team/nano-agent-team/commit/4410e1beec7960672d832fafb92f5d8a41af429e))
 - Add pull-over-push implementation plan (GH-103) ([`6ee08a5`](https://github.com/nano-agent-team/nano-agent-team/commit/6ee08a57c859ea159657ccc82d1a61b25c5afc1c))
 - **ci:** Update CHANGELOG [skip ci] ([`cc3ef40`](https://github.com/nano-agent-team/nano-agent-team/commit/cc3ef40b0757696244b32ae05c3e80ae5c989a73))
+- **ci:** Update CHANGELOG [skip ci] ([`2c575a1`](https://github.com/nano-agent-team/nano-agent-team/commit/2c575a160b883fd5f12fa584766131e30b41ae2d))
 
 ### Features
 
