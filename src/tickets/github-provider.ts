@@ -40,6 +40,7 @@ interface GitHubNativeStatus {
 }
 
 const STATUS_LABEL_PREFIX = 'status:';
+const ASSIGNED_LABEL_PREFIX = 'assigned:';
 
 const ABSTRACT_TO_LABEL: Record<AbstractStatus, string | null> = {
   idea:        'status:idea',
@@ -138,8 +139,12 @@ export class GitHubIssuesProvider implements TicketProvider {
   private issueToTicket(issue: GHIssue): Ticket {
     const statusLabel = issue.labels.find(l => l.name.startsWith(STATUS_LABEL_PREFIX));
     const nativeStatus: GitHubNativeStatus = { state: issue.state, label: statusLabel?.name };
+    // Extract assigned agent from label (assigned:sd-developer)
+    const assignedLabel = issue.labels.find(l => l.name.startsWith(ASSIGNED_LABEL_PREFIX));
+    const assignedAgent = assignedLabel ? assignedLabel.name.slice(ASSIGNED_LABEL_PREFIX.length) : null;
+
     const otherLabels = issue.labels
-      .filter(l => !l.name.startsWith(STATUS_LABEL_PREFIX))
+      .filter(l => !l.name.startsWith(STATUS_LABEL_PREFIX) && !l.name.startsWith(ASSIGNED_LABEL_PREFIX))
       .map(l => l.name);
 
     // Infer priority from label "priority:HIGH" etc.
@@ -161,7 +166,7 @@ export class GitHubIssuesProvider implements TicketProvider {
       status: this.statusMapper.fromNative(nativeStatus),
       priority,
       type,
-      assignee: issue.assignee?.login ?? null,
+      assignee: assignedAgent ?? issue.assignee?.login ?? null,
       author: issue.user?.login ?? null,
       labels: otherLabels,
       provider: 'github',
@@ -239,7 +244,19 @@ export class GitHubIssuesProvider implements TicketProvider {
 
     if (data.title !== undefined) patch.title = data.title;
     if (data.body !== undefined)  patch.body = data.body;
-    if (data.assignee !== undefined) patch.assignees = data.assignee ? [data.assignee] : [];
+    // Store agent assignee as label (assigned:sd-developer) — agent IDs are not GitHub users
+    if (data.assignee !== undefined) {
+      const issue = await this.ghFetch<GHIssue>(`/issues/${number}`);
+      const currentLabels = (patch.labels as string[] | undefined) ?? issue.labels.map(l => l.name);
+      // Remove old assigned: labels
+      const filtered = currentLabels.filter(l => !l.startsWith(ASSIGNED_LABEL_PREFIX));
+      if (data.assignee) {
+        const newLabel = `${ASSIGNED_LABEL_PREFIX}${data.assignee}`;
+        await this.ensureLabel(newLabel, '1d76db');
+        filtered.push(newLabel);
+      }
+      patch.labels = filtered;
+    }
 
     // Status change: update state + swap status label
     if (data.status !== undefined) {
@@ -287,9 +304,16 @@ export class GitHubIssuesProvider implements TicketProvider {
       params.set('state', 'all');
     }
 
-    if (filters.assignee) params.set('assignee', filters.assignee);
+    // Don't use GitHub assignee filter — agent IDs are stored as labels, not GitHub users
+    // Filter client-side below
 
     let issues = await this.ghFetch<GHIssue[]>(`/issues?${params}`);
+
+    // Client-side filter for assignee: match assigned:AGENT_ID label
+    if (filters.assignee) {
+      const targetLabel = `${ASSIGNED_LABEL_PREFIX}${filters.assignee}`;
+      issues = issues.filter(i => i.labels.some(l => l.name === targetLabel));
+    }
 
     // Client-side filter for 'idea' status: exclude issues that have explicit status labels
     if (filters.status === 'idea') {
