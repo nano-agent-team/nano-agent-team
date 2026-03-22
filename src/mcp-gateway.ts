@@ -355,10 +355,10 @@ function buildMcpServer(
   if (canCallBuiltin(permissions, 'tickets', 'ticket_approve')) {
     server.tool(
       'ticket_approve',
-      'Approve a ticket. Transitions status to "waiting" and triggers NATS pipeline event.',
+      'Approve a ticket for the pipeline. Sets status to "waiting" and assigns to the next agent. Assignee is REQUIRED.',
       {
         ticket_id: z.string().describe('Ticket ID'),
-        assignee:  z.string().optional().describe('Assign to this agent (e.g. "architect")'),
+        assignee:  z.string().describe('REQUIRED: Next agent to process this ticket (e.g. "sd-architect")'),
       },
       async ({ ticket_id, assignee }) => {
         const ticket = await registry.updateTicket(ticket_id, { status: 'waiting', assignee }, agentId);
@@ -1049,7 +1049,7 @@ export class McpGateway {
       tools.push({ name: 'ticket_update', description: 'Update ticket fields. Pass status to transition pipeline: "in_progress" triggers Developer, "review" triggers Reviewer, "done" closes.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' }, priority: { type: 'string' }, assignee: { type: 'string' }, status: { type: 'string' }, expected_status: { type: 'string' } } } });
     }
     if (canCallBuiltin(permissions, 'tickets', 'ticket_approve')) {
-      tools.push({ name: 'ticket_approve', description: 'Approve a ticket.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' }, assignee: { type: 'string' } } } });
+      tools.push({ name: 'ticket_approve', description: 'Approve a ticket. Assignee is REQUIRED.', inputSchema: { type: 'object', required: ['ticket_id', 'assignee'], properties: { ticket_id: { type: 'string' }, assignee: { type: 'string', description: 'Next agent (e.g. sd-architect)' } } } });
     }
     if (canCallBuiltin(permissions, 'tickets', 'ticket_reject')) {
       tools.push({ name: 'ticket_reject', description: 'Reject a ticket.', inputSchema: { type: 'object', required: ['ticket_id'], properties: { ticket_id: { type: 'string' } } } });
