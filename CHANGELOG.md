@@ -145,6 +145,9 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`f4cde55`](https://github.com/nano-agent-team/nano-agent-team/commit/f4cde556fcc4338cdf2ab6e1db1c6c8c85ce1480))
 - **ci:** Update CHANGELOG [skip ci] ([`2ebdf70`](https://github.com/nano-agent-team/nano-agent-team/commit/2ebdf70534cc7b3f0b4cea785c14e480672f1902))
 - **ci:** Update CHANGELOG [skip ci] ([`a4dbd37`](https://github.com/nano-agent-team/nano-agent-team/commit/a4dbd371a4d71ad04201804f359f1bd6e84b02c6))
+- Add deterministic handoff design spec ([`79e6642`](https://github.com/nano-agent-team/nano-agent-team/commit/79e66421ab060e149f3589312f982281528e005b))
+- Add deterministic handoff implementation plan ([`e0acc45`](https://github.com/nano-agent-team/nano-agent-team/commit/e0acc4546b40aa01b95ec98ef7c02f8372b7159c))
+- **ci:** Update CHANGELOG [skip ci] ([`5463e33`](https://github.com/nano-agent-team/nano-agent-team/commit/5463e33b220dcdf6f6250509157df705231c3a27))
 
 ### Features
 
@@ -223,6 +226,10 @@ All notable changes to this project will be documented in this file.
 - Add deterministic-runner to build pipeline (GH-103) ([`c510783`](https://github.com/nano-agent-team/nano-agent-team/commit/c510783868953a60abb27d925c264e6504d4ab23))
 - Implement scrum-master deterministic handler (GH-103) ([`0cceff8`](https://github.com/nano-agent-team/nano-agent-team/commit/0cceff8693794d218ad8bf614a6b3d3db0dfe7e6))
 - Merge workspace-provider with pull-over-push (#44) ([`c8dfc95`](https://github.com/nano-agent-team/nano-agent-team/commit/c8dfc9589d72fca4ee476bc680dc291dd0300499))
+- Add verdict field to ticket comments ([`535be1d`](https://github.com/nano-agent-team/nano-agent-team/commit/535be1d27926d089857b1e5dc7a063da58a7d2c9))
+- Add verdict to ticket_comment MCP tool Zod schemas ([`4e5190b`](https://github.com/nano-agent-team/nano-agent-team/commit/4e5190bac1d18c50377632f2dd0eb68084f75a27))
+- Agent-runner after-work hook sets done for ephemeral agents ([`0a20b33`](https://github.com/nano-agent-team/nano-agent-team/commit/0a20b33a20f07de05546abb193afa0cbe0cd3b53))
+- Scrum-master routes done tickets via pipeline config from workflow.json ([`3865d64`](https://github.com/nano-agent-team/nano-agent-team/commit/3865d64da4935414297703d1aa87dada7813b6a4))
 
 ### Miscellaneous
 
@@ -242,6 +249,7 @@ All notable changes to this project will be documented in this file.
 - Update LocalStatusMapper to 5-status model, add expected_status ([`0ed2322`](https://github.com/nano-agent-team/nano-agent-team/commit/0ed23221269803ec49af7c0d25c8c9202b27cbe3))
 - Update GitHub provider status labels (GH-103) ([`e5ca9a9`](https://github.com/nano-agent-team/nano-agent-team/commit/e5ca9a9b25f97486b47cbf8341891e4eddb72238))
 - Migrate ticket statuses to 5-state model (GH-103) ([`3f59ec7`](https://github.com/nano-agent-team/nano-agent-team/commit/3f59ec76aae6a01d54520c95c8c241d18e6366d8))
+- Scrum-master reads pipeline config from own manifest ([`9d40fa1`](https://github.com/nano-agent-team/nano-agent-team/commit/9d40fa16a9c454bb816ca19c44d7a5ed3398c379))
 
 ### Tests
 
