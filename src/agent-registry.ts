@@ -88,6 +88,8 @@ export interface AgentManifest {
   /** Mount worktree from workspace provider based on ticket_id in NATS payload.
    *  When set, agent runs as ephemeral: new container per task, workspace resolved from message payload. */
   workspace_source?: 'ticket';
+  /** Handler module name for deterministic agents. Required when kind === 'deterministic'. */
+  handler?: string;
 }
 
 // ─── Workflow Binding ─────────────────────────────────────────────────────────

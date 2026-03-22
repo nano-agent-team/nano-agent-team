@@ -13,8 +13,8 @@
  * T4 — MCP Gateway ticket_get tool call (deterministic)
  *
  * T5 — Full pipeline simulation with NATS events
- *   create ticket → PM approves (PATCH status=approved) → NATS topic.ticket.approved fires
- *   → Architect sets spec (PATCH status=in_progress) → NATS topic.ticket.spec-ready fires
+ *   create ticket → PM approves (PATCH status=waiting) → NATS topic.ticket.waiting fires
+ *   → Agent claims (PATCH status=in_progress) → NATS topic.ticket.claimed fires
  *
  * Prerequisites:
  *   - Stack running on localhost:3001 (API) and localhost:4222 (NATS) and localhost:3003 (MCP Gateway)
@@ -124,31 +124,23 @@ describe('T1 — TicketRegistry: NATS pipeline events on status transition', () 
     ticketId = t.id;
   });
 
-  test('T1.1 — idea → approved publishes topic.ticket.approved', async () => {
-    const collect = await listenNats('topic.ticket.approved', 5000);
-    await patchTicket(ticketId, { status: 'approved' });
+  test('T1.1 — idea → waiting publishes topic.ticket.waiting', async () => {
+    const collect = await listenNats('topic.ticket.waiting', 5000);
+    await patchTicket(ticketId, { status: 'waiting' });
     const event = await collect();
     expect(event.ticket_id).toBe(ticketId);
-    expect(event.status).toBe('approved');
+    expect(event.status).toBe('waiting');
   });
 
-  test('T1.2 — approved → in_progress publishes topic.ticket.spec-ready', async () => {
-    const collect = await listenNats('topic.ticket.spec-ready', 5000);
+  test('T1.2 — waiting → in_progress publishes topic.ticket.claimed', async () => {
+    const collect = await listenNats('topic.ticket.claimed', 5000);
     await patchTicket(ticketId, { status: 'in_progress' });
     const event = await collect();
     expect(event.ticket_id).toBe(ticketId);
     expect(event.status).toBe('in_progress');
   });
 
-  test('T1.3 — in_progress → review publishes topic.pr.opened', async () => {
-    const collect = await listenNats('topic.pr.opened', 5000);
-    await patchTicket(ticketId, { status: 'review' });
-    const event = await collect();
-    expect(event.ticket_id).toBe(ticketId);
-    expect(event.status).toBe('review');
-  });
-
-  test('T1.4 — review → done publishes topic.ticket.done', async () => {
+  test('T1.3 — in_progress → done publishes topic.ticket.done', async () => {
     const collect = await listenNats('topic.ticket.done', 5000);
     await patchTicket(ticketId, { status: 'done' });
     const event = await collect();
@@ -156,18 +148,19 @@ describe('T1 — TicketRegistry: NATS pipeline events on status transition', () 
     expect(event.status).toBe('done');
   });
 
-  test('T1.5 — no event for untracked transition (idea → pending_input)', async () => {
+  test('T1.4 — no event for untracked transition (idea → idea, already idea)', async () => {
     const t2 = await createTicket(`No-event test ${Date.now()}`);
-    // Subscribe briefly — expect NO message
+    // Subscribe briefly — expect NO message for 'rejected' subject
     let received = false;
     const nc = await connect({ servers: NATS_URL });
     try {
-      const sub = nc.subscribe('topic.ticket.done', { max: 1 });
+      const sub = nc.subscribe('topic.ticket.rejected', { max: 1 });
       const timeout = new Promise<void>(resolve => setTimeout(resolve, 1500));
       const race = (async () => {
         for await (const _ of sub) { received = true; break; }
       })();
-      await patchTicket(t2.id, { status: 'pending_input' });
+      // idea has no NATS event mapping, so no message should fire
+      await patchTicket(t2.id, { status: 'idea' });
       await timeout;
       sub.unsubscribe();
       await race.catch(() => {});
@@ -237,13 +230,13 @@ describe('T4 — MCP Gateway: deterministic tool calls', () => {
     const text = res.result?.content?.[0]?.text ?? '';
     const parsed = JSON.parse(text) as { ticket: { id: string; status: string } };
     expect(parsed.ticket.id).toBe(ticketId);
-    expect(parsed.ticket.status).toBe('new'); // 'idea' maps to 'new' in abstract model
+    expect(parsed.ticket.status).toBe('idea');
   });
 
   test('T4.2 — tickets_list returns tickets', async () => {
     const res = await mcpRequest('tools/call', {
       name: 'tickets_list',
-      arguments: { status: 'new' },
+      arguments: { status: 'idea' },
     }) as { result?: { content?: Array<{ text: string }> } };
 
     const text = res.result?.content?.[0]?.text ?? '';
@@ -252,8 +245,8 @@ describe('T4 — MCP Gateway: deterministic tool calls', () => {
     expect(tickets.some(t => t.id === ticketId)).toBe(true);
   });
 
-  test('T4.3 — ticket_approve transitions status and returns approved ticket', async () => {
-    const collectApproved = await listenNats('topic.ticket.approved', 5000);
+  test('T4.3 — ticket_approve transitions status to waiting and fires NATS event', async () => {
+    const collectWaiting = await listenNats('topic.ticket.waiting', 5000);
 
     const res = await mcpRequest('tools/call', {
       name: 'ticket_approve',
@@ -262,10 +255,10 @@ describe('T4 — MCP Gateway: deterministic tool calls', () => {
 
     const text = res.result?.content?.[0]?.text ?? '';
     const ticket = JSON.parse(text) as { status: string; assignee: string };
-    expect(ticket.status).toBe('approved');
+    expect(ticket.status).toBe('waiting');
 
     // NATS event must fire from the MCP Gateway call
-    const event = await collectApproved();
+    const event = await collectWaiting();
     expect(event.ticket_id).toBe(ticketId);
   });
 
@@ -287,23 +280,19 @@ describe('T4 — MCP Gateway: deterministic tool calls', () => {
 describe('T5 — Full pipeline: ticket lifecycle without LLM', () => {
   let ticketId: string;
 
-  test('T5 — idea → approved → spec_ready → review → done (all NATS events fire)', async () => {
+  test('T5 — idea → waiting → in_progress → done (all NATS events fire)', async () => {
     const t = await createTicket(`Full pipeline ${Date.now()}`, 'HIGH');
     ticketId = t.id;
 
     // Each NATS listener must be set up BEFORE the status change.
     // listenNats() connects + subscribes + flushes before returning.
-    const collectApproved = await listenNats('topic.ticket.approved',   4000);
-    await patchTicket(ticketId, { status: 'approved' });
-    await expect(collectApproved()).resolves.toMatchObject({ ticket_id: ticketId, status: 'approved' });
+    const collectWaiting = await listenNats('topic.ticket.waiting',   4000);
+    await patchTicket(ticketId, { status: 'waiting' });
+    await expect(collectWaiting()).resolves.toMatchObject({ ticket_id: ticketId, status: 'waiting' });
 
-    const collectSpecReady = await listenNats('topic.ticket.spec-ready', 4000);
+    const collectClaimed = await listenNats('topic.ticket.claimed', 4000);
     await patchTicket(ticketId, { status: 'in_progress' });
-    await expect(collectSpecReady()).resolves.toMatchObject({ ticket_id: ticketId, status: 'in_progress' });
-
-    const collectPrOpened = await listenNats('topic.pr.opened',         4000);
-    await patchTicket(ticketId, { status: 'review' });
-    await expect(collectPrOpened()).resolves.toMatchObject({ ticket_id: ticketId, status: 'review' });
+    await expect(collectClaimed()).resolves.toMatchObject({ ticket_id: ticketId, status: 'in_progress' });
 
     const collectDone = await listenNats('topic.ticket.done',           4000);
     await patchTicket(ticketId, { status: 'done' });

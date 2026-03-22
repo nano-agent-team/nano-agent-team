@@ -62,6 +62,10 @@ All notable changes to this project will be documented in this file.
 - **api:** Auto-refresh review fixes — shutdown cleanup, in-flight guard ([`d710e9b`](https://github.com/nano-agent-team/nano-agent-team/commit/d710e9b5dba2952b7db69dc692dd135988d79766))
 - **docker:** Add COPY skills/ to agent Dockerfile (missing from GH-30) ([`65433e0`](https://github.com/nano-agent-team/nano-agent-team/commit/65433e08f5309825b733cea143443d20ee34b2a1))
 - SSE event name, revert unrelated files, fix stale workflow cache ([`c50c5e1`](https://github.com/nano-agent-team/nano-agent-team/commit/c50c5e153a55a7adfffdeacef995ad49fdb44769))
+- Update tests for 5-status model (GH-103) ([`c305c19`](https://github.com/nano-agent-team/nano-agent-team/commit/c305c19df0d988e21cddf00e923e9d72b08ba15f))
+- NextTicketId uses MAX instead of COUNT, FK disabled during migration ([`968ea97`](https://github.com/nano-agent-team/nano-agent-team/commit/968ea9776b01deb4d1b4525a4709bbf4c41a6f0c))
+- Skip multi-instance integration tests when DinD unavailable ([`401925b`](https://github.com/nano-agent-team/nano-agent-team/commit/401925b9039443e628a9a3698021a09320f78e0a))
+- Add agent_id to alarm_set call in scrum-master handler ([`4d06723`](https://github.com/nano-agent-team/nano-agent-team/commit/4d067231b07c64968b3d254bd143a3bf2e1c86fc))
 
 ### Documentation
 
@@ -101,6 +105,14 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`8d67242`](https://github.com/nano-agent-team/nano-agent-team/commit/8d672420c414f4f820aa5bafd686a0115171ffb6))
 - **ci:** Update CHANGELOG [skip ci] ([`89091a8`](https://github.com/nano-agent-team/nano-agent-team/commit/89091a80dde5874635caa6b02447095804ac2276))
 - **ci:** Update CHANGELOG [skip ci] ([`afe9717`](https://github.com/nano-agent-team/nano-agent-team/commit/afe9717bfe5ee73514ecdbd74103529033d83a84))
+- **ci:** Update CHANGELOG [skip ci] ([`a196c64`](https://github.com/nano-agent-team/nano-agent-team/commit/a196c649dc10780a89d8a35bd88349b80aedf5b8))
+- Add workspace provider & deployment pipeline design spec ([`32777ac`](https://github.com/nano-agent-team/nano-agent-team/commit/32777ac5d80e73126c48e101d3ef7ddfa0de972c))
+- Add workspace provider implementation plan (14 tasks) ([`0d45923`](https://github.com/nano-agent-team/nano-agent-team/commit/0d45923dc86d64b63f6b4ecd3a1795e1d36d7147))
+- **ci:** Update CHANGELOG [skip ci] ([`4b180d9`](https://github.com/nano-agent-team/nano-agent-team/commit/4b180d92cf0e151a457ee2fa12e50581b6c5a463))
+- Add pull-over-push design spec (GH-103) ([`fb2122c`](https://github.com/nano-agent-team/nano-agent-team/commit/fb2122c8b2bcd960560ebe632e1b9d8717b54641))
+- Address remaining review issues in pull-over-push spec ([`4410e1b`](https://github.com/nano-agent-team/nano-agent-team/commit/4410e1beec7960672d832fafb92f5d8a41af429e))
+- Add pull-over-push implementation plan (GH-103) ([`6ee08a5`](https://github.com/nano-agent-team/nano-agent-team/commit/6ee08a57c859ea159657ccc82d1a61b25c5afc1c))
+- **ci:** Update CHANGELOG [skip ci] ([`cc3ef40`](https://github.com/nano-agent-team/nano-agent-team/commit/cc3ef40b0757696244b32ae05c3e80ae5c989a73))
 
 ### Features
 
@@ -161,6 +173,13 @@ All notable changes to this project will be documented in this file.
 - **api:** Fix credential proxy for OAuth — host header, org UUID, gate-pass token ([`3825433`](https://github.com/nano-agent-team/nano-agent-team/commit/38254332d99dfc014bb5e63538bca205facbee8c))
 - **api:** Auto-refresh OAuth token before expiry ([`8cb1b6e`](https://github.com/nano-agent-team/nano-agent-team/commit/8cb1b6ee235df1389d3f46f6b69f32eb77c39d8a))
 - **dashboard:** Replace agent list with Vue Flow graph (GH-45) ([`19e3363`](https://github.com/nano-agent-team/nano-agent-team/commit/19e336351701954791ce072ee3c32020d9bd9a32))
+- Add expected_status optimistic lock to API + MCP tools (GH-103) ([`c0d4b36`](https://github.com/nano-agent-team/nano-agent-team/commit/c0d4b36d696ad7513a9c8e9fa10b1ac4df59f2ee))
+- Add ticketId to heartbeat payload and getStates (GH-103) ([`0a0fa81`](https://github.com/nano-agent-team/nano-agent-team/commit/0a0fa816f2afe247223d18ad1404c3dde65ba02d))
+- Scaffold deterministic-runner container (GH-103) ([`9c37f9c`](https://github.com/nano-agent-team/nano-agent-team/commit/9c37f9c9095eb900525dea1a0048cee2753fcd2a))
+- Implement deterministic runner core (GH-103) ([`1d8955e`](https://github.com/nano-agent-team/nano-agent-team/commit/1d8955e94622f17e74bf89b7d08111e2645175ed))
+- Agent-manager support for deterministic agents (GH-103) ([`e4e49f6`](https://github.com/nano-agent-team/nano-agent-team/commit/e4e49f611971bcd69a4519b5953c21956382ce4e))
+- Add deterministic-runner to build pipeline (GH-103) ([`c510783`](https://github.com/nano-agent-team/nano-agent-team/commit/c510783868953a60abb27d925c264e6504d4ab23))
+- Implement scrum-master deterministic handler (GH-103) ([`0cceff8`](https://github.com/nano-agent-team/nano-agent-team/commit/0cceff8693794d218ad8bf614a6b3d3db0dfe7e6))
 
 ### Miscellaneous
 
@@ -175,6 +194,10 @@ All notable changes to this project will be documented in this file.
 ### Refactoring
 
 - Route POST /api/tickets through ticketRegistry ([`dd1b94a`](https://github.com/nano-agent-team/nano-agent-team/commit/dd1b94a9d079eeedaa00871aaed91cf4ddb47d30))
+- Simplify AbstractStatus to 5 states (GH-103) ([`bfd4e81`](https://github.com/nano-agent-team/nano-agent-team/commit/bfd4e810af9b46fc1b7d2824210df688deb5f631))
+- Update LocalStatusMapper to 5-status model, add expected_status ([`0ed2322`](https://github.com/nano-agent-team/nano-agent-team/commit/0ed23221269803ec49af7c0d25c8c9202b27cbe3))
+- Update GitHub provider status labels (GH-103) ([`e5ca9a9`](https://github.com/nano-agent-team/nano-agent-team/commit/e5ca9a9b25f97486b47cbf8341891e4eddb72238))
+- Migrate ticket statuses to 5-state model (GH-103) ([`3f59ec7`](https://github.com/nano-agent-team/nano-agent-team/commit/3f59ec76aae6a01d54520c95c8c241d18e6366d8))
 
 ### Tests
 

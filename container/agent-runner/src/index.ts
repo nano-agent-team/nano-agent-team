@@ -137,6 +137,7 @@ interface HeartbeatPayload {
   ts: number;
   busy?: boolean;
   task?: string;
+  ticketId?: string;
 }
 
 // ─── Session management ──────────────────────────────────────────────────────
@@ -284,6 +285,7 @@ async function main(): Promise<void> {
   let baseTask = '';
   let currentTask = '';
   let isBusy = false;
+  let currentTicketId: string | undefined;
   let heartbeatTimer: ReturnType<typeof setInterval>;
 
   function publishHeartbeat() {
@@ -291,6 +293,7 @@ async function main(): Promise<void> {
       agentId: AGENT_ID, ts: Date.now(),
       busy: isBusy,
       ...(currentTask ? { task: currentTask } : {}),
+      ...(currentTicketId ? { ticketId: currentTicketId } : {}),
     };
     try {
       nc.publish(`health.${AGENT_ID}`, codec.encode(JSON.stringify(payload)));
@@ -467,6 +470,7 @@ async function main(): Promise<void> {
         ?? (payload as Record<string, unknown>).title as string | undefined;
       const chatText = (payload as Record<string, unknown>).text as string | undefined;
 
+      currentTicketId = ticketId;
       if (ticketId) {
         baseTask = ticketTitle ? `${ticketId}: ${ticketTitle}` : ticketId;
       } else if (chatText) {
@@ -655,6 +659,7 @@ async function main(): Promise<void> {
       isBusy = false;
       baseTask = '';
       currentTask = '';
+      currentTicketId = undefined;
       publishHeartbeat();
 
       msg.ack();

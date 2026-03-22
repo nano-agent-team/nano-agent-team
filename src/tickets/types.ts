@@ -8,13 +8,11 @@
 // ─── Abstract status model ────────────────────────────────────────────────────
 
 export type AbstractStatus =
-  | 'new'
-  | 'approved'
+  | 'idea'
+  | 'waiting'
   | 'in_progress'
-  | 'review'
   | 'done'
-  | 'rejected'
-  | 'pending_input';
+  | 'rejected';
 
 export type TicketPriority = 'CRITICAL' | 'HIGH' | 'MED' | 'LOW';
 export type TicketType = 'epic' | 'story' | 'task' | 'bug' | 'idea';
@@ -73,6 +71,8 @@ export interface UpdateTicketData {
   priority?: TicketPriority;
   assignee?: string;
   labels?: string[];
+  /** Optimistic lock: only update if current status matches (GH-103). Returns 409 on mismatch. */
+  expected_status?: AbstractStatus;
 }
 
 export interface TicketFilters {
@@ -88,9 +88,8 @@ export interface TicketFilters {
  * automatically publishes the corresponding NATS subject.
  */
 export const STATUS_NATS_EVENTS: Partial<Record<AbstractStatus, string>> = {
-  approved:     'topic.ticket.approved',
-  in_progress:  'topic.ticket.spec-ready',
-  review:       'topic.pr.opened',
-  done:         'topic.ticket.done',
-  rejected:     'topic.ticket.rejected',
+  waiting:     'topic.ticket.waiting',
+  in_progress: 'topic.ticket.claimed',
+  done:        'topic.ticket.done',
+  rejected:    'topic.ticket.rejected',
 };

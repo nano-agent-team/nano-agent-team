@@ -769,6 +769,7 @@ export async function createApiApp(
       const body = req.body as {
         title?: string; body?: string; status?: string; priority?: string;
         assigned_to?: string; labels?: string; changed_by?: string;
+        expected_status?: string;
       };
 
       // Map snake_case API body → UpdateTicketData (abstract model)
@@ -779,6 +780,7 @@ export async function createApiApp(
         ...(body.priority !== undefined && { priority: body.priority as TP }),
         ...(body.assigned_to !== undefined && { assignee: body.assigned_to }),
         ...(body.labels !== undefined && { labels: body.labels ? body.labels.split(',').map(l => l.trim()) : [] }),
+        ...(body.expected_status !== undefined && { expected_status: body.expected_status as AbstractStatus }),
       };
 
       // registry.updateTicket fires NATS pipeline events on status transitions
@@ -789,6 +791,9 @@ export async function createApiApp(
       emitSseEvent('ticket_updated', { ticket: updated });
       res.json(updated);
     } catch (err) {
+      if (err instanceof Error && (err as any).statusCode === 409) {
+        return res.status(409).json({ error: 'Status conflict', detail: err.message });
+      }
       if (err instanceof Error && err.message.includes('CHECK constraint')) {
         return res.status(400).json({ error: 'Invalid field value', detail: err.message });
       }
