@@ -70,6 +70,7 @@ All notable changes to this project will be documented in this file.
 - Skip multi-instance integration tests when DinD unavailable ([`401925b`](https://github.com/nano-agent-team/nano-agent-team/commit/401925b9039443e628a9a3698021a09320f78e0a))
 - Add agent_id to alarm_set call in scrum-master handler ([`4d06723`](https://github.com/nano-agent-team/nano-agent-team/commit/4d067231b07c64968b3d254bd143a3bf2e1c86fc))
 - Increase orphan grace period to 5min, validate agent existence ([`8d5c46d`](https://github.com/nano-agent-team/nano-agent-team/commit/8d5c46db28f0429949a1e556f7ea098fe935ab94))
+- Auto-create workspace when ephemeral container needs one ([`877aff2`](https://github.com/nano-agent-team/nano-agent-team/commit/877aff2748a6f04d7967883b39a5160afda17f4c))
 
 ### Documentation
 
@@ -131,6 +132,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`cc3ef40`](https://github.com/nano-agent-team/nano-agent-team/commit/cc3ef40b0757696244b32ae05c3e80ae5c989a73))
 - **ci:** Update CHANGELOG [skip ci] ([`2c575a1`](https://github.com/nano-agent-team/nano-agent-team/commit/2c575a160b883fd5f12fa584766131e30b41ae2d))
 - **ci:** Update CHANGELOG [skip ci] ([`2cfcf4c`](https://github.com/nano-agent-team/nano-agent-team/commit/2cfcf4c63ca51cc3588902b7ec199d9d84efc500))
+- **ci:** Update CHANGELOG [skip ci] ([`23544a4`](https://github.com/nano-agent-team/nano-agent-team/commit/23544a468393cf8d5265ff2b2528b9a88839eb93))
 
 ### Features
 
