@@ -65,6 +65,7 @@ All notable changes to this project will be documented in this file.
 - Update tests for 5-status model (GH-103) ([`c305c19`](https://github.com/nano-agent-team/nano-agent-team/commit/c305c19df0d988e21cddf00e923e9d72b08ba15f))
 - NextTicketId uses MAX instead of COUNT, FK disabled during migration ([`968ea97`](https://github.com/nano-agent-team/nano-agent-team/commit/968ea9776b01deb4d1b4525a4709bbf4c41a6f0c))
 - Skip multi-instance integration tests when DinD unavailable ([`401925b`](https://github.com/nano-agent-team/nano-agent-team/commit/401925b9039443e628a9a3698021a09320f78e0a))
+- Add agent_id to alarm_set call in scrum-master handler ([`4d06723`](https://github.com/nano-agent-team/nano-agent-team/commit/4d067231b07c64968b3d254bd143a3bf2e1c86fc))
 
 ### Documentation
 
@@ -111,6 +112,7 @@ All notable changes to this project will be documented in this file.
 - Add pull-over-push design spec (GH-103) ([`fb2122c`](https://github.com/nano-agent-team/nano-agent-team/commit/fb2122c8b2bcd960560ebe632e1b9d8717b54641))
 - Address remaining review issues in pull-over-push spec ([`4410e1b`](https://github.com/nano-agent-team/nano-agent-team/commit/4410e1beec7960672d832fafb92f5d8a41af429e))
 - Add pull-over-push implementation plan (GH-103) ([`6ee08a5`](https://github.com/nano-agent-team/nano-agent-team/commit/6ee08a57c859ea159657ccc82d1a61b25c5afc1c))
+- **ci:** Update CHANGELOG [skip ci] ([`cc3ef40`](https://github.com/nano-agent-team/nano-agent-team/commit/cc3ef40b0757696244b32ae05c3e80ae5c989a73))
 
 ### Features
 
