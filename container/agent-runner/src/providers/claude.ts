@@ -68,6 +68,18 @@ export class ClaudeProvider implements Provider {
       sdkOptions.env = { ...process.env, ...options.extraEnv };
     }
 
+    // Write project-scope .claude/settings.json so spawned teammates inherit MCP server config
+    // and run in in-process mode (no tmux needed in containers).
+    // Teammates load project-scope settings from cwd; they cannot access parent's sdkOptions at runtime.
+    // Overwrite is safe — MCP config derives from env vars that are constant per container lifecycle.
+    const settingsDir = path.join(options.cwd, '.claude');
+    const settingsPath = path.join(settingsDir, 'settings.json');
+    fs.mkdirSync(settingsDir, { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      mcpServers: options.mcpServers ?? {},
+      teammateMode: 'in-process',
+    }, null, 2), 'utf8');
+
     const q = query({ prompt: options.prompt, options: sdkOptions });
 
     let sessionId: string | undefined;
