@@ -33,6 +33,7 @@ import { resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
 import type { ConfigService, NanoConfig } from './config-service.js';
 import { codec } from './nats-client.js';
 import { WorkflowDispatcher } from './workflow-dispatcher.js';
+import type { AlarmClock } from './alarm-clock.js';
 
 interface ObservabilityConfig {
   level?: string;
@@ -84,14 +85,17 @@ export class AgentManager {
   private healthTimer?: NodeJS.Timeout;
   private proxyHost: string | null = null;
   private dispatcher: WorkflowDispatcher;
+  private alarmClock?: AlarmClock;
 
   constructor(
     private readonly nc: NatsConnection,
     private readonly configService?: ConfigService,
+    alarmClock?: AlarmClock,
   ) {
     // Default: connects via /var/run/docker.sock on Linux
     this.docker = new Dockerode();
     this.dispatcher = new WorkflowDispatcher(nc, () => this.getInstanceHeartbeats());
+    this.alarmClock = alarmClock;
   }
 
   /** Returns true when credentials.json exists — agents use proxy instead of direct token */
@@ -288,6 +292,13 @@ export class AgentManager {
         { id, containerId: container.id.slice(0, 12) },
         'Agent container started',
       );
+
+      // Bootstrap alarm for deterministic agents
+      if (agent.manifest.kind === 'deterministic' && this.alarmClock) {
+        this.alarmClock.cancelForAgent(id);
+        this.alarmClock.set(id, 10, { type: 'poll' });
+        logger.info({ agentId: id }, 'Bootstrap alarm set for deterministic agent');
+      }
     } catch (err) {
       logger.error({ err, id }, 'Failed to start agent container');
       const state = this.states.get(id);
@@ -670,60 +681,67 @@ export class AgentManager {
       }
     }
 
+    const isDeterministic = agent.manifest.kind === 'deterministic';
+
     const env = [
       `NATS_URL=${this.resolveNatsUrl()}`,
       `AGENT_ID=${agentId}`,
       `CONSUMER_NAME=${agent.consumerName ?? agentId}`,
       `SUBSCRIBE_TOPICS=${(Array.isArray(vaultConfig.subscribe_topics) && vaultConfig.subscribe_topics.length > 0 ? vaultConfig.subscribe_topics : resolveTopicsForAgent(agent.manifest, agent.binding, agentId)).join(',')}`,
-      `PROVIDER=${providerName}`,
+      `PROVIDER=${isDeterministic ? 'none' : providerName}`,
       `MODEL=${model}`,
-      `MODEL_EXPLICIT=${modelExplicit}`,
-      `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
-      `LOG_LEVEL=info`,
       // MCP Gateway — HTTP MCP server in nate, accessible from DinD via host.docker.internal
       `MCP_GATEWAY_URL=http://${this.resolveMcpGatewayHost()}:${MCP_GATEWAY_PORT}/mcp`,
-      // Provider-specific auth tokens
-      ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
-      ...(providerName === 'codex' && codexToken ? [
-        // Subscription token or API key
-        ...(codexToken.startsWith('sk-proj-') || codexToken.startsWith('sk-')
-          ? [`OPENAI_API_KEY=${codexToken}`]
-          : [`CODEX_OAUTH_TOKEN=${codexToken}`]
-        ),
-      ] : []),
-      ...(providerName === 'gemini' ? [
-        ...(config?.providers?.gemini?.apiKey ? [`GEMINI_API_KEY=${config.providers.gemini.apiKey}`] : []),
-        ...(process.env.GEMINI_API_KEY ? [`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`] : []),
-      ] : []),
       // Tickets MCP server DB path inside container
       `DB_PATH=/workspace/db/${path.basename(DB_PATH)}`,
-      // Pass CLAUDE.md content as env var (avoids Docker bind mount path resolution issues)
-      ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
-      // Inject MCP servers from mcp_config manifest field
-      ...(() => {
-        if (!agent.manifest.mcp_config) return [];
-        try {
-          const raw = fs.readFileSync(agent.manifest.mcp_config, 'utf8');
-          const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
-          const servers = parsed.mcpServers ?? {};
-          // Patch API_PORT and CONTROL_PLANE_URL to match current instance
-          const apiPort = process.env.API_PORT ?? '3001';
-          const cfg = servers as Record<string, { env?: Record<string, string> }>;
-          if (cfg.config?.env) cfg.config.env['API_PORT'] = apiPort;
-          if (cfg.management?.env) {
-            cfg.management.env['CONTROL_PLANE_URL'] = `http://host.docker.internal:${apiPort}`;
-          }
-          return [`AGENT_MCP_SERVERS=${JSON.stringify(servers)}`];
-        } catch {
-          return [];
-        }
-      })(),
+      `LOG_LEVEL=info`,
       // Pass GitHub token if available (from team config or env vars, for gh CLI and git push)
       ...(githubToken ? [`GH_TOKEN=${githubToken}`] : []),
-      // Inject allowed tools from manifest (e.g. ["Skill"] for superpowers skills)
-      ...(agent.manifest.allowedTools?.length ? [`AGENT_ALLOWED_TOOLS=${agent.manifest.allowedTools.join(',')}`] : []),
       // Pass repo URL from config (set during team install)
       ...(repoUrl ? [`REPO_URL=${repoUrl}`] : []),
+      // Deterministic agent: inject handler module name, skip all LLM-specific vars
+      ...(isDeterministic && agent.manifest.handler ? [`HANDLER=${agent.manifest.handler}`] : []),
+      // LLM-specific env vars (skipped for deterministic agents)
+      ...(!isDeterministic ? [
+        `MODEL_EXPLICIT=${modelExplicit}`,
+        `SESSION_TYPE=${agent.manifest.session_type ?? 'stateless'}`,
+        // Provider-specific auth tokens
+        ...(providerName === 'claude' ? await this.resolveClaudeEnv() : []),
+        ...(providerName === 'codex' && codexToken ? [
+          // Subscription token or API key
+          ...(codexToken.startsWith('sk-proj-') || codexToken.startsWith('sk-')
+            ? [`OPENAI_API_KEY=${codexToken}`]
+            : [`CODEX_OAUTH_TOKEN=${codexToken}`]
+          ),
+        ] : []),
+        ...(providerName === 'gemini' ? [
+          ...(config?.providers?.gemini?.apiKey ? [`GEMINI_API_KEY=${config.providers.gemini.apiKey}`] : []),
+          ...(process.env.GEMINI_API_KEY ? [`GEMINI_API_KEY=${process.env.GEMINI_API_KEY}`] : []),
+        ] : []),
+        // Pass CLAUDE.md content as env var (avoids Docker bind mount path resolution issues)
+        ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
+        // Inject allowed tools from manifest (e.g. ["Skill"] for superpowers skills)
+        ...(agent.manifest.allowedTools?.length ? [`AGENT_ALLOWED_TOOLS=${agent.manifest.allowedTools.join(',')}`] : []),
+        // Inject MCP servers from mcp_config manifest field
+        ...(() => {
+          if (!agent.manifest.mcp_config) return [];
+          try {
+            const raw = fs.readFileSync(agent.manifest.mcp_config, 'utf8');
+            const parsed = JSON.parse(raw) as { mcpServers?: Record<string, unknown> };
+            const servers = parsed.mcpServers ?? {};
+            // Patch API_PORT and CONTROL_PLANE_URL to match current instance
+            const apiPort = process.env.API_PORT ?? '3001';
+            const cfg = servers as Record<string, { env?: Record<string, string> }>;
+            if (cfg.config?.env) cfg.config.env['API_PORT'] = apiPort;
+            if (cfg.management?.env) {
+              cfg.management.env['CONTROL_PLANE_URL'] = `http://host.docker.internal:${apiPort}`;
+            }
+            return [`AGENT_MCP_SERVERS=${JSON.stringify(servers)}`];
+          } catch {
+            return [];
+          }
+        })(),
+      ] : []),
       // Observability: propagate OTel config to agent containers
       ...await this.getObservabilityEnvVars(),
       // Caller-supplied extras (e.g. WAIT_FOR_START_SIGNAL=true for rollover)
