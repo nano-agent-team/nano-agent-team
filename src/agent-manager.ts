@@ -54,6 +54,7 @@ interface AgentState {
   lastHeartbeat?: Date;
   busy?: boolean;
   task?: string;
+  ticketId?: string;
   /** Container being rolled in (zero-downtime deployment) */
   pendingContainerId?: string;
   rolloverTimeout?: NodeJS.Timeout;
@@ -66,6 +67,7 @@ interface HeartbeatPayload {
   ts: number;
   busy?: boolean;
   task?: string;
+  ticketId?: string;
 }
 
 interface AgentEnvAndBinds {
@@ -337,6 +339,7 @@ export class AgentManager {
     containerId?: string;
     busy?: boolean;
     task?: string;
+    ticketId?: string;
     rollingOver?: boolean;
   }> {
     return [...this.states.values()].map((s) => ({
@@ -348,6 +351,7 @@ export class AgentManager {
       containerId: s.containerId?.slice(0, 12),
       busy: s.busy,
       task: s.task,
+      ticketId: s.ticketId,
       rollingOver: s.status === 'rolling-over' || !!s.pendingContainerId,
     }));
   }
@@ -830,6 +834,7 @@ export class AgentManager {
             state.lastHeartbeat = new Date(payload.ts);
             state.busy = payload.busy ?? false;
             state.task = payload.task ?? '';
+            state.ticketId = (payload as any).ticketId ?? undefined;
             logger.debug({ agentId: payload.agentId, busy: state.busy }, 'Heartbeat received');
           }
         } catch {
