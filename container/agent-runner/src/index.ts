@@ -272,6 +272,27 @@ async function main(): Promise<void> {
       log.warn({ err }, 'Failed to write ephemeral result file');
     }
 
+    // ── After-work hook: set ticket to done (deterministic handoff) ──────
+    // Only on success — failed agents leave ticket in_progress for orphan detection
+    const ephemeralTicketId = process.env.EPHEMERAL_TICKET_ID;
+    if (!errorSubtype && ephemeralTicketId) {
+      try {
+        const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
+        const resp = await fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
+        });
+        if (resp.ok) {
+          log.info({ ticketId: ephemeralTicketId }, 'After-work: ticket set to done');
+        } else {
+          log.warn({ ticketId: ephemeralTicketId, status: resp.status }, 'After-work: failed to set done');
+        }
+      } catch (err) {
+        log.warn({ err, ticketId: ephemeralTicketId }, 'After-work: error (non-fatal)');
+      }
+    }
+
     process.exit(errorSubtype ? 1 : 0);
   }
 
