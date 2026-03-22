@@ -69,7 +69,7 @@ Expected: no TypeScript errors.
 
 ```bash
 git add src/agent-manager.ts
-git commit -m "feat: enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS for all LLM agents"
+git commit -m "feat: enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS for all agents"
 ```
 
 ---
@@ -201,9 +201,19 @@ cd /Users/rpridal/workspace/nano-agent-team-project/nano-agent-team
 docker compose down && docker compose up --build -d
 ```
 
-- [ ] **Step 3: Verify env var is set in a running agent container**
+- [ ] **Step 3: Restart persistent agent containers**
 
-Wait for a persistent agent to start (e.g. sd-pm), then:
+`docker compose up --build` restarts the control plane but does NOT restart already-running persistent agent containers. The new env var is injected at container start by `buildAgentEnvAndBinds()` — existing containers have the old env. Restart each persistent agent:
+
+```bash
+curl -s -X POST http://localhost:3001/api/agents/sd-pm/restart
+curl -s -X POST http://localhost:3001/api/agents/sd-architect/restart
+# repeat for any other persistent agents shown in: curl -s http://localhost:3001/api/agents | jq '.[].id'
+```
+
+- [ ] **Step 4: Verify env var is set in a running agent container**
+
+After persistent agents restart:
 
 ```bash
 docker exec nano-agent-sd-pm env | grep CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS
@@ -214,14 +224,14 @@ Expected output:
 CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 ```
 
-- [ ] **Step 4: Verify settings.json write in ephemeral agent**
+- [ ] **Step 5: Verify settings.json write in ephemeral agent**
 
 Send a test ticket through the pipeline and check the resulting workspace:
 
 ```bash
 ls /Users/rpridal/workspace/nano-agent-team-project/nano-agent-team/data/workspaces/active/
-# pick a ws-* dir
-cat data/workspaces/active/ws-<id>/.claude/settings.json
+# pick a ws-* dir and use the full absolute path:
+cat /Users/rpridal/workspace/nano-agent-team-project/nano-agent-team/data/workspaces/active/ws-<id>/.claude/settings.json
 ```
 
 Expected: JSON with `mcpServers` and `teammateMode: "in-process"`.
@@ -255,12 +265,24 @@ Spec: `docs/superpowers/specs/2026-03-22-agent-teams-design.md`
 EOF
 ```
 
-- [ ] **Step 2: Create GH issue in core repo**
+- [ ] **Step 2: Ensure the `enhancement` label exists in the repo**
+
+```bash
+gh label list --repo nano-agent-team/nano-agent-team | grep enhancement
+```
+
+If not present, create it:
+
+```bash
+gh label create enhancement --repo nano-agent-team/nano-agent-team --color 0075ca
+```
+
+- [ ] **Step 3: Create GH issue in core repo**
 
 ```bash
 gh issue create \
   --repo nano-agent-team/nano-agent-team \
-  --title "feat: enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS for all LLM agents" \
+  --title "feat: enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS for all agents" \
   --label "enhancement" \
   --body-file /tmp/agent-teams-issue.md
 ```
