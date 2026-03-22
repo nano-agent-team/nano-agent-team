@@ -173,3 +173,33 @@ describe('B5 — POST /api/tickets/:id/comments', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('B-source_id — source_id field on tickets', () => {
+  let ticketId: string;
+
+  test('POST /api/tickets with source_id stores and returns it', async () => {
+    const res = await fetch(`${BASE}/api/tickets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: 'Transfer test', source_id: 'GH-999' }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.source_id).toBe('GH-999');
+    ticketId = body.id as string;
+  });
+
+  test('GET /api/tickets/:id returns source_id', async () => {
+    const res = await fetch(`${BASE}/api/tickets/${ticketId}`);
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.source_id).toBe('GH-999');
+  });
+
+  test('GET /api/tickets list includes source_id', async () => {
+    const res = await fetch(`${BASE}/api/tickets`);
+    const list = await res.json() as Array<Record<string, unknown>>;
+    const found = list.find(t => t.id === ticketId);
+    expect(found?.source_id).toBe('GH-999');
+  });
+});

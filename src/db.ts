@@ -175,6 +175,15 @@ function createSchema(database: Database.Database): void {
     }
   } catch { /* table may not exist yet */ }
 
+  // Migration: add source_id column to tickets if missing
+  try {
+    const ticketCols = database.pragma('table_info(tickets)') as Array<{ name: string }>;
+    if (!ticketCols.some(c => c.name === 'source_id')) {
+      database.exec('ALTER TABLE tickets ADD COLUMN source_id TEXT DEFAULT NULL');
+      logger.info('Added source_id column to tickets');
+    }
+  } catch { /* table may not exist yet */ }
+
   // Enable WAL mode for concurrent access
   try {
     database.pragma('journal_mode = WAL');
@@ -237,6 +246,7 @@ export interface Ticket {
   labels?: string | null;
   body?: string | null;
   model_hint?: string | null;
+  source_id?: string | null;
   created_at: string;
   updated_at: string;
 }

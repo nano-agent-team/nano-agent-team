@@ -64,6 +64,7 @@ function dbToTicket(row: DbTicket): Ticket {
     provider: 'local',
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    source_id: (row as unknown as { source_id?: string | null }).source_id ?? null,
   };
 }
 
@@ -91,9 +92,9 @@ export class LocalTicketProvider implements TicketProvider {
 
     db.prepare(`
       INSERT INTO tickets
-        (id, title, status, priority, type, parent_id, blocked_by, author, assigned_to, labels, body, created_at, updated_at)
+        (id, title, status, priority, type, parent_id, blocked_by, author, assigned_to, labels, body, source_id, created_at, updated_at)
       VALUES
-        (@id, @title, @status, @priority, @type, @parent_id, @blocked_by, @author, @assigned_to, @labels, @body, @created_at, @updated_at)
+        (@id, @title, @status, @priority, @type, @parent_id, @blocked_by, @author, @assigned_to, @labels, @body, @source_id, @created_at, @updated_at)
     `).run({
       id,
       title: data.title,
@@ -106,6 +107,7 @@ export class LocalTicketProvider implements TicketProvider {
       assigned_to: data.assignee ?? null,
       labels: data.labels?.join(',') ?? null,
       body: data.body ?? null,
+      source_id: data.source_id ?? null,
       created_at: now,
       updated_at: now,
     });

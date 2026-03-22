@@ -731,6 +731,7 @@ export async function createApiApp(
           labels?: string;
           body?: string;
         };
+      const source_id = (req.body as Record<string, unknown>).source_id as string | undefined;
       if (!title) return res.status(400).json({ error: '"title" is required' });
       const ticket = await ticketRegistry.createTicket({
         title,
@@ -741,6 +742,7 @@ export async function createApiApp(
         assignee: assigned_to,
         parentId: parent_id,
         labels: labels ? labels.split(',').map(l => l.trim()).filter(Boolean) : undefined,
+        ...(source_id && { source_id }),
       });
       emitSseEvent('ticket_created', { ticket });
       res.status(201).json(ticket);

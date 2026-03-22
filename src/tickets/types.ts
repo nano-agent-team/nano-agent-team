@@ -35,6 +35,7 @@ export interface Ticket {
   provider: string;           // "local" | "github" | ...
   createdAt: string;
   updatedAt: string;
+  source_id?: string | null;   // Original ticket ID this was transferred from (e.g. "GH-110")
 }
 
 export type CommentVerdict = 'approved' | 'rejected' | 'rework';
@@ -65,6 +66,7 @@ export interface CreateTicketData {
    * Examples: "local", "github", "jira"
    */
   backend?: string;
+  source_id?: string;  // Write-once link to source ticket. Immutable after creation.
 }
 
 export interface UpdateTicketData {
