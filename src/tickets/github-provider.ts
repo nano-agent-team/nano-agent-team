@@ -264,19 +264,29 @@ export class GitHubIssuesProvider implements TicketProvider {
       patch.state = native.state;
 
       // Get current labels, remove old status label, add new one
+      // Preserve any assigned: labels already set in this update (from assignee handling above)
       const issue = await this.ghFetch<GHIssue>(`/issues/${number}`);
-      const currentLabels = issue.labels
+      const existingLabels = issue.labels
         .filter(l => !l.name.startsWith(STATUS_LABEL_PREFIX))
         .map(l => l.name);
 
+      // If assignee was already handled above, patch.labels has assigned: labels — preserve them
+      const assignedLabels = Array.isArray(patch.labels)
+        ? (patch.labels as string[]).filter(l => l.startsWith(ASSIGNED_LABEL_PREFIX))
+        : [];
+
+      // Build labels: existing (minus status + assigned) + new status + preserved assigned
+      const baseLabels = existingLabels.filter(l => !l.startsWith(ASSIGNED_LABEL_PREFIX));
       if (native.label) {
         await this.ensureLabel(native.label);
-        currentLabels.push(native.label);
+        baseLabels.push(native.label);
       }
+      baseLabels.push(...assignedLabels);
+
       if (data.labels !== undefined) {
-        patch.labels = [...data.labels, ...currentLabels.filter(l => !data.labels!.includes(l))];
+        patch.labels = [...data.labels, ...baseLabels.filter(l => !data.labels!.includes(l))];
       } else {
-        patch.labels = currentLabels;
+        patch.labels = baseLabels;
       }
     } else if (data.labels !== undefined) {
       const issue = await this.ghFetch<GHIssue>(`/issues/${number}`);
