@@ -9,6 +9,17 @@ import path from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Provider, ProviderRunOptions, ProviderEvent } from './types.js';
 
+// Native Claude Code agent team tools — only functional when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+const agentTeamTools = [
+  'TeamCreate',
+  'TaskCreate',
+  'TaskUpdate',
+  'TaskList',
+  'Task',
+  'SendMessage',
+  'TeamDelete',
+];
+
 export class ClaudeProvider implements Provider {
   readonly name = 'claude';
 
@@ -20,13 +31,8 @@ export class ClaudeProvider implements Provider {
   async *run(options: ProviderRunOptions): AsyncGenerator<ProviderEvent> {
     // Build per-namespace MCP tool patterns (mcp__* glob doesn't match across __ delimiters)
     const mcpToolPatterns = Object.keys(options.mcpServers ?? {}).map((name) => `mcp__${name}__*`);
-    // Native Claude Code agent team tools (available when CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1)
-    const AGENT_TEAM_TOOLS = [
-      'TeamCreate', 'TaskCreate', 'TaskUpdate', 'TaskList',
-      'Task', 'SendMessage', 'TeamDelete',
-    ];
 
-    const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns, ...AGENT_TEAM_TOOLS];
+    const defaultTools = ['Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch', ...mcpToolPatterns, ...agentTeamTools];
     const extraTools = options.allowedTools ?? [];
     // Merge defaults + extras (deduplicated)
     const allTools = [...new Set([...defaultTools, ...extraTools])];
