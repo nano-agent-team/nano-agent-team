@@ -73,6 +73,7 @@ All notable changes to this project will be documented in this file.
 - Auto-create workspace when ephemeral container needs one ([`877aff2`](https://github.com/nano-agent-team/nano-agent-team/commit/877aff2748a6f04d7967883b39a5160afda17f4c))
 - GitHub provider status=idea filter returns issues without status label ([`465ec03`](https://github.com/nano-agent-team/nano-agent-team/commit/465ec03dc5a3589ef046ed80bd4f97295ba79a17))
 - Store agent assignee as GitHub label instead of GitHub assignees ([`a7cef3b`](https://github.com/nano-agent-team/nano-agent-team/commit/a7cef3b3137244ab55a37d924a6455f0c0496ab0))
+- Make assignee required in ticket_approve MCP tool ([`c0c1b4a`](https://github.com/nano-agent-team/nano-agent-team/commit/c0c1b4ac4768f186dcc9bbeb6d234dad79e856f9))
 
 ### Documentation
 
@@ -137,6 +138,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`23544a4`](https://github.com/nano-agent-team/nano-agent-team/commit/23544a468393cf8d5265ff2b2528b9a88839eb93))
 - **ci:** Update CHANGELOG [skip ci] ([`0666f09`](https://github.com/nano-agent-team/nano-agent-team/commit/0666f0948276267ab8c2fc01cc0ba24563e7d234))
 - **ci:** Update CHANGELOG [skip ci] ([`2d28dc3`](https://github.com/nano-agent-team/nano-agent-team/commit/2d28dc3b03e499dfb51a06ea87e34993964cdd70))
+- **ci:** Update CHANGELOG [skip ci] ([`2e5f690`](https://github.com/nano-agent-team/nano-agent-team/commit/2e5f6900a7e893e1c052ca66a36e3aa6c1fc5a5c))
 
 ### Features
 
