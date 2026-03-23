@@ -1233,8 +1233,8 @@ export class AgentManager {
     }
 
     // Volume: Obsidian vault → /obsidian (available to all agents)
-    if (process.env.HOST_OBSIDIAN_VAULT_PATH) {
-      binds.push(`${process.env.HOST_OBSIDIAN_VAULT_PATH}:/obsidian:rw`);
+    if (fs.existsSync('/obsidian-host')) {
+      binds.push('/obsidian-host:/obsidian:rw');
     }
 
     // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
