@@ -80,6 +80,13 @@ All notable changes to this project will be documented in this file.
 - Translate agent.dir to host path for bind mount ([`96185d2`](https://github.com/nano-agent-team/nano-agent-team/commit/96185d2a05b2eb324204ef55a39b0b1dddcc1913))
 - Hub fetch fallback for non-git and cached hub directories ([`77bba52`](https://github.com/nano-agent-team/nano-agent-team/commit/77bba52f900743d8899ec33c2120c02dc637aaf6))
 - Mount hub as volume for base agent bootstrap at first startup ([`7222624`](https://github.com/nano-agent-team/nano-agent-team/commit/72226243fa4f420c74a24d62524a3f9dde09bc8c))
+- Route /api/chat/settings to consciousness instead of foreman ([`5cbe4ef`](https://github.com/nano-agent-team/nano-agent-team/commit/5cbe4efc36b39c96cc39d00b3ebabcef5290bf40))
+- Rename chat header to Consciousness, update branding ([`35dfa96`](https://github.com/nano-agent-team/nano-agent-team/commit/35dfa968601dcc6adcd79ee269e031ef8a3f5208))
+- Mount Obsidian vault into control plane for agent access ([`ad47e75`](https://github.com/nano-agent-team/nano-agent-team/commit/ad47e75f53d273e079426ff2b0f49ee592a249e4))
+- Mount Obsidian into all agents unconditionally ([`4cd86eb`](https://github.com/nano-agent-team/nano-agent-team/commit/4cd86eb23b02200517af05865e42693b39c22c8f))
+- Simplify Obsidian mount — no env var, just check /obsidian-host ([`a33913b`](https://github.com/nano-agent-team/nano-agent-team/commit/a33913b532056a995e836af8efeae620bdc99b55))
+- Use data/obsidian/ as instance-local storage ([`53fb46f`](https://github.com/nano-agent-team/nano-agent-team/commit/53fb46fa2530b06f32b9fefc4fcf31ebf930440b))
+- Default model is sonnet, not haiku ([`bdfcbfe`](https://github.com/nano-agent-team/nano-agent-team/commit/bdfcbfe90d630801ee93f174f07cb7fe8075b613))
 
 ### Documentation
 
@@ -178,6 +185,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`cf83879`](https://github.com/nano-agent-team/nano-agent-team/commit/cf838794f39cf644d85e4bc2ead02f5240ea290a))
 - **ci:** Update CHANGELOG [skip ci] ([`d6e6095`](https://github.com/nano-agent-team/nano-agent-team/commit/d6e60957eeca59c93eb489ce7dce27175e9f79de))
 - **ci:** Update CHANGELOG [skip ci] ([`f506090`](https://github.com/nano-agent-team/nano-agent-team/commit/f50609021ff9ee852a71d586f09e1e3ec73fbd8e))
+- **ci:** Update CHANGELOG [skip ci] ([`fc54d63`](https://github.com/nano-agent-team/nano-agent-team/commit/fc54d63c90308c8c9101b221d6f9d5d1e4e408bb))
 
 ### Features
 
@@ -269,6 +277,8 @@ All notable changes to this project will be documented in this file.
 - Write .claude/settings.json before query() for teammate MCP inheritance ([`a22dc1d`](https://github.com/nano-agent-team/nano-agent-team/commit/a22dc1d2d0701458fe179e8df0f33a4f2d887eac))
 - Consciousness architecture runtime support ([`b15cdd6`](https://github.com/nano-agent-team/nano-agent-team/commit/b15cdd6f64efaa8a927318db1e308ae5b03c8950))
 - Auto-bootstrap base agents on startup (consciousness layer) ([`f6da8d9`](https://github.com/nano-agent-team/nano-agent-team/commit/f6da8d9e01f0eb0a9ad435ff41851618c5db15fd))
+- Universal chat endpoint with agent selector in dashboard ([`8b2238f`](https://github.com/nano-agent-team/nano-agent-team/commit/8b2238f48536094fab715bb54d4156e255a3a776))
+- SoulDispatcher + create-idea/write-brief skills ([`b087d34`](https://github.com/nano-agent-team/nano-agent-team/commit/b087d34e9440bf3b465837af3446e3e07e6c4aad))
 
 ### Miscellaneous
 
