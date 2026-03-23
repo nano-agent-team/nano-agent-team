@@ -173,6 +173,7 @@ All notable changes to this project will be documented in this file.
 - Fix 2 blocking issues from plan review round 4 ([`20505fd`](https://github.com/nano-agent-team/nano-agent-team/commit/20505fdd1cd5591819956862968375974fd5f7bc))
 - Fix 2 blocking issues from plan review round 5 ([`ba6260e`](https://github.com/nano-agent-team/nano-agent-team/commit/ba6260e5404039968026e51b4930257820a79fbd))
 - Fix 2 blocking issues from plan review round 6 ([`f102b3c`](https://github.com/nano-agent-team/nano-agent-team/commit/f102b3c749880dfe99f6fb7fd776908037fb2b70))
+- **ci:** Update CHANGELOG [skip ci] ([`cf83879`](https://github.com/nano-agent-team/nano-agent-team/commit/cf838794f39cf644d85e4bc2ead02f5240ea290a))
 
 ### Features
 
@@ -263,6 +264,7 @@ All notable changes to this project will be documented in this file.
 - Add agent team tools to defaultTools in ClaudeProvider ([`6ab2651`](https://github.com/nano-agent-team/nano-agent-team/commit/6ab2651d1370736491c7bbf5f379a577c3fe69ec))
 - Write .claude/settings.json before query() for teammate MCP inheritance ([`a22dc1d`](https://github.com/nano-agent-team/nano-agent-team/commit/a22dc1d2d0701458fe179e8df0f33a4f2d887eac))
 - Consciousness architecture runtime support ([`b15cdd6`](https://github.com/nano-agent-team/nano-agent-team/commit/b15cdd6f64efaa8a927318db1e308ae5b03c8950))
+- Auto-bootstrap base agents on startup (consciousness layer) ([`f6da8d9`](https://github.com/nano-agent-team/nano-agent-team/commit/f6da8d9e01f0eb0a9ad435ff41851618c5db15fd))
 
 ### Miscellaneous
 
