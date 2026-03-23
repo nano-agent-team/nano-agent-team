@@ -29,13 +29,13 @@
       </div>
     </aside>
 
-    <!-- RIGHT: Foreman chat -->
+    <!-- RIGHT: Consciousness chat -->
     <section class="chat-panel">
       <div class="chat-head">
         <div class="chat-head-left">
           <span class="agent-sigil">FM</span>
           <div class="chat-head-info">
-            <span class="chat-title">Foreman</span>
+            <span class="chat-title">Consciousness</span>
             <span class="chat-sub">setup &amp; project onboarding</span>
           </div>
         </div>
@@ -63,7 +63,7 @@
         <div class="messages-inner">
           <div v-if="messages.length === 0" class="chat-empty">
             <div class="empty-sigil">FM</div>
-            <div class="empty-text">Foreman is ready.<br>How can I help you?</div>
+            <div class="empty-text">Consciousness is ready.<br>How can I help you?</div>
           </div>
 
           <template v-for="(msg, i) in messages" :key="msg.id">
