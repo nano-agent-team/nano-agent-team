@@ -154,6 +154,25 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`73211ff`](https://github.com/nano-agent-team/nano-agent-team/commit/73211ffed80c25108014cb6940934deb40ad0885))
 - **ci:** Update CHANGELOG [skip ci] ([`aa5a863`](https://github.com/nano-agent-team/nano-agent-team/commit/aa5a863ede87807532ebddb1b34d667267653d6e))
 - **ci:** Update CHANGELOG [skip ci] ([`db5cefd`](https://github.com/nano-agent-team/nano-agent-team/commit/db5cefd64e467b7f4fc0244bee56adbb0f1c9064))
+- **ci:** Update CHANGELOG [skip ci] ([`0263dd5`](https://github.com/nano-agent-team/nano-agent-team/commit/0263dd5f2aa2d411c0e9a5657c2013332ee4bf5c))
+- Add agent teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS) design spec ([`8840385`](https://github.com/nano-agent-team/nano-agent-team/commit/88403854769d38ab4f8c82557a8279fe8567d028))
+- Fix agent teams spec — correct env var, teammateMode, cwd verification ([`9c92d00`](https://github.com/nano-agent-team/nano-agent-team/commit/9c92d00af3c1b0e73a122db79b7d4b1cfaf6de82))
+- Add agent teams implementation plan ([`fca9554`](https://github.com/nano-agent-team/nano-agent-team/commit/fca95547902ef6376dbef1c949980c7363c586fe))
+- Fix 3 blocking issues in agent-teams plan ([`877243c`](https://github.com/nano-agent-team/nano-agent-team/commit/877243ce5b90947457d1a738ec82a9c6de4dad06))
+- Fix 4 more plan issues from review round 2 ([`d521a2c`](https://github.com/nano-agent-team/nano-agent-team/commit/d521a2c2cfdad5ab95a33051972dd61f981fb505))
+- Fix 3 blocking issues from plan review round 3 ([`7c658c7`](https://github.com/nano-agent-team/nano-agent-team/commit/7c658c79ba5ae1218be4a559e7e1150e9270227a))
+- Fix 2 blocking issues from plan review round 4 ([`fc6b1e5`](https://github.com/nano-agent-team/nano-agent-team/commit/fc6b1e522843cb65aa0b896f27751526ca103e3a))
+- Fix 2 blocking issues from plan review round 5 ([`ce0bada`](https://github.com/nano-agent-team/nano-agent-team/commit/ce0badada2f41447fa69ba4161520e6b92728226))
+- Fix 2 blocking issues from plan review round 6 ([`43a951e`](https://github.com/nano-agent-team/nano-agent-team/commit/43a951e274a968783fd9c9475853ac5f617747a5))
+- Add agent teams (CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS) design spec ([`7b95d03`](https://github.com/nano-agent-team/nano-agent-team/commit/7b95d03a5504ad01f44a50333163249b7c070773))
+- Fix agent teams spec — correct env var, teammateMode, cwd verification ([`a3ad275`](https://github.com/nano-agent-team/nano-agent-team/commit/a3ad27509c0e64bd4fc81e488ac89fa276202ec3))
+- Add agent teams implementation plan ([`b12f202`](https://github.com/nano-agent-team/nano-agent-team/commit/b12f20220e217c9337f695b1abad8039053d0a2f))
+- Fix 3 blocking issues in agent-teams plan ([`fae8a8e`](https://github.com/nano-agent-team/nano-agent-team/commit/fae8a8ece5e51ffbff2725c77d931143f02d4892))
+- Fix 4 more plan issues from review round 2 ([`44082c7`](https://github.com/nano-agent-team/nano-agent-team/commit/44082c7803b0f1fde9da54adb9a7c764c72929f1))
+- Fix 3 blocking issues from plan review round 3 ([`4c595b4`](https://github.com/nano-agent-team/nano-agent-team/commit/4c595b45c5b22c9fe2deb6e31383b1aaefff40ed))
+- Fix 2 blocking issues from plan review round 4 ([`20505fd`](https://github.com/nano-agent-team/nano-agent-team/commit/20505fdd1cd5591819956862968375974fd5f7bc))
+- Fix 2 blocking issues from plan review round 5 ([`ba6260e`](https://github.com/nano-agent-team/nano-agent-team/commit/ba6260e5404039968026e51b4930257820a79fbd))
+- Fix 2 blocking issues from plan review round 6 ([`f102b3c`](https://github.com/nano-agent-team/nano-agent-team/commit/f102b3c749880dfe99f6fb7fd776908037fb2b70))
 
 ### Features
 
@@ -240,6 +259,10 @@ All notable changes to this project will be documented in this file.
 - Add source_id field to tickets for GH transfer tracking ([`7dd3174`](https://github.com/nano-agent-team/nano-agent-team/commit/7dd3174f8935743f5a3b1823f4c0f21fda33281d))
 - Add ticket_transfer MCP tool in management namespace ([`f147282`](https://github.com/nano-agent-team/nano-agent-team/commit/f147282597d409ccda92e249a2d533ceef16a7f8))
 - Add workspace-manager deterministic handler ([`6ebd021`](https://github.com/nano-agent-team/nano-agent-team/commit/6ebd021a56b57cb009147f10abfde5bbf584d16c))
+- Enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS for all agents ([`88170a4`](https://github.com/nano-agent-team/nano-agent-team/commit/88170a468210a14235d63abe51df6ffeb8aa1f78))
+- Add agent team tools to defaultTools in ClaudeProvider ([`6ab2651`](https://github.com/nano-agent-team/nano-agent-team/commit/6ab2651d1370736491c7bbf5f379a577c3fe69ec))
+- Write .claude/settings.json before query() for teammate MCP inheritance ([`a22dc1d`](https://github.com/nano-agent-team/nano-agent-team/commit/a22dc1d2d0701458fe179e8df0f33a4f2d887eac))
+- Consciousness architecture runtime support ([`b15cdd6`](https://github.com/nano-agent-team/nano-agent-team/commit/b15cdd6f64efaa8a927318db1e308ae5b03c8950))
 
 ### Miscellaneous
 
@@ -251,6 +274,8 @@ All notable changes to this project will be documented in this file.
 - Gitignore .superpowers/ brainstorm artifacts ([`1d652f9`](https://github.com/nano-agent-team/nano-agent-team/commit/1d652f900e2b7f3ad481605b411ac25751a41136))
 - Trigger CI ([`474edc0`](https://github.com/nano-agent-team/nano-agent-team/commit/474edc0e8a78e3b157aa2868138e43d972ca278d))
 - Integrate main (pull-over-push) into workspace-provider ([`e2ddcfc`](https://github.com/nano-agent-team/nano-agent-team/commit/e2ddcfc06ccc21c6c6c31843d65f753287cd5f26))
+- Add .worktrees/ to .gitignore ([`d8bd825`](https://github.com/nano-agent-team/nano-agent-team/commit/d8bd825a0780e6eafd206bf36d1a6707683d4ae4))
+- Add .worktrees/ to .gitignore ([`2c0188c`](https://github.com/nano-agent-team/nano-agent-team/commit/2c0188cea8ce7639f88e61c17bb9dace342b0285))
 
 ### Refactoring
 
@@ -260,6 +285,7 @@ All notable changes to this project will be documented in this file.
 - Update GitHub provider status labels (GH-103) ([`e5ca9a9`](https://github.com/nano-agent-team/nano-agent-team/commit/e5ca9a9b25f97486b47cbf8341891e4eddb72238))
 - Migrate ticket statuses to 5-state model (GH-103) ([`3f59ec7`](https://github.com/nano-agent-team/nano-agent-team/commit/3f59ec76aae6a01d54520c95c8c241d18e6366d8))
 - Scrum-master reads pipeline config from own manifest ([`9d40fa1`](https://github.com/nano-agent-team/nano-agent-team/commit/9d40fa16a9c454bb816ca19c44d7a5ed3398c379))
+- Move agentTeamTools to module scope, rename to camelCase ([`4421a13`](https://github.com/nano-agent-team/nano-agent-team/commit/4421a13676d138527369bd94d6a57629fae26dd5))
 
 ### Tests
 
