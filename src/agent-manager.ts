@@ -1232,10 +1232,10 @@ export class AgentManager {
       logger.debug({ agentId, repo_path: agent.manifest.repo_path }, 'Mounting repo workspace');
     }
 
-    // Volume: Obsidian vault → /obsidian (available to all agents)
-    if (fs.existsSync('/obsidian-host')) {
-      binds.push('/obsidian-host:/obsidian:rw');
-    }
+    // Volume: instance Obsidian vault → /obsidian (shared knowledge base for all agents)
+    const obsidianDir = path.join(hostDataDir, 'obsidian');
+    fs.mkdirSync(obsidianDir, { recursive: true });
+    binds.push(`${obsidianDir}:/obsidian:rw`);
 
     // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
     if (agent.manifest.project_workspace && !agent.manifest.repo_path) {

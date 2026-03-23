@@ -33,7 +33,6 @@ services:
       - /var/run/docker.sock:/var/run/host-docker.sock
       - .:/host-source
       - ${HUB_DIR:-../hub}:/tmp/hub:ro   # Hub catalog for base agent bootstrap
-      - ${OBSIDIAN_VAULT:-~/Documents/Claude-Brain}:/obsidian-host:rw  # Obsidian vault for consciousness layer
     environment:
       DATA_DIR: /data
       HOST_DATA_DIR: /data
