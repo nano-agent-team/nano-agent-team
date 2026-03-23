@@ -257,11 +257,11 @@ export class AgentManager {
       }
     }
     const providerDefaults: Record<string, string> = {
-      claude: 'claude-haiku-4-5-20251001',
+      claude: 'claude-sonnet-4-6',
       codex: 'o4-mini',
       gemini: 'gemini-2.0-flash',
     };
-    return { provider, model: modelMap['default'] ?? providerDefaults[provider] ?? 'claude-haiku-4-5-20251001', modelExplicit: false };
+    return { provider, model: modelMap['default'] ?? providerDefaults[provider] ?? 'claude-sonnet-4-6', modelExplicit: false };
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
