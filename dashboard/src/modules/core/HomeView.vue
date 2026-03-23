@@ -395,13 +395,39 @@ async function copyMessage(msg: ChatMessage) {
 
 // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
+// ── SSE push listener (proactive messages from agents) ────────────────────────
+
+let pushEventSource: EventSource | null = null
+
+function startPushListener() {
+  try {
+    pushEventSource = new EventSource('/api/events')
+    pushEventSource.addEventListener('chat-push', (e) => {
+      const data = JSON.parse(e.data) as { text?: string; from?: string }
+      if (data.text) {
+        messages.value.push({
+          id: uuid(),
+          role: 'agent',
+          text: data.text,
+          ts: Date.now(),
+        })
+        scrollToBottom()
+      }
+    })
+  } catch { /* SSE not critical */ }
+}
+
 onMounted(() => {
   loadHealth()
   healthInterval = setInterval(loadHealth, 3000)
+  startPushListener()
   nextTick(() => inputEl.value?.focus())
 })
 
-onUnmounted(() => clearInterval(healthInterval))
+onUnmounted(() => {
+  clearInterval(healthInterval)
+  pushEventSource?.close()
+})
 </script>
 
 <style scoped>

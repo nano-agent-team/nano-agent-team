@@ -844,7 +844,7 @@ export async function createApiApp(
     // Resolve target NATS subject based on agent parameter
     const targetSubject = agent
       ? `agent.${agent}.inbox`
-      : 'user.message.inbound'; // default: consciousness
+      : 'agent.chat-agent.inbox'; // default: chat agent
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -1257,6 +1257,20 @@ export async function startApiServer(
   opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
 ): Promise<http.Server> {
   const app = await createApiApp(manager, nc, configService, opts);
+
+  // Subscribe to chat.push for proactive messages from chat agent → dashboard SSE
+  const chatPushSub = nc.subscribe('chat.push');
+  (async () => {
+    for await (const msg of chatPushSub) {
+      try {
+        const data = JSON.parse(codec.decode(msg.data)) as { text?: string; from?: string };
+        emitSseEvent('chat-push', data);
+        logger.debug({ from: data.from }, 'Chat push message broadcast via SSE');
+      } catch {
+        logger.warn('Invalid chat.push payload');
+      }
+    }
+  })();
 
   return new Promise<http.Server>((resolve) => {
     const server = app.listen(API_PORT, () => {

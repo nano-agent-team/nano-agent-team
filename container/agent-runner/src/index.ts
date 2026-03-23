@@ -78,9 +78,15 @@ const agentMcpServers: Record<string, unknown> = (() => {
   try { return JSON.parse(raw) as Record<string, unknown>; } catch { return {}; }
 })();
 
-/** All MCP servers: tickets + context-mode (opt-in) + any agent-specific servers */
+/** Soul MCP server — same gateway, separate namespace for consciousness layer tools */
+const soulMcpServer = MCP_GATEWAY_URL
+  ? { type: 'http' as const, url: MCP_GATEWAY_URL, headers: { 'x-agent-id': AGENT_ID } }
+  : undefined;
+
+/** All MCP servers: tickets + soul + context-mode (opt-in) + any agent-specific servers */
 const allMcpServers: Record<string, McpServerConfig> = {
   tickets: ticketsMcpServer,
+  ...(soulMcpServer ? { soul: soulMcpServer } : {}),
   ...(agentMcpServers as Record<string, McpServerConfig>),
   ...(process.env.CONTEXT_MODE === 'true'
     ? { 'context-mode': { command: 'context-mode', args: [] } }

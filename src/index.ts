@@ -37,7 +37,7 @@ import { SecretStore } from './secret-store.js';
 import { McpServerRegistry } from './mcp-server-registry.js';
 import { McpManager } from './mcp-manager.js';
 import { WorkspaceProvider } from './workspace-provider.js';
-import { SoulDispatcher } from './soul-dispatcher.js';
+// SoulDispatcher removed — replaced by Soul MCP tools
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -48,7 +48,7 @@ const HUB_CACHE_DIR = '/tmp/hub';
  * Base agents — always present in every instance.
  * Installed from hub on first startup, started automatically.
  */
-const BASE_AGENTS = ['consciousness', 'conscience', 'strategist', 'foreman'];
+const BASE_AGENTS = ['chat-agent', 'consciousness', 'conscience', 'strategist', 'foreman'];
 
 /**
  * Fetch the hub catalog and ensure it's available locally.
@@ -191,7 +191,7 @@ async function main(): Promise<void> {
   const nc = await connectNats(natsUrl);
 
   // ── 3. Ensure AGENTS stream ─────────────────────────────────────────────────
-  await ensureStream(nc, 'AGENTS', ['agent.>', 'topic.>', 'health.>', 'soul.>', 'user.message.>']);
+  await ensureStream(nc, 'AGENTS', ['agent.>', 'topic.>', 'health.>', 'soul.>', 'user.message.>', 'secret.>']);
   logger.info('Stream AGENTS ready');
 
   const configService = new ConfigService(DATA_DIR);
@@ -245,6 +245,7 @@ async function main(): Promise<void> {
     apiPort: String(process.env.API_PORT ?? '3001'),
     hubUrl: process.env.HUB_URL,
     alarmClock,
+    nc,
   };
 
   const mcpGateway = new McpGateway(
@@ -287,9 +288,7 @@ async function main(): Promise<void> {
     if (persistentBaseAgents.length > 0) {
       await manager.startAll(persistentBaseAgents);
       manager.startHealthMonitoring();
-      // Soul Dispatcher: deterministic Obsidian → NATS bridge
-      const soulDispatcher = new SoulDispatcher(nc, DATA_DIR);
-      soulDispatcher.start();
+      // Soul Dispatcher disabled — testing if agents can publish NATS themselves
       logger.info({ agents: persistentBaseAgents.map(a => a.manifest.id) }, 'Base agents started — ready for setup');
     } else {
       logger.warn('No base agents bootstrapped — setup UI will run without agents');
@@ -317,10 +316,6 @@ async function main(): Promise<void> {
     }
 
     manager.startHealthMonitoring();
-
-    // Soul Dispatcher: deterministic Obsidian → NATS bridge
-    const soulDispatcher = new SoulDispatcher(nc, DATA_DIR);
-    soulDispatcher.start();
 
     // Publish health.check every 30 minutes (Scrum Master agent listens)
     setInterval(() => {

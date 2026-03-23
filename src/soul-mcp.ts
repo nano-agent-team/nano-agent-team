@@ -1,0 +1,369 @@
+/**
+ * Soul MCP Tools — atomic Obsidian file write + NATS kick for each tool.
+ *
+ * 8 tools: create_goal, create_idea, update_idea, create_plan,
+ *          ask_user, answer_question, send_to_consciousness, journal_log
+ *
+ * Each tool validates IDs, writes atomically (tmp + rename), and publishes
+ * a NATS kick where applicable.
+ */
+
+import fs from 'fs';
+import path from 'path';
+import { z } from 'zod';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { NatsConnection } from 'nats';
+import { publish } from './nats-client.js';
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const SAFE_ID = /^[a-zA-Z0-9_-]+$/;
+
+function validateId(id: string, label: string): void {
+  if (!SAFE_ID.test(id)) {
+    throw new Error(`Invalid ${label}: must match /^[a-zA-Z0-9_-]+$/`);
+  }
+}
+
+function generateId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+/** Atomic write: writeFileSync to tmp, renameSync to final path. */
+function atomicWrite(filePath: string, content: string): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true });
+  const tmp = filePath + `.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, content, 'utf-8');
+  fs.renameSync(tmp, filePath);
+}
+
+/** Build YAML frontmatter + body Markdown content. */
+function buildFrontmatter(fields: Record<string, string | undefined>, body?: string): string {
+  const lines = ['---'];
+  for (const [k, v] of Object.entries(fields)) {
+    if (v !== undefined) lines.push(`${k}: ${v}`);
+  }
+  lines.push('---');
+  if (body) lines.push('', body);
+  return lines.join('\n') + '\n';
+}
+
+/** Parse YAML frontmatter from file content. Returns { fields, body }. */
+function parseFrontmatter(content: string): { fields: Record<string, string>; body: string } {
+  const fields: Record<string, string> = {};
+  const match = content.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!match) return { fields, body: content };
+  for (const line of match[1].split('\n')) {
+    const idx = line.indexOf(':');
+    if (idx > 0) {
+      fields[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+    }
+  }
+  return { fields, body: match[2] };
+}
+
+function textResult(obj: Record<string, unknown>) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify(obj) }] };
+}
+
+function errorResult(msg: string) {
+  return { content: [{ type: 'text' as const, text: JSON.stringify({ error: msg }) }], isError: true as const };
+}
+
+// ─── Registration ─────────────────────────────────────────────────────────────
+
+/**
+ * Register Soul MCP tools on the given McpServer.
+ *
+ * @param server    McpServer instance to register tools on.
+ * @param nc        NATS connection for publishing kicks.
+ * @param dataDir   Control plane data directory (e.g. /data).
+ * @param agentId   ID of the calling agent (used as "from" in ask_user).
+ * @param permissions Array of allowed tool names (e.g. ["create_goal","create_idea"]).
+ */
+export function registerSoulTools(
+  server: McpServer,
+  nc: NatsConnection,
+  dataDir: string,
+  agentId: string,
+  permissions: string[] | '*',
+): void {
+  const obsidianBase = path.join(dataDir, 'obsidian', 'Consciousness');
+  const questionsBase = path.join(dataDir, 'questions');
+
+  function allowed(toolName: string): boolean {
+    if (permissions === '*') return true;
+    return Array.isArray(permissions) && permissions.includes(toolName);
+  }
+
+  // ── create_goal ─────────────────────────────────────────────────────────────
+
+  if (allowed('create_goal')) {
+    server.tool(
+      'create_goal',
+      'Create a new goal in Obsidian. No NATS kick — goals are passive.',
+      {
+        title:       z.string().describe('Goal title'),
+        description: z.string().describe('Goal description'),
+      },
+      async ({ title, description }) => {
+        try {
+          const goalId = generateId('goal');
+          const filePath = path.join(obsidianBase, 'goals', `${goalId}.md`);
+          const content = buildFrontmatter(
+            { id: goalId, title, status: 'active', created: new Date().toISOString() },
+            description,
+          );
+          atomicWrite(filePath, content);
+          return textResult({ goalId });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+
+  // ── create_idea ─────────────────────────────────────────────────────────────
+
+  if (allowed('create_idea')) {
+    server.tool(
+      'create_idea',
+      'Create an idea linked to a goal. Publishes soul.idea.pending NATS kick.',
+      {
+        goalId:      z.string().describe('Parent goal ID'),
+        description: z.string().describe('Idea description'),
+      },
+      async ({ goalId, description }) => {
+        try {
+          validateId(goalId, 'goalId');
+          const ideaId = generateId('idea');
+          const filePath = path.join(obsidianBase, 'ideas', `${ideaId}.md`);
+          const content = buildFrontmatter(
+            { id: ideaId, goalId, status: 'pending_review', created: new Date().toISOString() },
+            description,
+          );
+          atomicWrite(filePath, content);
+          await publish(nc, 'soul.idea.pending', JSON.stringify({ ideaId, path: filePath }));
+          return textResult({ ideaId });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+
+  // ── update_idea ─────────────────────────────────────────────────────────────
+
+  if (allowed('update_idea')) {
+    server.tool(
+      'update_idea',
+      'Update an existing idea. If conscience_verdict is set, publishes soul.idea.approved or soul.idea.rejected.',
+      {
+        ideaId:            z.string().describe('Idea ID to update'),
+        status:            z.string().optional().describe('New status'),
+        conscience_verdict: z.enum(['approved', 'rejected']).optional().describe('Conscience verdict'),
+        conscience_reason:  z.string().optional().describe('Reason for verdict'),
+      },
+      async ({ ideaId, status, conscience_verdict, conscience_reason }) => {
+        try {
+          validateId(ideaId, 'ideaId');
+          const filePath = path.join(obsidianBase, 'ideas', `${ideaId}.md`);
+          if (!fs.existsSync(filePath)) return errorResult(`Idea ${ideaId} not found`);
+
+          const raw = fs.readFileSync(filePath, 'utf-8');
+          const { fields, body } = parseFrontmatter(raw);
+
+          if (status) fields.status = status;
+          if (conscience_verdict) fields.conscience_verdict = conscience_verdict;
+          if (conscience_reason) fields.conscience_reason = conscience_reason;
+          fields.updated = new Date().toISOString();
+
+          atomicWrite(filePath, buildFrontmatter(fields, body));
+
+          if (conscience_verdict === 'approved') {
+            await publish(nc, 'soul.idea.approved', JSON.stringify({ ideaId, path: filePath }));
+          } else if (conscience_verdict === 'rejected') {
+            await publish(nc, 'soul.idea.rejected', JSON.stringify({
+              ideaId, path: filePath, reason: conscience_reason ?? '',
+            }));
+          }
+
+          return textResult({ ok: true });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+
+  // ── create_plan ─────────────────────────────────────────────────────────────
+
+  if (allowed('create_plan')) {
+    server.tool(
+      'create_plan',
+      'Create an action plan for an approved idea. Publishes soul.plan.ready.',
+      {
+        ideaId:  z.string().describe('Source idea ID'),
+        title:   z.string().describe('Plan title'),
+        content: z.string().describe('Plan content / action steps'),
+      },
+      async ({ ideaId, title, content }) => {
+        try {
+          validateId(ideaId, 'ideaId');
+          const planId = generateId('plan');
+          const filePath = path.join(obsidianBase, 'plans', `${planId}.md`);
+          const fileContent = buildFrontmatter(
+            { id: planId, ideaId, title, status: 'pending', created: new Date().toISOString() },
+            content,
+          );
+          atomicWrite(filePath, fileContent);
+          await publish(nc, 'soul.plan.ready', JSON.stringify({ planId, path: filePath }));
+          return textResult({ planId });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+
+  // ── ask_user ────────────────────────────────────────────────────────────────
+
+  if (allowed('ask_user')) {
+    server.tool(
+      'ask_user',
+      'Ask the user a question via chat agent. Async — answer arrives later via agent.{id}.answer.',
+      {
+        question: z.string().describe('Question to ask the user'),
+        context:  z.string().optional().describe('Context for the question (max 1KB)'),
+      },
+      async ({ question, context }) => {
+        try {
+          if (context && context.length > 1024) {
+            return errorResult('Context exceeds 1KB limit');
+          }
+          const questionId = generateId('q');
+          const filePath = path.join(questionsBase, `${questionId}.json`);
+          const data = {
+            id: questionId,
+            from: agentId,
+            question,
+            context: context ?? null,
+            status: 'pending',
+            answer: null,
+            created: new Date().toISOString(),
+            answered: null,
+          };
+          atomicWrite(filePath, JSON.stringify(data, null, 2));
+          await publish(nc, 'agent.chat-agent.inbox', JSON.stringify({
+            type: 'question',
+            questionId,
+            question,
+            context: context ?? null,
+            from: agentId,
+          }));
+          // Push question to dashboard UI immediately so user sees it
+          await publish(nc, 'chat.push', JSON.stringify({
+            text: `**Otázka od systému:**\n\n${question}`,
+            from: agentId,
+          }));
+          return textResult({ questionId, status: 'pending' });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+
+  // ── answer_question ─────────────────────────────────────────────────────────
+
+  if (allowed('answer_question')) {
+    server.tool(
+      'answer_question',
+      'Answer a pending question. Reads the question file to find the originating agent and delivers the answer.',
+      {
+        questionId: z.string().describe('Question ID to answer'),
+        answer:     z.string().describe('The answer to deliver'),
+      },
+      async ({ questionId, answer }) => {
+        try {
+          validateId(questionId, 'questionId');
+          const filePath = path.join(questionsBase, `${questionId}.json`);
+          if (!fs.existsSync(filePath)) return errorResult('Question not found');
+
+          const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+          const fromAgent: string = data.from;
+          if (!fromAgent) return errorResult('Question has no "from" field');
+
+          data.status = 'answered';
+          data.answer = answer;
+          data.answered = new Date().toISOString();
+          atomicWrite(filePath, JSON.stringify(data, null, 2));
+
+          await publish(nc, `agent.${fromAgent}.answer`, JSON.stringify({
+            type: 'user_answer',
+            questionId,
+            answer,
+          }));
+          return textResult({ ok: true });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+
+  // ── send_to_consciousness ───────────────────────────────────────────────────
+
+  if (allowed('send_to_consciousness')) {
+    server.tool(
+      'send_to_consciousness',
+      'Relay a user intent to consciousness. Writes to inbox and publishes NATS kick.',
+      {
+        intent:  z.string().describe('Extracted user intent'),
+        context: z.string().optional().describe('Additional context'),
+      },
+      async ({ intent, context }) => {
+        try {
+          const messageId = generateId('msg');
+          const filePath = path.join(obsidianBase, 'inbox', `${messageId}.md`);
+          const content = buildFrontmatter(
+            { id: messageId, from: agentId, created: new Date().toISOString() },
+            context ? `${intent}\n\n**Context:** ${context}` : intent,
+          );
+          atomicWrite(filePath, content);
+          await publish(nc, 'soul.consciousness.inbox', JSON.stringify({ messageId, path: filePath }));
+          return textResult({ messageId });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+
+  // ── journal_log ─────────────────────────────────────────────────────────────
+
+  if (allowed('journal_log')) {
+    server.tool(
+      'journal_log',
+      'Append an entry to the daily journal. No NATS kick — journal is append-only.',
+      {
+        entry: z.string().describe('Journal entry text'),
+      },
+      async ({ entry }) => {
+        try {
+          const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+          const filePath = path.join(obsidianBase, 'journal', `${date}.md`);
+          const dir = path.dirname(filePath);
+          fs.mkdirSync(dir, { recursive: true });
+          const timestamp = new Date().toISOString().slice(11, 19); // HH:MM:SS
+          const line = `\n- **${timestamp}** [${agentId}] ${entry}\n`;
+          fs.appendFileSync(filePath, line, 'utf-8');
+          return textResult({ ok: true });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+}

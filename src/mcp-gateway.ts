@@ -38,6 +38,7 @@ import type { TicketRegistry } from './tickets/registry.js';
 import type { AbstractStatus, TicketPriority, TicketType } from './tickets/types.js';
 import type { McpManager } from './mcp-manager.js';
 import type { McpServerRegistry } from './mcp-server-registry.js';
+import { registerSoulTools } from './soul-mcp.js';
 
 // ─── Gateway options (config/management tools) ────────────────────────────────
 
@@ -49,6 +50,7 @@ export interface GatewayOptions {
   apiPort: string;
   hubUrl?: string;
   alarmClock?: import('./alarm-clock.js').AlarmClock;
+  nc?: import('nats').NatsConnection;
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -871,6 +873,12 @@ function buildMcpServer(
     );
   }
 
+  // ── Built-in: soul (consciousness layer tools) ─────────────────────────────
+
+  if (opts && opts.nc && permissions['soul'] !== undefined) {
+    registerSoulTools(server, opts.nc, opts.dataDir, agentId, permissions['soul'] as string[]);
+  }
+
   return server;
 }
 
@@ -1162,6 +1170,26 @@ export class McpGateway {
       // Restart & Health tools
       tools.push({ name: 'restart_self', description: 'Graceful restart of the control plane. Call freeze_ephemeral first and wait for running containers to finish.', inputSchema: { type: 'object', properties: { ticket_id: { type: 'string' }, workspaceId: { type: 'string' } } } });
       tools.push({ name: 'health_check', description: 'Check system health. Returns health status of all components.', inputSchema: { type: 'object', properties: { timeout_ms: { type: 'number' } } } });
+    }
+
+    // ── Soul tools (consciousness layer) ──────────────────────────────────────
+    if (permissions['soul'] !== undefined) {
+      const soulTools = [
+        { name: 'create_goal', description: 'Create a new goal in Obsidian.', inputSchema: { type: 'object' as const, required: ['title', 'description'], properties: { title: { type: 'string' }, description: { type: 'string' } } } },
+        { name: 'create_idea', description: 'Create an idea for an existing goal. Triggers conscience review automatically.', inputSchema: { type: 'object' as const, required: ['goalId', 'description'], properties: { goalId: { type: 'string' }, description: { type: 'string' } } } },
+        { name: 'update_idea', description: 'Update idea status or write conscience verdict.', inputSchema: { type: 'object' as const, required: ['ideaId'], properties: { ideaId: { type: 'string' }, status: { type: 'string' }, conscience_verdict: { type: 'string' }, conscience_reason: { type: 'string' } } } },
+        { name: 'create_plan', description: 'Create an action plan for an approved idea. Dispatched to foreman automatically.', inputSchema: { type: 'object' as const, required: ['ideaId', 'title', 'content'], properties: { ideaId: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' } } } },
+        { name: 'ask_user', description: 'Ask the user a question (async). Chat agent will relay it.', inputSchema: { type: 'object' as const, required: ['question'], properties: { question: { type: 'string' }, context: { type: 'string' } } } },
+        { name: 'answer_question', description: 'Relay user answer back to the asking agent.', inputSchema: { type: 'object' as const, required: ['questionId', 'answer'], properties: { questionId: { type: 'string' }, answer: { type: 'string' } } } },
+        { name: 'send_to_consciousness', description: 'Send a user intent to consciousness for strategic processing.', inputSchema: { type: 'object' as const, required: ['intent'], properties: { intent: { type: 'string' }, context: { type: 'string' } } } },
+        { name: 'journal_log', description: 'Append an entry to the daily journal.', inputSchema: { type: 'object' as const, required: ['entry'], properties: { entry: { type: 'string' } } } },
+      ];
+      const soulPerms = permissions['soul'];
+      for (const tool of soulTools) {
+        if (soulPerms === '*' || (Array.isArray(soulPerms) && soulPerms.includes(tool.name))) {
+          tools.push(tool);
+        }
+      }
     }
 
     return tools;

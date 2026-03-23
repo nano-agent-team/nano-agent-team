@@ -18,3 +18,5 @@ features/*/node_modules/
 *.key
 credentials.json
 .worktrees/
+data.self-dev-pipeline/
+data.self-dev-pipeline/
