@@ -1232,12 +1232,9 @@ export class AgentManager {
       logger.debug({ agentId, repo_path: agent.manifest.repo_path }, 'Mounting repo workspace');
     }
 
-    // Volume: Obsidian vault → /obsidian (for consciousness layer agents)
-    if (agent.manifest.obsidian_mount && process.env.HOST_OBSIDIAN_VAULT_PATH) {
+    // Volume: Obsidian vault → /obsidian (available to all agents)
+    if (process.env.HOST_OBSIDIAN_VAULT_PATH) {
       binds.push(`${process.env.HOST_OBSIDIAN_VAULT_PATH}:/obsidian:rw`);
-      logger.debug({ agentId, obsidianPath: process.env.HOST_OBSIDIAN_VAULT_PATH }, 'Mounting Obsidian vault');
-    } else if (agent.manifest.obsidian_mount && !process.env.HOST_OBSIDIAN_VAULT_PATH) {
-      logger.warn({ agentId }, 'obsidian_mount=true but HOST_OBSIDIAN_VAULT_PATH not set — Obsidian not mounted');
     }
 
     // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
