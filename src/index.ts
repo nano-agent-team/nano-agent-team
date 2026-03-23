@@ -5,11 +5,12 @@
  * 1. Detect setup mode (first-run / setup-incomplete / ready)
  * 2. Connect to NATS JetStream
  * 3. Ensure AGENTS stream
- * 4a. Setup mode: bootstrap foreman from hub, start it
+ * 4. Bootstrap base agents from hub (consciousness, conscience, strategist, foreman)
+ * 4a. Setup mode: start base agents, wait for provider config
  * 4b. Ready mode: load all agents from /data/agents + features from config
  * 5. Start API server
  *
- * Core ships NO built-in agents. All agents come from the hub catalog.
+ * Base agents (consciousness layer + foreman) are always installed from hub on first startup.
  */
 
 import fs from 'fs';
@@ -43,27 +44,16 @@ const DEFAULT_HUB_URL = process.env.HUB_URL ?? 'https://github.com/nano-agent-te
 const HUB_CACHE_DIR = '/tmp/hub';
 
 /**
- * Bootstrap: fetch the hub catalog and install the foreman agent into /data/agents/.
- * Called once during setup mode (first-run / setup-incomplete).
- * If foreman is already installed, skips the hub fetch and returns immediately.
+ * Base agents — always present in every instance.
+ * Installed from hub on first startup, started automatically.
  */
-async function bootstrapForeman(
-  dataDir: string,
-): Promise<{ manifest: ReturnType<typeof loadManifest>; dir: string } | null> {
-  const foremanDataDir = path.join(dataDir, 'agents', 'foreman');
+const BASE_AGENTS = ['consciousness', 'conscience', 'strategist', 'foreman'];
 
-  // Already installed — just load and return
-  if (fs.existsSync(path.join(foremanDataDir, 'manifest.json'))) {
-    logger.info('Foreman already installed, skipping hub fetch');
-    try {
-      return { manifest: loadManifest(foremanDataDir), dir: foremanDataDir };
-    } catch (err) {
-      logger.error({ err }, 'Foreman manifest invalid — cannot bootstrap');
-      return null;
-    }
-  }
-
-  // Clone or update hub
+/**
+ * Fetch the hub catalog and ensure it's available locally.
+ * Returns true if hub is ready, false if fetch failed.
+ */
+function fetchHubCatalog(): boolean {
   const hubUrl = DEFAULT_HUB_URL;
   const ghToken = process.env.GH_TOKEN;
   let cloneUrl = hubUrl;
@@ -84,28 +74,75 @@ async function bootstrapForeman(
       logger.info({ hubUrl }, 'Cloning hub catalog');
       execFileSync('git', ['clone', '--depth=1', cloneUrl, HUB_CACHE_DIR], { env: gitEnv, timeout: 60_000 });
     }
+    return true;
   } catch (err) {
-    logger.error({ err }, 'Failed to fetch hub catalog — cannot bootstrap foreman');
+    logger.error({ err }, 'Failed to fetch hub catalog');
+    return false;
+  }
+}
+
+/**
+ * Install a single agent from hub into /data/agents/ if not already present.
+ * Returns the loaded agent or null on failure.
+ */
+function installAgentFromHub(
+  dataDir: string,
+  agentId: string,
+): { manifest: ReturnType<typeof loadManifest>; dir: string } | null {
+  const agentDataDir = path.join(dataDir, 'agents', agentId);
+
+  // Already installed — just load
+  if (fs.existsSync(path.join(agentDataDir, 'manifest.json'))) {
+    logger.debug({ agentId }, 'Base agent already installed');
+    try {
+      return { manifest: loadManifest(agentDataDir), dir: agentDataDir };
+    } catch (err) {
+      logger.error({ err, agentId }, 'Base agent manifest invalid');
+      return null;
+    }
+  }
+
+  // Install from hub cache
+  const hubAgentDir = path.join(HUB_CACHE_DIR, 'agents', agentId);
+  if (!fs.existsSync(path.join(hubAgentDir, 'manifest.json'))) {
+    logger.error({ agentId, hubAgentDir }, 'Base agent not found in hub');
     return null;
   }
 
-  const foremanHubDir = path.join(HUB_CACHE_DIR, 'agents', 'foreman');
-  if (!fs.existsSync(path.join(foremanHubDir, 'manifest.json'))) {
-    logger.error({ foremanHubDir }, 'Foreman agent not found in hub');
-    return null;
-  }
-
-  // Install foreman into /data/agents/foreman
-  fs.mkdirSync(foremanDataDir, { recursive: true });
-  execFileSync('cp', ['-r', `${foremanHubDir}/.`, foremanDataDir], { timeout: 10_000 });
-  logger.info('Foreman installed from hub');
+  fs.mkdirSync(agentDataDir, { recursive: true });
+  execFileSync('cp', ['-r', `${hubAgentDir}/.`, agentDataDir], { timeout: 10_000 });
+  logger.info({ agentId }, 'Base agent installed from hub');
 
   try {
-    return { manifest: loadManifest(foremanDataDir), dir: foremanDataDir };
+    return { manifest: loadManifest(agentDataDir), dir: agentDataDir };
   } catch (err) {
-    logger.error({ err }, 'Foreman manifest invalid after install');
+    logger.error({ err, agentId }, 'Base agent manifest invalid after install');
     return null;
   }
+}
+
+/**
+ * Bootstrap all base agents from hub catalog.
+ * Returns array of successfully loaded agents (persistent ones only — ephemeral agents like conscience are not started).
+ */
+async function bootstrapBaseAgents(
+  dataDir: string,
+): Promise<Array<{ manifest: ReturnType<typeof loadManifest>; dir: string }>> {
+  if (!fetchHubCatalog()) {
+    logger.error('Cannot bootstrap base agents — hub fetch failed');
+    return [];
+  }
+
+  const agents: Array<{ manifest: ReturnType<typeof loadManifest>; dir: string }> = [];
+  for (const agentId of BASE_AGENTS) {
+    const agent = installAgentFromHub(dataDir, agentId);
+    if (agent) {
+      agents.push(agent);
+    }
+  }
+
+  logger.info({ installed: agents.map(a => a.manifest.id) }, 'Base agents bootstrapped');
+  return agents;
 }
 
 async function main(): Promise<void> {
@@ -211,19 +248,33 @@ async function main(): Promise<void> {
   );
   mcpGateway.start(MCP_GATEWAY_PORT);
 
-  if (isSetupRequired(setupMode)) {
-    // ── 4a. Setup mode — bootstrap foreman from hub ─────────────────────────────
-    logger.info({ setupMode }, 'Setup mode active — bootstrapping foreman from hub');
+  // ── 4. Bootstrap base agents (always, regardless of setup mode) ──────────
+  const baseAgents = await bootstrapBaseAgents(DATA_DIR);
 
-    const foremanAgent = await bootstrapForeman(DATA_DIR);
-    if (foremanAgent) {
-      const foremanTopics = resolveTopicsForAgent(foremanAgent.manifest);
-      await ensureConsumer(nc, 'AGENTS', foremanAgent.manifest.id, foremanTopics);
-      await manager.startAll([foremanAgent]);
+  // Start persistent base agents (skip ephemeral like conscience — they launch on demand)
+  const persistentBaseAgents = baseAgents.filter(a => !a.manifest.workspace_source);
+  for (const agent of persistentBaseAgents) {
+    const topics = resolveTopicsForAgent(agent.manifest);
+    await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
+  }
+
+  // Ensure consumer for ephemeral base agents too (conscience needs soul.idea.pending consumer)
+  const ephemeralBaseAgents = baseAgents.filter(a => !!a.manifest.workspace_source);
+  for (const agent of ephemeralBaseAgents) {
+    const topics = resolveTopicsForAgent(agent.manifest);
+    await ensureConsumer(nc, 'AGENTS', agent.manifest.id, topics);
+  }
+
+  if (isSetupRequired(setupMode)) {
+    // ── 4a. Setup mode — start base agents for setup ────────────────────────────
+    logger.info({ setupMode }, 'Setup mode active — starting base agents');
+
+    if (persistentBaseAgents.length > 0) {
+      await manager.startAll(persistentBaseAgents);
       manager.startHealthMonitoring();
-      logger.info('Foreman started — ready for setup');
+      logger.info({ agents: persistentBaseAgents.map(a => a.manifest.id) }, 'Base agents started — ready for setup');
     } else {
-      logger.warn('Foreman bootstrap failed — setup UI will run without conversational agent');
+      logger.warn('No base agents bootstrapped — setup UI will run without agents');
     }
 
   } else {
