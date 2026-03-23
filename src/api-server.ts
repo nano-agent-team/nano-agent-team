@@ -829,16 +829,23 @@ export async function createApiApp(
     }
   });
 
-  // ── Chat with consciousness (user-facing NATS bridge) ──────────────────────
+  // ── Chat with any agent (NATS bridge) ──────────────────────────────────────
+  // Default: consciousness (user.message.inbound)
+  // With ?agent=foreman: agent.foreman.inbox
+  // With ?agent=strategist: agent.strategist.inbox
 
   app.post('/api/chat', async (req: Request, res: Response) => {
-    const { message, sessionId } = req.body as { message?: string; sessionId?: string };
+    const { message, sessionId, agent } = req.body as { message?: string; sessionId?: string; agent?: string };
     if (!message) return res.status(400).json({ error: '"message" required' });
 
     const sid = sessionId ?? 'default';
     const streamSubject = `chat.stream.${sid}.${Date.now()}`;
 
-    // SSE stream — forwards real LLM tokens from consciousness
+    // Resolve target NATS subject based on agent parameter
+    const targetSubject = agent
+      ? `agent.${agent}.inbox`
+      : 'user.message.inbound'; // default: consciousness
+
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
     res.setHeader('Connection', 'keep-alive');
@@ -853,10 +860,9 @@ export async function createApiApp(
       res.on('close', () => sub.unsubscribe());
       const timeoutHandle = setTimeout(() => sub.unsubscribe(), 300_000);
 
-      logger.debug({ streamSubject }, 'Chat: subscribed, publishing to consciousness');
+      logger.debug({ targetSubject, agent: agent ?? 'consciousness', streamSubject }, 'Chat: publishing');
 
-      // Publish to consciousness via user.message.inbound
-      await publish(nc, 'user.message.inbound', JSON.stringify({
+      await publish(nc, targetSubject, JSON.stringify({
         text: message,
         sessionId: sid,
         streamSubject,
@@ -864,15 +870,14 @@ export async function createApiApp(
 
       for await (const msg of sub) {
         const event = JSON.parse(codec.decode(msg.data)) as { type: string; text?: string; error?: string };
-        logger.debug({ type: event.type }, 'Chat: stream event received');
         sse(event);
         if (event.type === 'done' || event.type === 'error') break;
       }
 
       clearTimeout(timeoutHandle);
     } catch (err) {
-      logger.error({ err }, 'Chat error');
-      sse({ type: 'error', error: 'Consciousness not responding' });
+      logger.error({ err, agent: agent ?? 'consciousness' }, 'Chat error');
+      sse({ type: 'error', error: `${agent ?? 'Consciousness'} not responding` });
     }
     res.end();
   });

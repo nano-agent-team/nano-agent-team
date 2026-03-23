@@ -113,6 +113,15 @@
 
       <!-- Input -->
       <div class="input-area">
+        <div class="chat-target">
+          <label>Chat with:</label>
+          <select v-model="chatAgent">
+            <option value="">Consciousness (default)</option>
+            <option v-for="a in agents.filter(a => a.status === 'running')" :key="a.agentId" :value="a.agentId">
+              {{ a.agentId }}
+            </option>
+          </select>
+        </div>
         <div class="input-wrap" :class="{ focused: inputFocused, disabled: loading_chat }">
           <textarea
             ref="inputEl"
@@ -193,6 +202,7 @@ const copiedMsg = ref<string | null>(null)
 const messagesEl = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 const currentToolCall = ref<string | null>(null)
+const chatAgent = ref('')  // empty = consciousness (default), or agentId
 
 function uuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
@@ -260,10 +270,14 @@ async function sendMessage() {
   let streamingMsg: ChatMessage | null = null
 
   try {
-    const res = await fetch('/api/chat/settings', {
+    const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: text, sessionId: sessionId.value }),
+      body: JSON.stringify({
+        message: text,
+        sessionId: sessionId.value,
+        ...(chatAgent.value ? { agent: chatAgent.value } : {}),
+      }),
     })
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -758,6 +772,24 @@ onUnmounted(() => clearInterval(healthInterval))
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   background: var(--surface);
+}
+
+.chat-target {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.chat-target label { font-weight: 500; }
+.chat-target select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--text);
 }
 
 .input-wrap {
