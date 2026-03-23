@@ -69,14 +69,28 @@ function fetchHubCatalog(): boolean {
     };
     if (fs.existsSync(path.join(HUB_CACHE_DIR, '.git'))) {
       logger.info('Hub cache exists — pulling latest');
-      execFileSync('git', ['pull', '--ff-only'], { cwd: HUB_CACHE_DIR, env: gitEnv, timeout: 30_000 });
+      try {
+        execFileSync('git', ['pull', '--ff-only'], { cwd: HUB_CACHE_DIR, env: gitEnv, timeout: 30_000 });
+      } catch {
+        logger.warn('Hub pull failed — using cached version');
+      }
+      return true;
+    } else if (fs.existsSync(path.join(HUB_CACHE_DIR, 'agents'))) {
+      // Hub dir exists without .git (e.g. copied manually or via Docker COPY) — use as-is
+      logger.info('Hub cache exists (no .git) — using as-is');
+      return true;
     } else {
       logger.info({ hubUrl }, 'Cloning hub catalog');
       execFileSync('git', ['clone', '--depth=1', cloneUrl, HUB_CACHE_DIR], { env: gitEnv, timeout: 60_000 });
+      return true;
     }
-    return true;
   } catch (err) {
     logger.error({ err }, 'Failed to fetch hub catalog');
+    // If hub cache has agents dir despite fetch failure, use it anyway
+    if (fs.existsSync(path.join(HUB_CACHE_DIR, 'agents'))) {
+      logger.warn('Using existing hub cache despite fetch failure');
+      return true;
+    }
     return false;
   }
 }
