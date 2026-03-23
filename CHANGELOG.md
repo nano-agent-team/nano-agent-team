@@ -186,6 +186,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`d6e6095`](https://github.com/nano-agent-team/nano-agent-team/commit/d6e60957eeca59c93eb489ce7dce27175e9f79de))
 - **ci:** Update CHANGELOG [skip ci] ([`f506090`](https://github.com/nano-agent-team/nano-agent-team/commit/f50609021ff9ee852a71d586f09e1e3ec73fbd8e))
 - **ci:** Update CHANGELOG [skip ci] ([`fc54d63`](https://github.com/nano-agent-team/nano-agent-team/commit/fc54d63c90308c8c9101b221d6f9d5d1e4e408bb))
+- **ci:** Update CHANGELOG [skip ci] ([`9f39c07`](https://github.com/nano-agent-team/nano-agent-team/commit/9f39c07661ca2c4ac02a710fcb6bd544495146e9))
 
 ### Features
 
@@ -279,6 +280,7 @@ All notable changes to this project will be documented in this file.
 - Auto-bootstrap base agents on startup (consciousness layer) ([`f6da8d9`](https://github.com/nano-agent-team/nano-agent-team/commit/f6da8d9e01f0eb0a9ad435ff41851618c5db15fd))
 - Universal chat endpoint with agent selector in dashboard ([`8b2238f`](https://github.com/nano-agent-team/nano-agent-team/commit/8b2238f48536094fab715bb54d4156e255a3a776))
 - SoulDispatcher + create-idea/write-brief skills ([`b087d34`](https://github.com/nano-agent-team/nano-agent-team/commit/b087d34e9440bf3b465837af3446e3e07e6c4aad))
+- Soul MCP tools, chat agent wiring, SSE push, remove SoulDispatcher ([`bd8f49e`](https://github.com/nano-agent-team/nano-agent-team/commit/bd8f49e083b61aa7c5ab321df4d8f53ab0dc60a2))
 
 ### Miscellaneous
 
