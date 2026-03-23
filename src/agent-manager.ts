@@ -592,31 +592,38 @@ export class AgentManager {
         continue;
       }
 
-      let ticketId: string | undefined;
+      const isSoulAgent = agent.manifest.workspace_source === 'soul';
+      let taskId: string | undefined;
       try {
         const payload = JSON.parse(codec.decode(msg.data)) as Record<string, unknown>;
-        ticketId = (payload.ticket_id ?? payload.ticketId) as string | undefined;
+        taskId = isSoulAgent
+          ? (payload.ideaId as string | undefined)
+          : (payload.ticket_id ?? payload.ticketId) as string | undefined;
       } catch {
         logger.warn({ agentId }, 'Ephemeral agent: cannot parse message payload — nacking');
         msg.nak();
         continue;
       }
 
-      if (!ticketId) {
-        logger.warn({ agentId }, 'Ephemeral agent: message has no ticket_id — nacking');
+      if (!taskId) {
+        logger.warn({ agentId, isSoulAgent }, `Ephemeral agent: message has no ${isSoulAgent ? 'ideaId' : 'ticket_id'} — nacking`);
         msg.nak();
         continue;
       }
 
-      const containerName = `nano-agent-${agentId}-${ticketId}`;
-      this.runningEphemeralContainers.set(containerName, ticketId);
+      const containerName = `nano-agent-${agentId}-${taskId.replace(/[^a-zA-Z0-9_.-]/g, '-')}`;
+      this.runningEphemeralContainers.set(containerName, taskId);
 
       try {
-        await this.runEphemeralContainer(agent, agentId, ticketId, msg.data, msg.headers);
+        if (isSoulAgent) {
+          await this.runSoulEphemeralContainer(agent, agentId, taskId, msg.data, msg.headers);
+        } else {
+          await this.runEphemeralContainer(agent, agentId, taskId, msg.data, msg.headers);
+        }
         msg.ack();
-        logger.info({ agentId, ticketId }, 'Ephemeral container completed successfully');
+        logger.info({ agentId, taskId, isSoulAgent }, 'Ephemeral container completed successfully');
       } catch (err) {
-        logger.error({ err, agentId, ticketId }, 'Ephemeral container failed');
+        logger.error({ err, agentId, taskId }, 'Ephemeral container failed');
         msg.nak();
       } finally {
         this.runningEphemeralContainers.delete(containerName);
@@ -715,6 +722,59 @@ export class AgentManager {
     // Always remove ephemeral containers after they're done
     await container.remove({ force: true }).catch(() => {});
     logger.debug({ agentId, ticketId, containerName }, 'Ephemeral container cleaned up');
+  }
+
+  /**
+   * Run a soul-triggered ephemeral container (e.g. conscience).
+   * Unlike ticket-based ephemerals, soul agents don't need a git workspace —
+   * they only access Obsidian via the /obsidian bind mount.
+   */
+  private async runSoulEphemeralContainer(
+    agent: LoadedAgent,
+    agentId: string,
+    ideaId: string,
+    messageData: Uint8Array,
+    messageHeaders?: import('nats').MsgHdrs,
+  ): Promise<void> {
+    // Build env and binds (no workspace resolution needed)
+    const { env, binds, image } = await this.buildAgentEnvAndBinds(agent, agentId, [
+      `EPHEMERAL_TASK_MESSAGE=${Buffer.from(messageData).toString('base64')}`,
+      `EPHEMERAL_IDEA_ID=${ideaId}`,
+      'SESSION_TYPE=stateless',
+    ]);
+
+    // No workspace bind mount — soul agents only use Obsidian (/obsidian already mounted by buildAgentEnvAndBinds)
+
+    const containerName = `nano-agent-${agentId}-${ideaId.replace(/[^a-zA-Z0-9_.-]/g, '-')}`;
+    await this.removeContainerIfExists(containerName);
+
+    logger.info({ agentId, ideaId, containerName }, 'Starting soul ephemeral container');
+
+    const container = await this.docker.createContainer({
+      Image: image,
+      name: containerName,
+      Env: env,
+      HostConfig: {
+        Binds: binds,
+        NetworkMode: DOCKER_NETWORK,
+        RestartPolicy: { Name: 'no' },
+      },
+    });
+
+    await container.start();
+    await container.wait().catch(() => {});
+
+    try {
+      const info = await container.inspect() as { State: { ExitCode: number } };
+      if (info.State.ExitCode !== 0) {
+        logger.warn({ agentId, ideaId, exitCode: info.State.ExitCode }, 'Soul ephemeral container exited with error');
+      }
+    } catch {
+      // Container may already be gone
+    }
+
+    await container.remove({ force: true }).catch(() => {});
+    logger.debug({ agentId, ideaId, containerName }, 'Soul ephemeral container cleaned up');
   }
 
   // ── Private ────────────────────────────────────────────────────────────────
@@ -1076,6 +1136,8 @@ export class AgentManager {
           }
         })(),
       ] : []),
+      // AlarmClock polling interval for persistent agents (consciousness, strategist)
+      `AGENT_POLL_INTERVAL_SECONDS=${process.env.AGENT_POLL_INTERVAL_SECONDS ?? '300'}`,
       // Observability: propagate OTel config to agent containers
       ...await this.getObservabilityEnvVars(),
       // Caller-supplied extras (e.g. WAIT_FOR_START_SIGNAL=true for rollover)
@@ -1168,6 +1230,14 @@ export class AgentManager {
     if (agent.manifest.repo_path) {
       binds.push(`${agent.manifest.repo_path}:/workspace/repo:rw`);
       logger.debug({ agentId, repo_path: agent.manifest.repo_path }, 'Mounting repo workspace');
+    }
+
+    // Volume: Obsidian vault → /obsidian (for consciousness layer agents)
+    if (agent.manifest.obsidian_mount && process.env.HOST_OBSIDIAN_VAULT_PATH) {
+      binds.push(`${process.env.HOST_OBSIDIAN_VAULT_PATH}:/obsidian:rw`);
+      logger.debug({ agentId, obsidianPath: process.env.HOST_OBSIDIAN_VAULT_PATH }, 'Mounting Obsidian vault');
+    } else if (agent.manifest.obsidian_mount && !process.env.HOST_OBSIDIAN_VAULT_PATH) {
+      logger.warn({ agentId }, 'obsidian_mount=true but HOST_OBSIDIAN_VAULT_PATH not set — Obsidian not mounted');
     }
 
     // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)

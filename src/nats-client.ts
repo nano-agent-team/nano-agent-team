@@ -4,12 +4,12 @@
  * Provides connect, stream management, publish and subscribe helpers.
  *
  * Streams:
- *   AGENTS  — subjects: agent.>, topic.>
+ *   AGENTS  — subjects: agent.>, topic.>, health.>, soul.>, user.message.>
  *             Limits retention, 24h max age, file storage
  *
  * Usage:
  *   const nc = await connectNats(NATS_URL);
- *   await ensureStream('AGENTS', ['agent.>', 'topic.>']);
+ *   await ensureStream('AGENTS', ['agent.>', 'topic.>', 'health.>', 'soul.>', 'user.message.>']);
  *   await publish(nc, 'agent.blank-agent.inbox', '{"text":"hello"}');
  */
 

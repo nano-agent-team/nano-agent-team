@@ -86,10 +86,13 @@ export interface AgentManifest {
   /** Extra tools to allow for this agent (e.g. ["Skill"] for superpowers skills) */
   allowedTools?: string[];
   /** Mount worktree from workspace provider based on ticket_id in NATS payload.
-   *  When set, agent runs as ephemeral: new container per task, workspace resolved from message payload. */
-  workspace_source?: 'ticket';
+   *  When set, agent runs as ephemeral: new container per task, workspace resolved from message payload.
+   *  'soul' variant: ephemeral without workspace — uses ideaId from payload, no git worktree (conscience pattern). */
+  workspace_source?: 'ticket' | 'soul';
   /** Handler module name for deterministic agents. Required when kind === 'deterministic'. */
   handler?: string;
+  /** Mount host Obsidian vault at /obsidian in container. Requires HOST_OBSIDIAN_VAULT_PATH env var. */
+  obsidian_mount?: boolean;
 }
 
 // ─── Workflow Binding ─────────────────────────────────────────────────────────

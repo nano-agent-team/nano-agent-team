@@ -829,7 +829,55 @@ export async function createApiApp(
     }
   });
 
-  // ── Chat with settings agent (NATS bridge) ────────────────────────────────
+  // ── Chat with consciousness (user-facing NATS bridge) ──────────────────────
+
+  app.post('/api/chat', async (req: Request, res: Response) => {
+    const { message, sessionId } = req.body as { message?: string; sessionId?: string };
+    if (!message) return res.status(400).json({ error: '"message" required' });
+
+    const sid = sessionId ?? 'default';
+    const streamSubject = `chat.stream.${sid}.${Date.now()}`;
+
+    // SSE stream — forwards real LLM tokens from consciousness
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    const sse = (data: object) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+      (res as unknown as { flush?: () => void }).flush?.();
+    };
+
+    try {
+      const sub = nc.subscribe(streamSubject);
+      res.on('close', () => sub.unsubscribe());
+      const timeoutHandle = setTimeout(() => sub.unsubscribe(), 300_000);
+
+      logger.debug({ streamSubject }, 'Chat: subscribed, publishing to consciousness');
+
+      // Publish to consciousness via user.message.inbound
+      await publish(nc, 'user.message.inbound', JSON.stringify({
+        text: message,
+        sessionId: sid,
+        streamSubject,
+      }));
+
+      for await (const msg of sub) {
+        const event = JSON.parse(codec.decode(msg.data)) as { type: string; text?: string; error?: string };
+        logger.debug({ type: event.type }, 'Chat: stream event received');
+        sse(event);
+        if (event.type === 'done' || event.type === 'error') break;
+      }
+
+      clearTimeout(timeoutHandle);
+    } catch (err) {
+      logger.error({ err }, 'Chat error');
+      sse({ type: 'error', error: 'Consciousness not responding' });
+    }
+    res.end();
+  });
+
+  // ── Chat with settings agent (NATS bridge, setup mode) ────────────────────
 
   app.post('/api/chat/settings', async (req: Request, res: Response) => {
     const { message, sessionId } = req.body as { message?: string; sessionId?: string };
