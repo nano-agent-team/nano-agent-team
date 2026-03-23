@@ -79,6 +79,7 @@ All notable changes to this project will be documented in this file.
 - Scrum-master uses MCP tickets_list instead of direct DB queries ([`694c87d`](https://github.com/nano-agent-team/nano-agent-team/commit/694c87d3ceedec460a38e7e43d7da35564c96b15))
 - Translate agent.dir to host path for bind mount ([`96185d2`](https://github.com/nano-agent-team/nano-agent-team/commit/96185d2a05b2eb324204ef55a39b0b1dddcc1913))
 - Hub fetch fallback for non-git and cached hub directories ([`77bba52`](https://github.com/nano-agent-team/nano-agent-team/commit/77bba52f900743d8899ec33c2120c02dc637aaf6))
+- Mount hub as volume for base agent bootstrap at first startup ([`7222624`](https://github.com/nano-agent-team/nano-agent-team/commit/72226243fa4f420c74a24d62524a3f9dde09bc8c))
 
 ### Documentation
 
@@ -176,6 +177,7 @@ All notable changes to this project will be documented in this file.
 - Fix 2 blocking issues from plan review round 6 ([`f102b3c`](https://github.com/nano-agent-team/nano-agent-team/commit/f102b3c749880dfe99f6fb7fd776908037fb2b70))
 - **ci:** Update CHANGELOG [skip ci] ([`cf83879`](https://github.com/nano-agent-team/nano-agent-team/commit/cf838794f39cf644d85e4bc2ead02f5240ea290a))
 - **ci:** Update CHANGELOG [skip ci] ([`d6e6095`](https://github.com/nano-agent-team/nano-agent-team/commit/d6e60957eeca59c93eb489ce7dce27175e9f79de))
+- **ci:** Update CHANGELOG [skip ci] ([`f506090`](https://github.com/nano-agent-team/nano-agent-team/commit/f50609021ff9ee852a71d586f09e1e3ec73fbd8e))
 
 ### Features
 
