@@ -37,6 +37,7 @@ import { SecretStore } from './secret-store.js';
 import { McpServerRegistry } from './mcp-server-registry.js';
 import { McpManager } from './mcp-manager.js';
 import { WorkspaceProvider } from './workspace-provider.js';
+import { SoulDispatcher } from './soul-dispatcher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -286,6 +287,9 @@ async function main(): Promise<void> {
     if (persistentBaseAgents.length > 0) {
       await manager.startAll(persistentBaseAgents);
       manager.startHealthMonitoring();
+      // Soul Dispatcher: deterministic Obsidian → NATS bridge
+      const soulDispatcher = new SoulDispatcher(nc, DATA_DIR);
+      soulDispatcher.start();
       logger.info({ agents: persistentBaseAgents.map(a => a.manifest.id) }, 'Base agents started — ready for setup');
     } else {
       logger.warn('No base agents bootstrapped — setup UI will run without agents');
@@ -313,6 +317,10 @@ async function main(): Promise<void> {
     }
 
     manager.startHealthMonitoring();
+
+    // Soul Dispatcher: deterministic Obsidian → NATS bridge
+    const soulDispatcher = new SoulDispatcher(nc, DATA_DIR);
+    soulDispatcher.start();
 
     // Publish health.check every 30 minutes (Scrum Master agent listens)
     setInterval(() => {
