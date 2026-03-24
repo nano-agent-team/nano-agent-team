@@ -160,14 +160,15 @@ export function registerSoulTools(
   if (allowed('update_idea')) {
     server.tool(
       'update_idea',
-      'Update an existing idea. If conscience_verdict is set, publishes soul.idea.approved or soul.idea.rejected.',
+      'Update an existing idea. If conscience_verdict is set, publishes soul.idea.approved, soul.idea.rejected, or soul.idea.boundary.',
       {
         ideaId:            z.string().describe('Idea ID to update'),
         status:            z.string().optional().describe('New status'),
-        conscience_verdict: z.enum(['approved', 'rejected']).optional().describe('Conscience verdict'),
+        conscience_verdict: z.enum(['approved', 'rejected', 'boundary']).optional().describe('Conscience verdict'),
         conscience_reason:  z.string().optional().describe('Reason for verdict'),
+        conscience_boundary: z.string().optional().describe('What is OK vs what needs confirmation'),
       },
-      async ({ ideaId, status, conscience_verdict, conscience_reason }) => {
+      async ({ ideaId, status, conscience_verdict, conscience_reason, conscience_boundary }) => {
         try {
           validateId(ideaId, 'ideaId');
           const filePath = path.join(obsidianBase, 'ideas', `${ideaId}.md`);
@@ -179,9 +180,24 @@ export function registerSoulTools(
           if (status) fields.status = status;
           if (conscience_verdict) fields.conscience_verdict = conscience_verdict;
           if (conscience_reason) fields.conscience_reason = conscience_reason;
+          if (conscience_boundary) fields.conscience_boundary = conscience_boundary;
           fields.updated = new Date().toISOString();
 
           atomicWrite(filePath, buildFrontmatter(fields, body));
+
+          if (conscience_verdict) {
+            const timestamp = new Date().toISOString();
+            const content = fs.readFileSync(filePath, 'utf-8');
+            const turnMatch = content.match(/### Turn (\d+)/g);
+            const turnNum = turnMatch ? turnMatch.length + 1 : 1;
+            const boundaryLine = conscience_boundary ? `\n**Boundary:** ${conscience_boundary}` : '';
+            const entry = `\n### Turn ${turnNum} — Conscience (${timestamp})\n**Verdict:** ${conscience_verdict}${boundaryLine}\n**Reason:** ${conscience_reason || 'No reason given'}\n`;
+            if (content.includes('## Dialogue')) {
+              fs.appendFileSync(filePath, entry);
+            } else {
+              fs.appendFileSync(filePath, `\n## Dialogue\n${entry}`);
+            }
+          }
 
           if (conscience_verdict === 'approved') {
             await publish(nc, 'soul.idea.approved', JSON.stringify({ ideaId, path: filePath }));
@@ -189,6 +205,22 @@ export function registerSoulTools(
             await publish(nc, 'soul.idea.rejected', JSON.stringify({
               ideaId, path: filePath, reason: conscience_reason ?? '',
             }));
+          } else if (conscience_verdict === 'boundary') {
+            await publish(nc, 'soul.idea.boundary', JSON.stringify({
+              ideaId, path: filePath, boundary: conscience_boundary,
+            }));
+          }
+
+          if (conscience_verdict) {
+            emitActivity(nc, {
+              agent: agentId, type: 'dialogue', entityId: ideaId,
+              summary: `Verdict: ${conscience_verdict} on idea ${ideaId}`,
+              from: 'conscience', to: 'consciousness', timestamp: Date.now(),
+            });
+            emitActivity(nc, {
+              agent: agentId, type: 'idea', entityId: ideaId,
+              summary: `Idea ${ideaId} status: ${conscience_verdict}`, timestamp: Date.now(),
+            });
           }
 
           return textResult({ ok: true });
