@@ -345,13 +345,9 @@ export class AgentManager {
         logger.info({ agentId: id }, 'Bootstrap alarm set for deterministic agent');
       }
 
-      // Set recurring alarm for all persistent soul agents (consciousness, strategist, foreman, conscience)
-      // Each agent wakes up periodically to check their state and act if needed
-      if (agent.manifest.session_type === 'persistent' || (agent.manifest.session_type as string) === 'stateful') {
-        const pollInterval = parseInt(process.env.AGENT_POLL_INTERVAL_SECONDS || '60');
-        this.alarmClock?.set(agent.manifest.id, pollInterval, { type: 'periodic_wakeup' });
-        logger.info({ agentId: agent.manifest.id, pollInterval }, 'Set recurring alarm');
-      }
+      // NOTE: No recurring alarms for individual agents. A dedicated lightweight
+      // wakeup agent (haiku) handles periodic state checks and sends targeted
+      // kicks only to agents that have work. Avoids burning tokens on idle agents.
     } catch (err) {
       logger.error({ err, id }, 'Failed to start agent container');
       const state = this.states.get(id);
