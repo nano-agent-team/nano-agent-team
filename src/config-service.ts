@@ -37,6 +37,12 @@ export interface NanoConfig {
   };
   /** Bare repo URLs for workspace provider (repoType → git URL) */
   workspaceRepos?: Record<string, string>;
+  /** Hard ceilings on agent creation — enforced by mcp-gateway */
+  resourceLimits?: {
+    maxConcurrentAgents?: number;  // default 10
+    maxAgentsPerHour?: number;     // default 5
+    maxTotalAgents?: number;       // default 20
+  };
 }
 
 function createDefaultConfig(): NanoConfig {

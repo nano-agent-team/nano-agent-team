@@ -159,6 +159,28 @@ async function callExternalTool(
 
 // ─── McpServer builder (built-in tools only) ─────────────────────────────────
 
+// ─── Resource limits ──────────────────────────────────────────────────────────
+
+const agentCreationCounter = { count: 0, resetAt: Date.now() + 3600000 };
+
+function checkResourceLimits(config: Record<string, unknown>, runningAgentCount: number): string | null {
+  const limits = (config?.resourceLimits ?? {}) as Record<string, number | undefined>;
+  const maxConcurrent = limits.maxConcurrentAgents ?? 10;
+  const maxPerHour = limits.maxAgentsPerHour ?? 5;
+  const maxTotal = limits.maxTotalAgents ?? 20;
+
+  if (runningAgentCount >= maxConcurrent) return `Max concurrent agents (${maxConcurrent}) reached`;
+  if (runningAgentCount >= maxTotal) return `Max total agents (${maxTotal}) reached`;
+
+  if (Date.now() > agentCreationCounter.resetAt) {
+    agentCreationCounter.count = 0;
+    agentCreationCounter.resetAt = Date.now() + 3600000;
+  }
+  if (agentCreationCounter.count >= maxPerHour) return `Max agents per hour (${maxPerHour}) reached`;
+
+  return null;
+}
+
 // ─── Config tool helpers ──────────────────────────────────────────────────────
 
 function cfgLoad(configPath: string): Record<string, unknown> {
@@ -635,6 +657,14 @@ function buildMcpServer(
 
     server.tool('install_agent', 'Install a standalone agent from hub into /data/agents and start it.', { agent_id: z.string() }, async ({ agent_id }) => {
       if (!/^[a-z0-9_-]+$/.test(agent_id)) return { content: [{ type: 'text' as const, text: 'Invalid agent_id format.' }] };
+      const cfg = cfgLoad(configPath);
+      const statusData = await callInternal('GET', '/internal/status') as { agents?: Array<{ status: string }> };
+      const runningCount = (statusData.agents ?? []).filter((a) => a.status === 'running').length;
+      const limitError = checkResourceLimits(cfg, runningCount);
+      if (limitError) {
+        return { content: [{ type: 'text' as const, text: `Resource limit: ${limitError}` }] };
+      }
+      agentCreationCounter.count++;
       const agentHubDir = path.join(HUB_DIR, 'agents', agent_id);
       if (!fs.existsSync(path.join(agentHubDir, 'manifest.json'))) return { content: [{ type: 'text' as const, text: `Agent "${agent_id}" not found in hub. Call fetch_hub first.` }] };
       const agentDestDir = path.join(opts.dataDir, 'agents', agent_id);
