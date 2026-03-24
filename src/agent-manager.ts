@@ -344,6 +344,13 @@ export class AgentManager {
         this.alarmClock.set(id, 10, { type: 'poll' });
         logger.info({ agentId: id }, 'Bootstrap alarm set for deterministic agent');
       }
+
+      // Set initial alarm for consciousness "what next" loop
+      if (agent.manifest.id === 'consciousness' && agent.manifest.session_type === 'persistent') {
+        const pollInterval = parseInt(process.env.AGENT_POLL_INTERVAL_SECONDS || '60');
+        this.alarmClock?.set(agent.manifest.id, pollInterval, { type: 'what_next_bootstrap' });
+        logger.info({ agentId: agent.manifest.id, pollInterval }, 'Set bootstrap alarm for consciousness');
+      }
     } catch (err) {
       logger.error({ err, id }, 'Failed to start agent container');
       const state = this.states.get(id);
