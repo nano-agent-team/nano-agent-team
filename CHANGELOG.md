@@ -94,6 +94,7 @@ All notable changes to this project will be documented in this file.
 - **api:** Sync soul tool schemas in getBuiltinToolList with soul-mcp.ts ([`a8c62c3`](https://github.com/nano-agent-team/nano-agent-team/commit/a8c62c3e166549477bdcff1530a59f7c553d22b3))
 - **api:** Auto-reschedule alarms so consciousness what-next loop never stops ([`98941e4`](https://github.com/nano-agent-team/nano-agent-team/commit/98941e420506175ffdbbfcc4dc5e691fe70e8447))
 - **api:** Recurring alarms for all persistent agents, not just consciousness ([`dad2c02`](https://github.com/nano-agent-team/nano-agent-team/commit/dad2c0253dede607506802cebb31f8f934074a30))
+- **api:** Remove recurring alarms — wakeup agent will handle scheduling ([`4e67559`](https://github.com/nano-agent-team/nano-agent-team/commit/4e67559854ceef3008a5d34c813603dfbdcd25e9))
 
 ### Documentation
 
@@ -197,6 +198,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`1b2ad80`](https://github.com/nano-agent-team/nano-agent-team/commit/1b2ad8057174fd87dba5bf504cf832b9bd8bf916))
 - **ci:** Update CHANGELOG [skip ci] ([`650002b`](https://github.com/nano-agent-team/nano-agent-team/commit/650002bc53639699934d596ef007cd029001e275))
 - **ci:** Update CHANGELOG [skip ci] ([`f22c5d2`](https://github.com/nano-agent-team/nano-agent-team/commit/f22c5d2bbeb0c11e827e72fda75835284e4c92cc))
+- **ci:** Update CHANGELOG [skip ci] ([`9063fa9`](https://github.com/nano-agent-team/nano-agent-team/commit/9063fa9537709e51ea69026bd6e019e5bf0da134))
 
 ### Features
 
