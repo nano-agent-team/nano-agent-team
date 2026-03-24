@@ -345,11 +345,12 @@ export class AgentManager {
         logger.info({ agentId: id }, 'Bootstrap alarm set for deterministic agent');
       }
 
-      // Set initial alarm for consciousness "what next" loop
-      if (agent.manifest.id === 'consciousness' && agent.manifest.session_type === 'persistent') {
+      // Set recurring alarm for all persistent soul agents (consciousness, strategist, foreman, conscience)
+      // Each agent wakes up periodically to check their state and act if needed
+      if (agent.manifest.session_type === 'persistent' || (agent.manifest.session_type as string) === 'stateful') {
         const pollInterval = parseInt(process.env.AGENT_POLL_INTERVAL_SECONDS || '60');
-        this.alarmClock?.set(agent.manifest.id, pollInterval, { type: 'what_next_bootstrap' });
-        logger.info({ agentId: agent.manifest.id, pollInterval }, 'Set bootstrap alarm for consciousness');
+        this.alarmClock?.set(agent.manifest.id, pollInterval, { type: 'periodic_wakeup' });
+        logger.info({ agentId: agent.manifest.id, pollInterval }, 'Set recurring alarm');
       }
     } catch (err) {
       logger.error({ err, id }, 'Failed to start agent container');
