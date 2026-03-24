@@ -44,7 +44,7 @@
           <!-- Idea-specific info -->
           <template v-if="selectedNode.type === 'idea'">
             <div v-if="selectedNode.conscienceVerdict" class="detail-meta-row">
-              <span class="detail-meta-label">Conscience verdict</span>
+              <span class="detail-meta-label">Conscience</span>
               <span class="turn-verdict" :class="selectedNode.conscienceVerdict">{{ selectedNode.conscienceVerdict }}</span>
             </div>
             <div class="detail-meta-row">
@@ -52,6 +52,12 @@
               <span class="detail-meta-value">{{ selectedNode.planCount }}</span>
             </div>
           </template>
+
+          <!-- Description -->
+          <div v-if="selectedNode.description" class="detail-section">
+            <div class="detail-section-title">Description</div>
+            <div class="detail-description">{{ selectedNode.description }}</div>
+          </div>
 
           <!-- Dialogue history (ideas) -->
           <div v-if="selectedNode.dialogue && selectedNode.dialogue.length" class="detail-section">
@@ -79,11 +85,6 @@
               <span class="task-check">{{ task.done ? '✓' : '○' }}</span>
               {{ task.title }}
             </div>
-          </div>
-
-          <!-- Empty state for nodes without extra data -->
-          <div v-if="!selectedNode.dialogue?.length && !selectedNode.tasks?.length && selectedNode.type !== 'goal'" class="dialogue-empty">
-            No additional details
           </div>
         </div>
       </div>
@@ -113,6 +114,7 @@ interface TreeNode {
 
 interface SelectedNodeInfo {
   title: string;
+  description?: string;
   type: 'root' | 'goal' | 'idea' | 'plan';
   status: string;
   dialogue?: DialogueTurn[];
@@ -315,8 +317,19 @@ function render() {
       const data = d.data;
       if (data.type === 'root') return;
 
+      // Find source data for description
+      const allGoals = props.state.goals;
+      const allIdeas = [...allGoals.flatMap((g) => g.ideas), ...props.state.orphanIdeas];
+      const allPlans = [...allIdeas.flatMap((i) => i.plans), ...props.state.orphanPlans];
+
+      let description: string | undefined;
+      if (data.type === 'goal') description = allGoals.find((g) => g.id === data.id)?.description;
+      else if (data.type === 'idea') description = allIdeas.find((i) => i.id === data.id)?.description;
+      else if (data.type === 'plan') description = allPlans.find((p) => p.id === data.id)?.description;
+
       const info: SelectedNodeInfo = {
         title: data.title,
+        description,
         type: data.type,
         status: data.status,
         dialogue: data.dialogue,
@@ -330,11 +343,6 @@ function render() {
       }
 
       if (data.type === 'idea') {
-        // Find the original idea to get conscience_verdict
-        const allIdeas = [
-          ...props.state.goals.flatMap((g) => g.ideas),
-          ...props.state.orphanIdeas,
-        ];
         const srcIdea = allIdeas.find((i) => i.id === data.id);
         info.conscienceVerdict = srcIdea?.conscience_verdict;
         info.planCount = data.children?.filter((c) => c.type === 'plan').length || 0;
@@ -642,6 +650,14 @@ watch(() => props.activity, () => render(), { deep: true });
   color: #9ca3af;
   text-transform: uppercase;
   margin-bottom: 8px;
+}
+
+.detail-description {
+  font-size: 13px;
+  color: #d1d5db;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .dialogue-turn {

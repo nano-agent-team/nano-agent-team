@@ -13,13 +13,13 @@ interface DialogueTurn {
 }
 
 interface SoulTask { id: string; title: string; done: boolean; }
-interface SoulPlan { id: string; title: string; status: string; tasks: SoulTask[]; ideaId?: string; }
+interface SoulPlan { id: string; title: string; description: string; status: string; tasks: SoulTask[]; ideaId?: string; }
 interface SoulIdea {
-  id: string; title: string; status: string;
-  conscience_verdict?: string; conscience_boundary?: string;
+  id: string; title: string; description: string; status: string;
+  conscience_verdict?: string; conscience_boundary?: string; conscience_reason?: string;
   dialogue: DialogueTurn[]; plans: SoulPlan[]; goalId?: string;
 }
-interface SoulGoal { id: string; title: string; status: string; ideas: SoulIdea[]; }
+interface SoulGoal { id: string; title: string; description: string; status: string; ideas: SoulIdea[]; }
 export interface SoulState {
   goals: SoulGoal[];
   orphanIdeas: SoulIdea[];
@@ -93,36 +93,63 @@ function parseDir<T>(dir: string, parser: (filePath: string) => T | null): T[] {
 function parseGoalFile(filePath: string): SoulGoal | null {
   const content = fs.readFileSync(filePath, 'utf-8');
   const id = path.basename(filePath, '.md');
-  const title = extractField(content, 'title') || id;
+  const title = resolveTitle(content, id);
+  const description = extractBody(content);
   const status = extractField(content, 'status') || 'pending';
-  return { id, title, status, ideas: [] };
+  return { id, title, description, status, ideas: [] };
 }
 
 function parseIdeaFile(filePath: string): SoulIdea | null {
   const content = fs.readFileSync(filePath, 'utf-8');
   const id = path.basename(filePath, '.md');
-  const title = extractField(content, 'title') || id;
+  const title = resolveTitle(content, id);
+  const description = extractBody(content);
   const status = extractField(content, 'status') || 'pending';
   const conscience_verdict = extractField(content, 'conscience_verdict');
   const conscience_boundary = extractField(content, 'conscience_boundary');
+  const conscience_reason = extractField(content, 'conscience_reason');
   const goalId = extractField(content, 'goal');
   const dialogue = parseDialogue(content);
-  return { id, title, status, conscience_verdict, conscience_boundary, dialogue, plans: [], goalId };
+  return { id, title, description, status, conscience_verdict, conscience_boundary, conscience_reason, dialogue, plans: [], goalId };
 }
 
 function parsePlanFile(filePath: string): SoulPlan | null {
   const content = fs.readFileSync(filePath, 'utf-8');
   const id = path.basename(filePath, '.md');
-  const title = extractField(content, 'title') || id;
+  const title = resolveTitle(content, id);
+  const description = extractBody(content);
   const status = extractField(content, 'status') || 'pending';
   const ideaId = extractField(content, 'idea');
   const tasks = parseTasks(content);
-  return { id, title, status, tasks, ideaId };
+  return { id, title, description, status, tasks, ideaId };
 }
 
 function extractField(content: string, field: string): string | undefined {
   const match = content.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
   return match?.[1]?.trim();
+}
+
+/** Extract body text after frontmatter (--- delimited) and before ## Dialogue */
+function extractBody(content: string): string {
+  // Skip frontmatter block (between --- markers)
+  const fmEnd = content.indexOf('\n---', content.indexOf('---') + 1);
+  const afterFm = fmEnd >= 0 ? content.slice(fmEnd + 4).trim() : content;
+  // Cut off ## Dialogue section if present
+  const dialogueIdx = afterFm.indexOf('## Dialogue');
+  const body = dialogueIdx >= 0 ? afterFm.slice(0, dialogueIdx).trim() : afterFm;
+  return body;
+}
+
+/** Extract a readable title: use title field, or first line of body, or ID as last resort */
+function resolveTitle(content: string, id: string): string {
+  const title = extractField(content, 'title');
+  if (title) return title;
+  const body = extractBody(content);
+  if (body) {
+    const firstLine = body.split('\n')[0].replace(/^#+\s*/, '').trim();
+    if (firstLine && firstLine.length > 3) return firstLine.slice(0, 80);
+  }
+  return id;
 }
 
 function parseDialogue(content: string): DialogueTurn[] {
