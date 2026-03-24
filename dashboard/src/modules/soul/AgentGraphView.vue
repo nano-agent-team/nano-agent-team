@@ -53,6 +53,15 @@
             <div class="detail-section-title">Currently working on</div>
             <div class="detail-empty">No current activity</div>
           </div>
+          <div v-if="selectedAgent.journal.length" class="detail-section">
+            <div class="detail-section-title">💭 Thoughts</div>
+            <div class="detail-journal">
+              <div v-for="(entry, idx) in selectedAgent.journal" :key="idx" class="journal-entry">
+                <div class="journal-time">{{ entry.timestamp.split('T')[1] }}</div>
+                <div class="journal-text">{{ entry.text }}</div>
+              </div>
+            </div>
+          </div>
           <div class="detail-section">
             <div class="detail-section-title">Recent activity</div>
             <div v-if="selectedAgent.recentEvents.length" class="detail-events">
@@ -134,6 +143,12 @@ const PARTICLE_DURATION_MS = 2000;
 
 // --- Detail panel types ---
 
+interface JournalEntry {
+  timestamp: string;
+  agent: string;
+  text: string;
+}
+
 interface SelectedAgentInfo {
   id: string;
   label: string;
@@ -141,6 +156,7 @@ interface SelectedAgentInfo {
   active: boolean;
   currentActivity: ActivityEvent | null;
   recentEvents: ActivityEvent[];
+  journal: JournalEntry[];
 }
 
 // --- Refs ---
@@ -334,7 +350,7 @@ function formatTime(ts: number): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-function selectAgent(agentId: string) {
+async function selectAgent(agentId: string) {
   const node = nodes.find((n) => n.id === agentId);
   if (!node) return;
 
@@ -346,6 +362,16 @@ function selectAgent(agentId: string) {
     ? agentEvents[0]
     : null;
 
+  // Fetch journal entries for this agent
+  let journal: JournalEntry[] = [];
+  try {
+    const res = await fetch('/api/soul/journal');
+    if (res.ok) {
+      const allEntries: JournalEntry[] = await res.json();
+      journal = allEntries.filter((e) => e.agent === agentId);
+    }
+  } catch { /* ignore */ }
+
   selectedAgent.value = {
     id: node.id,
     label: node.label,
@@ -353,6 +379,7 @@ function selectAgent(agentId: string) {
     active: isActive(node),
     currentActivity: current,
     recentEvents: agentEvents.slice(0, 10),
+    journal,
   };
 }
 
@@ -821,6 +848,34 @@ onUnmounted(() => {
   color: #6b7280;
   font-size: 12px;
   padding: 8px 0;
+}
+
+.detail-journal {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.journal-entry {
+  margin-bottom: 10px;
+  padding: 8px;
+  background: #111827;
+  border-radius: 6px;
+  border-left: 3px solid #7c3aed;
+}
+
+.journal-time {
+  font-size: 10px;
+  color: #6b7280;
+  font-family: monospace;
+  margin-bottom: 4px;
+}
+
+.journal-text {
+  font-size: 12px;
+  color: #d1d5db;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .detail-events {
