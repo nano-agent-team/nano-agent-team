@@ -602,13 +602,10 @@ export class AgentManager {
         continue;
       }
 
-      const isSoulAgent = agent.manifest.workspace_source === 'soul';
       let taskId: string | undefined;
       try {
         const payload = JSON.parse(codec.decode(msg.data)) as Record<string, unknown>;
-        taskId = isSoulAgent
-          ? (payload.ideaId as string | undefined)
-          : (payload.ticket_id ?? payload.ticketId) as string | undefined;
+        taskId = (payload.ticket_id ?? payload.ticketId) as string | undefined;
       } catch {
         logger.warn({ agentId }, 'Ephemeral agent: cannot parse message payload — nacking');
         msg.nak();
@@ -616,7 +613,7 @@ export class AgentManager {
       }
 
       if (!taskId) {
-        logger.warn({ agentId, isSoulAgent }, `Ephemeral agent: message has no ${isSoulAgent ? 'ideaId' : 'ticket_id'} — nacking`);
+        logger.warn({ agentId }, 'Ephemeral agent: message has no ticket_id — nacking');
         msg.nak();
         continue;
       }
@@ -630,13 +627,9 @@ export class AgentManager {
       });
 
       try {
-        if (isSoulAgent) {
-          await this.runSoulEphemeralContainer(agent, agentId, taskId, msg.data, msg.headers);
-        } else {
-          await this.runEphemeralContainer(agent, agentId, taskId, msg.data, msg.headers);
-        }
+        await this.runEphemeralContainer(agent, agentId, taskId, msg.data, msg.headers);
         msg.ack();
-        logger.info({ agentId, taskId, isSoulAgent }, 'Ephemeral container completed successfully');
+        logger.info({ agentId, taskId }, 'Ephemeral container completed successfully');
       } catch (err) {
         logger.error({ err, agentId, taskId }, 'Ephemeral container failed');
         msg.nak();
@@ -748,68 +741,7 @@ export class AgentManager {
     });
   }
 
-  /**
-   * Run a soul-triggered ephemeral container (e.g. conscience).
-   * Unlike ticket-based ephemerals, soul agents don't need a git workspace —
-   * they only access Obsidian via the /obsidian bind mount.
-   */
-  private async runSoulEphemeralContainer(
-    agent: LoadedAgent,
-    agentId: string,
-    ideaId: string,
-    messageData: Uint8Array,
-    messageHeaders?: import('nats').MsgHdrs,
-  ): Promise<void> {
-    // Build env and binds (no workspace resolution needed)
-    const { env, binds, image } = await this.buildAgentEnvAndBinds(agent, agentId, [
-      `EPHEMERAL_TASK_MESSAGE=${Buffer.from(messageData).toString('base64')}`,
-      `EPHEMERAL_IDEA_ID=${ideaId}`,
-      'SESSION_TYPE=stateless',
-    ]);
-
-    // No workspace bind mount — soul agents only use Obsidian (/obsidian already mounted by buildAgentEnvAndBinds)
-
-    const containerName = `nano-agent-${agentId}-${ideaId.replace(/[^a-zA-Z0-9_.-]/g, '-')}`;
-    await this.removeContainerIfExists(containerName);
-
-    logger.info({ agentId, ideaId, containerName }, 'Starting soul ephemeral container');
-
-    const container = await this.docker.createContainer({
-      Image: image,
-      name: containerName,
-      Env: env,
-      HostConfig: {
-        Binds: binds,
-        NetworkMode: DOCKER_NETWORK,
-        RestartPolicy: { Name: 'no' },
-      },
-    });
-
-    await container.start();
-
-    emitActivity(this.nc, {
-      agent: agentId, type: 'action',
-      summary: `Container started: ${containerName}`, timestamp: Date.now(),
-    });
-
-    await container.wait().catch(() => {});
-
-    try {
-      const info = await container.inspect() as { State: { ExitCode: number } };
-      if (info.State.ExitCode !== 0) {
-        logger.warn({ agentId, ideaId, exitCode: info.State.ExitCode }, 'Soul ephemeral container exited with error');
-      }
-    } catch {
-      // Container may already be gone
-    }
-
-    await container.remove({ force: true }).catch(() => {});
-    logger.debug({ agentId, ideaId, containerName }, 'Soul ephemeral container cleaned up');
-    emitActivity(this.nc, {
-      agent: agentId, type: 'action',
-      summary: `Container stopped: ${containerName}`, timestamp: Date.now(),
-    });
-  }
+  // NOTE: runSoulEphemeralContainer() removed — conscience migrated to persistent (2026-03-24)
 
   // ── Private ────────────────────────────────────────────────────────────────
 
