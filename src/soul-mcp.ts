@@ -147,6 +147,10 @@ export function registerSoulTools(
           );
           atomicWrite(filePath, content);
           await publish(nc, 'soul.idea.pending', JSON.stringify({ ideaId, path: filePath }));
+          emitActivity(nc, {
+            agent: agentId, type: 'idea', entityId: ideaId,
+            summary: `New idea: ${description}`, timestamp: Date.now(),
+          });
           return textResult({ ideaId });
         } catch (err: unknown) {
           return errorResult((err as Error).message);
@@ -253,6 +257,10 @@ export function registerSoulTools(
           );
           atomicWrite(filePath, fileContent);
           await publish(nc, 'soul.plan.ready', JSON.stringify({ planId, path: filePath }));
+          emitActivity(nc, {
+            agent: agentId, type: 'plan', entityId: planId,
+            summary: `New plan: ${title}`, timestamp: Date.now(),
+          });
           return textResult({ planId });
         } catch (err: unknown) {
           return errorResult((err as Error).message);
@@ -301,6 +309,10 @@ export function registerSoulTools(
             text: `**Otázka od systému:**\n\n${question}`,
             from: agentId,
           }));
+          emitActivity(nc, {
+            agent: agentId, type: 'user', summary: 'Question asked',
+            from: agentId, to: 'user', subtype: 'question', timestamp: Date.now(),
+          });
           return textResult({ questionId, status: 'pending' });
         } catch (err: unknown) {
           return errorResult((err as Error).message);
@@ -339,6 +351,10 @@ export function registerSoulTools(
             questionId,
             answer,
           }));
+          emitActivity(nc, {
+            agent: agentId, type: 'user', summary: 'Answer delivered',
+            from: 'user', to: fromAgent, subtype: 'answer', timestamp: Date.now(),
+          });
           return textResult({ ok: true });
         } catch (err: unknown) {
           return errorResult((err as Error).message);
