@@ -32,6 +32,7 @@
 import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { module as coreModule } from '../modules/core/module.config'
+import { module as soulModule } from '../modules/soul/module.config'
 
 const route = useRoute()
 const collapsed = ref(false)
@@ -40,6 +41,7 @@ const connected = ref(true)
 // Core nav item
 const coreNavItems = [
   { path: coreModule.routes[0].path as string, label: coreModule.label, icon: coreModule.icon },
+  { path: '/soul', label: soulModule.label, icon: soulModule.icon },
 ]
 
 // Plugin metadata from /api/plugins — fully dynamic, no hardcoding

@@ -4,6 +4,7 @@ import App from './App.vue'
 import './assets/main.css'
 
 import { module as coreModule } from './modules/core/module.config'
+import { module as soulModule } from './modules/soul/module.config'
 
 // ── Interfaces ────────────────────────────────────────────────────────────
 
@@ -115,6 +116,7 @@ async function bootstrap() {
 
   const routes: RouteRecordRaw[] = [
     ...coreModule.routes,
+    ...soulModule.routes,
     ...buildPluginRoutes(plugins),
   ]
 
