@@ -33,6 +33,7 @@ import type { McpManager } from './mcp-manager.js';
 import type { McpGateway } from './mcp-gateway.js';
 import type { WorkspaceProvider } from './workspace-provider.js';
 import { listTickets, getTicket, addComment, listComments, type TicketPriority, type TicketType } from './db.js';
+import { getSoulState } from './soul-state.js';
 import { TicketRegistry } from './tickets/registry.js';
 import { LocalTicketProvider } from './tickets/local-provider.js';
 import type { AbstractStatus, TicketPriority as TP } from './tickets/types.js';
@@ -827,6 +828,51 @@ export async function createApiApp(
       logger.error({ err }, 'POST /api/tickets/:id/comments error');
       res.status(500).json({ error: 'Internal server error' });
     }
+  });
+
+  // ── Soul API ─────────────────────────────────────────────────────────────
+
+  app.get('/api/soul/state', (req: Request, res: Response) => {
+    try {
+      const filters: { status?: string; since?: number } = {};
+      if (req.query.status) filters.status = req.query.status as string;
+      if (req.query.since) filters.since = parseInt(req.query.since as string);
+      const state = getSoulState(DATA_DIR, filters);
+      res.json(state);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        res.status(503).json({ error: 'obsidian_not_available' });
+      } else {
+        logger.error({ err }, 'Failed to get soul state');
+        res.status(500).json({ error: 'internal_error' });
+      }
+    }
+  });
+
+  app.get('/api/soul/activity', (req: Request, res: Response) => {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    res.write(':\n\n'); // SSE comment — keeps connection alive
+
+    // Subscribe to activity.> via NATS core (not JetStream)
+    const sub = nc.subscribe('activity.>');
+    const activityCodec = StringCodec();
+
+    (async () => {
+      for await (const msg of sub) {
+        try {
+          const data = activityCodec.decode(msg.data);
+          res.write(`event: activity\ndata: ${data}\n\n`);
+        } catch { /* connection closed */ }
+      }
+    })();
+
+    req.on('close', () => {
+      sub.unsubscribe();
+    });
   });
 
   // ── Chat with any agent (NATS bridge) ──────────────────────────────────────
