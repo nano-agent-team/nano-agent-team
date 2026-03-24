@@ -11,6 +11,7 @@
  *   LOG_LEVEL       — pino log level (default: info)
  */
 
+import { createRequire } from 'module';
 import { connect, StringCodec } from 'nats';
 import type { Consumer } from 'nats';
 import Database from 'better-sqlite3';
@@ -18,6 +19,14 @@ import pino from 'pino';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Handler, HandlerContext } from './types.js';
+
+const req = createRequire(import.meta.url);
+const { version: RUNNER_VERSION } = req('../package.json') as { version: string };
+
+if (process.argv.includes('--version')) {
+  console.log(RUNNER_VERSION);
+  process.exit(0);
+}
 
 const NATS_URL = process.env.NATS_URL ?? 'nats://localhost:4222';
 const AGENT_ID = process.env.AGENT_ID ?? 'unknown';
@@ -56,7 +65,7 @@ async function main(): Promise<void> {
   // Connect to NATS
   const nc = await connect({ servers: NATS_URL, name: `deterministic-${AGENT_ID}` });
   const codec = StringCodec();
-  log.info({ agentId: AGENT_ID, handler: HANDLER_NAME, natsUrl: NATS_URL }, 'Deterministic runner starting');
+  log.info({ agentId: AGENT_ID, version: RUNNER_VERSION, handler: HANDLER_NAME, natsUrl: NATS_URL }, 'Deterministic runner starting');
 
   // Heartbeat
   let isBusy = false;

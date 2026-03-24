@@ -33,6 +33,17 @@ import { extractTraceContext, startSpan, startChildSpan, injectTraceContext } fr
 import { createProvider } from './providers/index.js';
 import type { Provider } from './providers/index.js';
 
+// ─── Version ─────────────────────────────────────────────────────────────────
+
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { version: RUNNER_VERSION } = require('../package.json') as { version: string };
+
+if (process.argv.includes('--version')) {
+  console.log(RUNNER_VERSION);
+  process.exit(0);
+}
+
 // ─── Config ──────────────────────────────────────────────────────────────────
 
 const NATS_URL = process.env.NATS_URL ?? 'nats://localhost:4222';
@@ -173,7 +184,7 @@ let firstMessageOfLifecycle = true;
 
 async function main(): Promise<void> {
   log.info(
-    { agentId: AGENT_ID, provider: PROVIDER_NAME, model: MODEL, natsUrl: NATS_URL, sessionType: SESSION_TYPE, waitForStart: WAIT_FOR_START_SIGNAL },
+    { agentId: AGENT_ID, version: RUNNER_VERSION, provider: PROVIDER_NAME, model: MODEL, natsUrl: NATS_URL, sessionType: SESSION_TYPE, waitForStart: WAIT_FOR_START_SIGNAL },
     'Agent runner starting',
   );
 
