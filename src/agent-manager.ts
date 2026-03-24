@@ -36,6 +36,7 @@ import type { ConfigService, NanoConfig } from './config-service.js';
 import { codec } from './nats-client.js';
 import { WorkflowDispatcher } from './workflow-dispatcher.js';
 import type { AlarmClock } from './alarm-clock.js';
+import { emitActivity } from './activity-emitter.js';
 
 interface ObservabilityConfig {
   level?: string;
@@ -332,6 +333,11 @@ export class AgentManager {
         'Agent container started',
       );
 
+      emitActivity(this.nc, {
+        agent: id, type: 'action',
+        summary: `Container started: ${containerName}`, timestamp: Date.now(),
+      });
+
       // Bootstrap alarm for deterministic agents
       if (agent.manifest.kind === 'deterministic' && this.alarmClock) {
         this.alarmClock.cancelForAgent(id);
@@ -370,6 +376,10 @@ export class AgentManager {
       await container.remove({ force: true }).catch(() => {});
       state.status = 'dead';
       logger.info({ agentId }, 'Agent container stopped');
+      emitActivity(this.nc, {
+        agent: agentId, type: 'action',
+        summary: `Container stopped: ${containerName}`, timestamp: Date.now(),
+      });
     } catch (err) {
       logger.warn({ err, agentId }, 'Error stopping agent container');
     }
@@ -614,6 +624,11 @@ export class AgentManager {
       const containerName = `nano-agent-${agentId}-${taskId.replace(/[^a-zA-Z0-9_.-]/g, '-')}`;
       this.runningEphemeralContainers.set(containerName, taskId);
 
+      emitActivity(this.nc, {
+        agent: agentId, type: 'thinking',
+        summary: `Processing message on ${msg.subject}`, timestamp: Date.now(),
+      });
+
       try {
         if (isSoulAgent) {
           await this.runSoulEphemeralContainer(agent, agentId, taskId, msg.data, msg.headers);
@@ -705,6 +720,11 @@ export class AgentManager {
 
     await container.start();
 
+    emitActivity(this.nc, {
+      agent: agentId, type: 'action',
+      summary: `Container started: ${containerName}`, timestamp: Date.now(),
+    });
+
     // 5. Wait for container to exit (no timeout — watchdog agent will handle stuck containers in the future)
     await container.wait().catch(() => {});
     const exited = true;
@@ -722,6 +742,10 @@ export class AgentManager {
     // Always remove ephemeral containers after they're done
     await container.remove({ force: true }).catch(() => {});
     logger.debug({ agentId, ticketId, containerName }, 'Ephemeral container cleaned up');
+    emitActivity(this.nc, {
+      agent: agentId, type: 'action',
+      summary: `Container stopped: ${containerName}`, timestamp: Date.now(),
+    });
   }
 
   /**
@@ -762,6 +786,12 @@ export class AgentManager {
     });
 
     await container.start();
+
+    emitActivity(this.nc, {
+      agent: agentId, type: 'action',
+      summary: `Container started: ${containerName}`, timestamp: Date.now(),
+    });
+
     await container.wait().catch(() => {});
 
     try {
@@ -775,6 +805,10 @@ export class AgentManager {
 
     await container.remove({ force: true }).catch(() => {});
     logger.debug({ agentId, ideaId, containerName }, 'Soul ephemeral container cleaned up');
+    emitActivity(this.nc, {
+      agent: agentId, type: 'action',
+      summary: `Container stopped: ${containerName}`, timestamp: Date.now(),
+    });
   }
 
   // ── Private ────────────────────────────────────────────────────────────────

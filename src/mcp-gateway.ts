@@ -34,6 +34,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 
 import { logger } from './logger.js';
+import { emitActivity } from './activity-emitter.js';
 import type { TicketRegistry } from './tickets/registry.js';
 import type { AbstractStatus, TicketPriority, TicketType } from './tickets/types.js';
 import type { McpManager } from './mcp-manager.js';
@@ -512,11 +513,13 @@ function buildMcpServer(
 
     server.tool('start_agent', 'Start a stopped or dead agent by ID.', { agent_id: z.string() }, async ({ agent_id }) => {
       const result = await callInternal('POST', `/internal/agents/${agent_id}/start`);
+      if (opts.nc) emitActivity(opts.nc, { agent: agentId, type: 'action', summary: `Management: start_agent`, timestamp: Date.now() });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     });
 
     server.tool('stop_agent', 'Stop a running agent by ID.', { agent_id: z.string() }, async ({ agent_id }) => {
       const result = await callInternal('POST', `/internal/agents/${agent_id}/stop`);
+      if (opts.nc) emitActivity(opts.nc, { agent: agentId, type: 'action', summary: `Management: stop_agent`, timestamp: Date.now() });
       return { content: [{ type: 'text' as const, text: JSON.stringify(result) }] };
     });
 
@@ -626,6 +629,7 @@ function buildMcpServer(
         try { await callInternal('POST', `/internal/agents/${agentId}/start-installed`); startedAgents.push(agentId); } catch (err) { logger.warn({ agentId, err: String(err) }, 'start-installed failed (best effort)'); }
       }
 
+      if (opts.nc) emitActivity(opts.nc, { agent: agentId, type: 'action', summary: `Management: install_team`, timestamp: Date.now() });
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, team_id, installed_to: destDir, agents_installed: installedAgents, agents_skipped: skippedAgents, agents_started: startedAgents }) }] };
     });
 
@@ -637,6 +641,7 @@ function buildMcpServer(
       fs.mkdirSync(agentDestDir, { recursive: true });
       execFileSync('cp', ['-r', `${agentHubDir}/.`, agentDestDir], { timeout: 10_000 });
       try { await callInternal('POST', `/internal/agents/${agent_id}/start-installed`); } catch (err) { logger.warn({ agent_id, err: String(err) }, 'start-installed failed (best effort)'); }
+      if (opts.nc) emitActivity(opts.nc, { agent: agentId, type: 'action', summary: `Management: install_agent`, timestamp: Date.now() });
       return { content: [{ type: 'text' as const, text: JSON.stringify({ ok: true, agent_id, installed_to: agentDestDir }) }] };
     });
 
