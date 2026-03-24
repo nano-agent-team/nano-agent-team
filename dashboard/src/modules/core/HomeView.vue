@@ -116,7 +116,7 @@
         <div class="chat-target">
           <label>Chat with:</label>
           <select v-model="chatAgent">
-            <option value="">Consciousness (default)</option>
+            <option value="chat-agent">Chat Agent (default)</option>
             <option v-for="a in agents.filter(a => a.status === 'running')" :key="a.agentId" :value="a.agentId">
               {{ a.agentId }}
             </option>
@@ -202,7 +202,7 @@ const copiedMsg = ref<string | null>(null)
 const messagesEl = ref<HTMLElement | null>(null)
 const inputEl = ref<HTMLTextAreaElement | null>(null)
 const currentToolCall = ref<string | null>(null)
-const chatAgent = ref('')  // empty = consciousness (default), or agentId
+const chatAgent = ref('chat-agent')  // default = chat-agent (user-facing)
 
 function uuid(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
