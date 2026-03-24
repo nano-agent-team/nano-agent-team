@@ -14,6 +14,8 @@ import { z } from 'zod';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { NatsConnection } from 'nats';
 import { publish } from './nats-client.js';
+import { emitActivity } from './activity-emitter.js';
+import { logger } from './logger.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -365,5 +367,63 @@ export function registerSoulTools(
         }
       },
     );
+  }
+
+  // ── evaluate_self ────────────────────────────────────────────────────────────
+
+  if (allowed('evaluate_self')) {
+    server.tool('evaluate_self', 'Trigger consciousness self-evaluation loop', {}, async () => {
+      try {
+        await publish(nc, 'soul.consciousness.evaluate', JSON.stringify({
+          type: 'self_kick',
+          timestamp: new Date().toISOString(),
+        }));
+        emitActivity(nc, {
+          agent: agentId, type: 'thinking', summary: 'Self-evaluation triggered',
+          timestamp: Date.now(),
+        });
+        return { content: [{ type: 'text', text: 'Self-evaluation scheduled.' }] };
+      } catch (err) {
+        logger.warn({ err }, 'evaluate_self publish failed (AlarmClock will retry)');
+        return { content: [{ type: 'text', text: 'Self-evaluation publish failed; AlarmClock will retry.' }] };
+      }
+    });
+  }
+
+  // ── continue_dialogue ────────────────────────────────────────────────────────
+
+  if (allowed('continue_dialogue')) {
+    server.tool('continue_dialogue', 'Continue dialogue with conscience — add counter-arguments', {
+      ideaId: z.string().regex(/^[a-zA-Z0-9_-]+$/),
+      argument: z.string().min(1),
+    }, async ({ ideaId, argument }) => {
+      const ideasDir = path.join(obsidianBase, 'ideas');
+      const filePath = path.join(ideasDir, `${ideaId}.md`);
+      if (!fs.existsSync(filePath)) {
+        return { content: [{ type: 'text', text: `Idea ${ideaId} not found.` }] };
+      }
+
+      // Append to ## Dialogue section
+      const timestamp = new Date().toISOString();
+      const existing = fs.readFileSync(filePath, 'utf-8');
+      const turnMatch = existing.match(/### Turn (\d+)/g);
+      const turnNum = turnMatch ? turnMatch.length + 1 : 1;
+      const dialogueEntry = `\n### Turn ${turnNum} — Consciousness (${timestamp})\n**Counter-argument:** ${argument}\n`;
+
+      if (existing.includes('## Dialogue')) {
+        fs.appendFileSync(filePath, dialogueEntry);
+      } else {
+        fs.appendFileSync(filePath, `\n## Dialogue\n${dialogueEntry}`);
+      }
+
+      await publish(nc, 'soul.conscience.dialogue', JSON.stringify({ ideaId, path: filePath }));
+      emitActivity(nc, {
+        agent: agentId, type: 'dialogue', entityId: ideaId,
+        summary: `Counter-argument on idea ${ideaId}`,
+        from: 'consciousness', to: 'conscience', timestamp: Date.now(),
+      });
+
+      return { content: [{ type: 'text', text: `Dialogue continued on idea ${ideaId}, turn ${turnNum}.` }] };
+    });
   }
 }
