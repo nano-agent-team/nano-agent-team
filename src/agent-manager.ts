@@ -1239,11 +1239,20 @@ export class AgentManager {
           const payload = JSON.parse(codec.decode(msg.data)) as HeartbeatPayload;
           const state = this.states.get(payload.agentId);
           if (state) {
+            const wasBusy = state.busy;
             state.lastHeartbeat = new Date(payload.ts);
             state.busy = payload.busy ?? false;
             state.task = payload.task ?? '';
             state.ticketId = (payload as any).ticketId ?? undefined;
             logger.debug({ agentId: payload.agentId, busy: state.busy }, 'Heartbeat received');
+
+            // Emit activity events for persistent agents based on busy state transitions
+            if (state.busy && !wasBusy) {
+              emitActivity(this.nc, {
+                agent: payload.agentId, type: 'thinking',
+                summary: state.task || 'Processing...', timestamp: Date.now(),
+              });
+            }
           }
         } catch {
           // ignore malformed heartbeats
