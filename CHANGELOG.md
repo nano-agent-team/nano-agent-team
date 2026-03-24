@@ -87,6 +87,11 @@ All notable changes to this project will be documented in this file.
 - Simplify Obsidian mount — no env var, just check /obsidian-host ([`a33913b`](https://github.com/nano-agent-team/nano-agent-team/commit/a33913b532056a995e836af8efeae620bdc99b55))
 - Use data/obsidian/ as instance-local storage ([`53fb46f`](https://github.com/nano-agent-team/nano-agent-team/commit/53fb46fa2530b06f32b9fefc4fcf31ebf930440b))
 - Default model is sonnet, not haiku ([`bdfcbfe`](https://github.com/nano-agent-team/nano-agent-team/commit/bdfcbfe90d630801ee93f174f07cb7fe8075b613))
+- **api:** Add title field to create_idea, fix frontmatter field names for parser ([`8dd26a6`](https://github.com/nano-agent-team/nano-agent-team/commit/8dd26a645e045ba699f4f344085976ead97fc2be))
+- **dashboard:** Enrich detail panel with description, improve data model ([`fdc1518`](https://github.com/nano-agent-team/nano-agent-team/commit/fdc1518ad54933d086d96ff5c024571c6d3282cd))
+- **api:** Emit activity.thinking for persistent agents via heartbeat ([`3dda089`](https://github.com/nano-agent-team/nano-agent-team/commit/3dda0897e16b3021616e9162d20335400d938ba6))
+- **dashboard:** Default chat target to chat-agent instead of consciousness ([`6221c73`](https://github.com/nano-agent-team/nano-agent-team/commit/6221c73a69265fd4e6d1d6ae758afe221ec6b7b6))
+- **api:** Sync soul tool schemas in getBuiltinToolList with soul-mcp.ts ([`a8c62c3`](https://github.com/nano-agent-team/nano-agent-team/commit/a8c62c3e166549477bdcff1530a59f7c553d22b3))
 
 ### Documentation
 
@@ -187,6 +192,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`f506090`](https://github.com/nano-agent-team/nano-agent-team/commit/f50609021ff9ee852a71d586f09e1e3ec73fbd8e))
 - **ci:** Update CHANGELOG [skip ci] ([`fc54d63`](https://github.com/nano-agent-team/nano-agent-team/commit/fc54d63c90308c8c9101b221d6f9d5d1e4e408bb))
 - **ci:** Update CHANGELOG [skip ci] ([`9f39c07`](https://github.com/nano-agent-team/nano-agent-team/commit/9f39c07661ca2c4ac02a710fcb6bd544495146e9))
+- **ci:** Update CHANGELOG [skip ci] ([`1b2ad80`](https://github.com/nano-agent-team/nano-agent-team/commit/1b2ad8057174fd87dba5bf504cf832b9bd8bf916))
 
 ### Features
 
@@ -281,6 +287,24 @@ All notable changes to this project will be documented in this file.
 - Universal chat endpoint with agent selector in dashboard ([`8b2238f`](https://github.com/nano-agent-team/nano-agent-team/commit/8b2238f48536094fab715bb54d4156e255a3a776))
 - SoulDispatcher + create-idea/write-brief skills ([`b087d34`](https://github.com/nano-agent-team/nano-agent-team/commit/b087d34e9440bf3b465837af3446e3e07e6c4aad))
 - Soul MCP tools, chat agent wiring, SSE push, remove SoulDispatcher ([`bd8f49e`](https://github.com/nano-agent-team/nano-agent-team/commit/bd8f49e083b61aa7c5ab321df4d8f53ab0dc60a2))
+- **api:** Add activity event emitter for visualization ([`25b8372`](https://github.com/nano-agent-team/nano-agent-team/commit/25b837208acb3a16cf4c4b0baddbaa2814bdfb9c))
+- **api:** Add evaluate_self and continue_dialogue MCP tools ([`09f751e`](https://github.com/nano-agent-team/nano-agent-team/commit/09f751e9110ddb7c34fc7b0bc8258bbf342118b9))
+- **api:** Extend update_idea with boundary verdict and dialogue tracking ([`13f973a`](https://github.com/nano-agent-team/nano-agent-team/commit/13f973ac1a1189a55018b5a0bc6291d51ab70161))
+- **api:** Add activity event emission to all soul MCP handlers ([`867c767`](https://github.com/nano-agent-team/nano-agent-team/commit/867c767279c58ac981200c3b74eed1bc5c9401da))
+- **api:** Add activity emission to agent-manager and mcp-gateway ([`e197418`](https://github.com/nano-agent-team/nano-agent-team/commit/e197418848140ecbc99ecf1f67a6e644b6c91bf4))
+- **api:** Add Obsidian parser for mind map state API ([`6fe6328`](https://github.com/nano-agent-team/nano-agent-team/commit/6fe6328f51aca40fb2434ef611cefb822d1c1409))
+- **api:** Add /api/soul/state and /api/soul/activity SSE endpoints ([`5f9dbcb`](https://github.com/nano-agent-team/nano-agent-team/commit/5f9dbcbb0dc51cc5cb2dda74eb79aafa656ebf3b))
+- **api:** Add programmatic resource limits for agent creation ([`167794d`](https://github.com/nano-agent-team/nano-agent-team/commit/167794dfcc04d02cdf13f385d8806a9c7eb79700))
+- **api:** Add bootstrap alarm for consciousness what-next loop ([`b231a74`](https://github.com/nano-agent-team/nano-agent-team/commit/b231a749e35554fca55092662d5fe34bd580d206))
+- **dashboard:** Add soul module config and API client ([`72246bf`](https://github.com/nano-agent-team/nano-agent-team/commit/72246bf78c36bbfd8cd18c8fb546985317cfa58d))
+- **dashboard:** Add SoulView container with split/mindmap/agents toggle ([`e0064a2`](https://github.com/nano-agent-team/nano-agent-team/commit/e0064a26bd5184d5f045835c64bccbb1742c80d2))
+- **dashboard:** Add MindMapView with D3.js tree rendering ([`ca4e408`](https://github.com/nano-agent-team/nano-agent-team/commit/ca4e408f4fe96f9fa81b971254dddba406b21035))
+- **dashboard:** Add AgentGraphView with D3.js force-directed layout ([`4072592`](https://github.com/nano-agent-team/nano-agent-team/commit/407259243a00f5e2da4bffe400bf9910e782d6bb))
+- **dashboard:** Register soul module, add D3.js dependency, add sidebar nav ([`3a8adda`](https://github.com/nano-agent-team/nano-agent-team/commit/3a8addaa93127d1fae434043601cf61e53b906c9))
+- **dashboard:** Add detail panels for agent click and entity click in soul views ([`3f2e880`](https://github.com/nano-agent-team/nano-agent-team/commit/3f2e880ba27da66facd449defc3a4d820241f49c))
+- **dashboard:** Add thought journal panel and /api/soul/journal endpoint ([`ab5c2c4`](https://github.com/nano-agent-team/nano-agent-team/commit/ab5c2c4ed404d629bb02133e8fe760a4db1f93d2))
+- **dashboard:** Add thought journal to agent detail panel ([`83261ee`](https://github.com/nano-agent-team/nano-agent-team/commit/83261ee865c8979b4d10e78c65584df4fbe05686))
+- **agent-runner:** Add --version flag and startup version logging (#110) ([`6d2770b`](https://github.com/nano-agent-team/nano-agent-team/commit/6d2770b6ad5108066655093e67f3bcd231e786b8))
 
 ### Miscellaneous
 
@@ -304,6 +328,7 @@ All notable changes to this project will be documented in this file.
 - Migrate ticket statuses to 5-state model (GH-103) ([`3f59ec7`](https://github.com/nano-agent-team/nano-agent-team/commit/3f59ec76aae6a01d54520c95c8c241d18e6366d8))
 - Scrum-master reads pipeline config from own manifest ([`9d40fa1`](https://github.com/nano-agent-team/nano-agent-team/commit/9d40fa16a9c454bb816ca19c44d7a5ed3398c379))
 - Move agentTeamTools to module scope, rename to camelCase ([`4421a13`](https://github.com/nano-agent-team/nano-agent-team/commit/4421a13676d138527369bd94d6a57629fae26dd5))
+- **api:** Remove deprecated workspace_source:soul ephemeral code path ([`bbcfd4c`](https://github.com/nano-agent-team/nano-agent-team/commit/bbcfd4c64d5658d8e1d50aef49da69b1801fadc9))
 
 ### Tests
 
