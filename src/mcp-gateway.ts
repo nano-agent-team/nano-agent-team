@@ -1211,13 +1211,15 @@ export class McpGateway {
     if (permissions['soul'] !== undefined) {
       const soulTools = [
         { name: 'create_goal', description: 'Create a new goal in Obsidian.', inputSchema: { type: 'object' as const, required: ['title', 'description'], properties: { title: { type: 'string' }, description: { type: 'string' } } } },
-        { name: 'create_idea', description: 'Create an idea for an existing goal. Triggers conscience review automatically.', inputSchema: { type: 'object' as const, required: ['goalId', 'description'], properties: { goalId: { type: 'string' }, description: { type: 'string' } } } },
-        { name: 'update_idea', description: 'Update idea status or write conscience verdict.', inputSchema: { type: 'object' as const, required: ['ideaId'], properties: { ideaId: { type: 'string' }, status: { type: 'string' }, conscience_verdict: { type: 'string' }, conscience_reason: { type: 'string' } } } },
+        { name: 'create_idea', description: 'Create an idea for an existing goal. Triggers conscience review automatically.', inputSchema: { type: 'object' as const, required: ['goalId', 'title', 'description'], properties: { goalId: { type: 'string' }, title: { type: 'string' }, description: { type: 'string' } } } },
+        { name: 'update_idea', description: 'Update idea status or write conscience verdict.', inputSchema: { type: 'object' as const, required: ['ideaId'], properties: { ideaId: { type: 'string' }, status: { type: 'string' }, conscience_verdict: { type: 'string' }, conscience_reason: { type: 'string' }, conscience_boundary: { type: 'string' } } } },
         { name: 'create_plan', description: 'Create an action plan for an approved idea. Dispatched to foreman automatically.', inputSchema: { type: 'object' as const, required: ['ideaId', 'title', 'content'], properties: { ideaId: { type: 'string' }, title: { type: 'string' }, content: { type: 'string' } } } },
         { name: 'ask_user', description: 'Ask the user a question (async). Chat agent will relay it.', inputSchema: { type: 'object' as const, required: ['question'], properties: { question: { type: 'string' }, context: { type: 'string' } } } },
         { name: 'answer_question', description: 'Relay user answer back to the asking agent.', inputSchema: { type: 'object' as const, required: ['questionId', 'answer'], properties: { questionId: { type: 'string' }, answer: { type: 'string' } } } },
         { name: 'send_to_consciousness', description: 'Send a user intent to consciousness for strategic processing.', inputSchema: { type: 'object' as const, required: ['intent'], properties: { intent: { type: 'string' }, context: { type: 'string' } } } },
         { name: 'journal_log', description: 'Append an entry to the daily journal.', inputSchema: { type: 'object' as const, required: ['entry'], properties: { entry: { type: 'string' } } } },
+        { name: 'evaluate_self', description: 'Trigger consciousness self-evaluation loop.', inputSchema: { type: 'object' as const, properties: {} } },
+        { name: 'continue_dialogue', description: 'Continue dialogue with conscience — add counter-arguments to an idea.', inputSchema: { type: 'object' as const, required: ['ideaId', 'argument'], properties: { ideaId: { type: 'string' }, argument: { type: 'string' } } } },
       ];
       const soulPerms = permissions['soul'];
       for (const tool of soulTools) {
