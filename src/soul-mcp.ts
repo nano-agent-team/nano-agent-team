@@ -134,15 +134,16 @@ export function registerSoulTools(
       'Create an idea linked to a goal. Publishes soul.idea.pending NATS kick.',
       {
         goalId:      z.string().describe('Parent goal ID'),
+        title:       z.string().describe('Short idea title for display'),
         description: z.string().describe('Idea description'),
       },
-      async ({ goalId, description }) => {
+      async ({ goalId, title, description }) => {
         try {
           validateId(goalId, 'goalId');
           const ideaId = generateId('idea');
           const filePath = path.join(obsidianBase, 'ideas', `${ideaId}.md`);
           const content = buildFrontmatter(
-            { id: ideaId, goalId, status: 'pending_review', created: new Date().toISOString() },
+            { id: ideaId, goal: goalId, title, status: 'pending_review', created: new Date().toISOString() },
             description,
           );
           atomicWrite(filePath, content);
@@ -252,7 +253,7 @@ export function registerSoulTools(
           const planId = generateId('plan');
           const filePath = path.join(obsidianBase, 'plans', `${planId}.md`);
           const fileContent = buildFrontmatter(
-            { id: planId, ideaId, title, status: 'pending', created: new Date().toISOString() },
+            { id: planId, idea: ideaId, title, status: 'pending', created: new Date().toISOString() },
             content,
           );
           atomicWrite(filePath, fileContent);
