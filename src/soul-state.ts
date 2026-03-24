@@ -26,6 +26,32 @@ export interface SoulState {
   orphanPlans: SoulPlan[];
 }
 
+export interface JournalEntry {
+  timestamp: string;
+  agent: string;
+  text: string;
+}
+
+/** Read journal entries from today (or a specific date). Returns newest first. */
+export function readJournal(dataDir: string, date?: string): JournalEntry[] {
+  const d = date || new Date().toISOString().slice(0, 10);
+  const filePath = path.join(dataDir, 'obsidian', 'Consciousness', 'journal', `${d}.md`);
+  if (!fs.existsSync(filePath)) return [];
+
+  const content = fs.readFileSync(filePath, 'utf-8');
+  const entries: JournalEntry[] = [];
+  const regex = /- \*\*(\d{2}:\d{2}:\d{2})\*\* \[([^\]]+)\] ([\s\S]*?)(?=\n- \*\*\d{2}:\d{2}:\d{2}\*\*|$)/g;
+  let match;
+  while ((match = regex.exec(content)) !== null) {
+    entries.push({
+      timestamp: `${d}T${match[1]}`,
+      agent: match[2],
+      text: match[3].trim(),
+    });
+  }
+  return entries.reverse(); // newest first
+}
+
 let cache: { state: SoulState; timestamp: number } | null = null;
 const CACHE_TTL_MS = 5000;
 

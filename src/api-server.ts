@@ -33,7 +33,7 @@ import type { McpManager } from './mcp-manager.js';
 import type { McpGateway } from './mcp-gateway.js';
 import type { WorkspaceProvider } from './workspace-provider.js';
 import { listTickets, getTicket, addComment, listComments, type TicketPriority, type TicketType } from './db.js';
-import { getSoulState } from './soul-state.js';
+import { getSoulState, readJournal } from './soul-state.js';
 import { TicketRegistry } from './tickets/registry.js';
 import { LocalTicketProvider } from './tickets/local-provider.js';
 import type { AbstractStatus, TicketPriority as TP } from './tickets/types.js';
@@ -846,6 +846,17 @@ export async function createApiApp(
         logger.error({ err }, 'Failed to get soul state');
         res.status(500).json({ error: 'internal_error' });
       }
+    }
+  });
+
+  app.get('/api/soul/journal', (req: Request, res: Response) => {
+    try {
+      const date = req.query.date as string | undefined;
+      const entries = readJournal(DATA_DIR, date);
+      res.json(entries);
+    } catch (err) {
+      logger.error({ err }, 'Failed to read journal');
+      res.status(500).json({ error: 'internal_error' });
     }
   });
 
