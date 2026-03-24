@@ -14,15 +14,48 @@
       <g ref="rootG" class="root-group" />
     </svg>
 
-    <!-- Dialogue panel -->
+    <!-- Entity detail panel -->
     <Transition name="panel-slide">
-      <div v-if="selectedNode" class="dialogue-panel">
-        <div class="dialogue-header">
-          <span class="dialogue-title">{{ selectedNode.title }}</span>
-          <button class="dialogue-close" @click="selectedNode = null">&times;</button>
+      <div v-if="selectedNode" class="detail-panel">
+        <div class="detail-header">
+          <span class="detail-type-badge" :class="selectedNode.type">{{ selectedNode.type }}</span>
+          <span class="detail-title">{{ selectedNode.title }}</span>
+          <button class="detail-close" @click="selectedNode = null">&times;</button>
         </div>
-        <div class="dialogue-body">
-          <div v-if="selectedNode.dialogue && selectedNode.dialogue.length">
+        <div class="detail-body">
+          <!-- Status row -->
+          <div class="detail-meta-row">
+            <span class="detail-meta-label">Status</span>
+            <span class="detail-meta-status" :class="selectedNode.status">{{ selectedNode.status }}</span>
+          </div>
+
+          <!-- Goal-specific info -->
+          <template v-if="selectedNode.type === 'goal'">
+            <div class="detail-meta-row">
+              <span class="detail-meta-label">Ideas</span>
+              <span class="detail-meta-value">{{ selectedNode.ideaCount }}</span>
+            </div>
+            <div class="detail-meta-row">
+              <span class="detail-meta-label">Plans</span>
+              <span class="detail-meta-value">{{ selectedNode.planCount }}</span>
+            </div>
+          </template>
+
+          <!-- Idea-specific info -->
+          <template v-if="selectedNode.type === 'idea'">
+            <div v-if="selectedNode.conscienceVerdict" class="detail-meta-row">
+              <span class="detail-meta-label">Conscience verdict</span>
+              <span class="turn-verdict" :class="selectedNode.conscienceVerdict">{{ selectedNode.conscienceVerdict }}</span>
+            </div>
+            <div class="detail-meta-row">
+              <span class="detail-meta-label">Plans</span>
+              <span class="detail-meta-value">{{ selectedNode.planCount }}</span>
+            </div>
+          </template>
+
+          <!-- Dialogue history (ideas) -->
+          <div v-if="selectedNode.dialogue && selectedNode.dialogue.length" class="detail-section">
+            <div class="detail-section-title">Dialogue history</div>
             <div
               v-for="turn in selectedNode.dialogue"
               :key="turn.turn"
@@ -38,13 +71,19 @@
               <div v-if="turn.argument" class="turn-text turn-argument">{{ turn.argument }}</div>
             </div>
           </div>
-          <div v-else class="dialogue-empty">No dialogue history</div>
-          <div v-if="selectedNode.tasks && selectedNode.tasks.length" class="tasks-section">
-            <div class="tasks-title">Tasks</div>
+
+          <!-- Tasks (plans) -->
+          <div v-if="selectedNode.tasks && selectedNode.tasks.length" class="detail-section">
+            <div class="detail-section-title">Tasks</div>
             <div v-for="task in selectedNode.tasks" :key="task.id" class="task-item" :class="{ done: task.done }">
               <span class="task-check">{{ task.done ? '✓' : '○' }}</span>
               {{ task.title }}
             </div>
+          </div>
+
+          <!-- Empty state for nodes without extra data -->
+          <div v-if="!selectedNode.dialogue?.length && !selectedNode.tasks?.length && selectedNode.type !== 'goal'" class="dialogue-empty">
+            No additional details
           </div>
         </div>
       </div>
@@ -74,8 +113,13 @@ interface TreeNode {
 
 interface SelectedNodeInfo {
   title: string;
+  type: 'root' | 'goal' | 'idea' | 'plan';
+  status: string;
   dialogue?: DialogueTurn[];
   tasks?: SoulTask[];
+  conscienceVerdict?: string;
+  ideaCount?: number;
+  planCount?: number;
 }
 
 const containerEl = ref<HTMLElement | null>(null);
@@ -266,19 +310,37 @@ function render() {
     .join('g')
     .attr('class', 'node')
     .attr('transform', (d) => `translate(${d.y},${d.x})`)
-    .style('cursor', (d) => {
-      const data = d.data;
-      return (data.dialogue && data.dialogue.length) || (data.tasks && data.tasks.length) ? 'pointer' : 'default';
-    })
+    .style('cursor', (d) => d.data.type !== 'root' ? 'pointer' : 'default')
     .on('click', (_event, d) => {
       const data = d.data;
-      if ((data.dialogue && data.dialogue.length) || (data.tasks && data.tasks.length)) {
-        selectedNode.value = {
-          title: data.title,
-          dialogue: data.dialogue,
-          tasks: data.tasks,
-        };
+      if (data.type === 'root') return;
+
+      const info: SelectedNodeInfo = {
+        title: data.title,
+        type: data.type,
+        status: data.status,
+        dialogue: data.dialogue,
+        tasks: data.tasks,
+      };
+
+      if (data.type === 'goal') {
+        info.ideaCount = data.children?.filter((c) => c.type === 'idea').length || 0;
+        info.planCount = data.children?.reduce((sum, c) =>
+          sum + (c.type === 'plan' ? 1 : (c.children?.filter((p) => p.type === 'plan').length || 0)), 0) || 0;
       }
+
+      if (data.type === 'idea') {
+        // Find the original idea to get conscience_verdict
+        const allIdeas = [
+          ...props.state.goals.flatMap((g) => g.ideas),
+          ...props.state.orphanIdeas,
+        ];
+        const srcIdea = allIdeas.find((i) => i.id === data.id);
+        info.conscienceVerdict = srcIdea?.conscience_verdict;
+        info.planCount = data.children?.filter((c) => c.type === 'plan').length || 0;
+      }
+
+      selectedNode.value = info;
     });
 
   // Node circles
@@ -434,59 +496,152 @@ watch(() => props.activity, () => render(), { deep: true });
   100% { filter: brightness(1.5); }
 }
 
-/* Dialogue panel */
-.dialogue-panel {
+/* Detail panel — consistent with AgentGraphView */
+.detail-panel {
   position: absolute;
-  top: 8px;
-  right: 8px;
-  width: 320px;
-  max-height: calc(100% - 16px);
-  background: #1f2937;
-  border: 1px solid #374151;
-  border-radius: 8px;
+  top: 0;
+  right: 0;
+  width: 300px;
+  height: 100%;
+  background: #1e293b;
+  border-left: 1px solid #4b5563;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
   z-index: 10;
 }
 
-.dialogue-header {
+.detail-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 10px 12px;
-  border-bottom: 1px solid #374151;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #4b5563;
   flex-shrink: 0;
 }
 
-.dialogue-title {
-  font-size: 13px;
+.detail-type-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.detail-type-badge.goal {
+  background: rgba(234, 179, 8, 0.2);
+  color: #eab308;
+}
+
+.detail-type-badge.idea {
+  background: rgba(168, 85, 247, 0.2);
+  color: #a855f7;
+}
+
+.detail-type-badge.plan {
+  background: rgba(59, 130, 246, 0.2);
+  color: #3b82f6;
+}
+
+.detail-title {
+  font-size: 14px;
   font-weight: 600;
   color: #e5e7eb;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dialogue-close {
+.detail-close {
   background: none;
   border: none;
   color: #9ca3af;
-  font-size: 18px;
+  font-size: 20px;
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
+  flex-shrink: 0;
 }
 
-.dialogue-close:hover {
+.detail-close:hover {
   color: #f3f4f6;
 }
 
-.dialogue-body {
+.detail-body {
   overflow-y: auto;
-  padding: 10px 12px;
+  padding: 12px 14px;
   flex: 1;
+}
+
+.detail-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid #374151;
+}
+
+.detail-meta-label {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.detail-meta-value {
+  font-size: 12px;
+  color: #d1d5db;
+  font-weight: 600;
+}
+
+.detail-meta-status {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+}
+
+.detail-meta-status.pending {
+  background: rgba(107, 114, 128, 0.2);
+  color: #9ca3af;
+}
+
+.detail-meta-status.approved {
+  background: rgba(59, 130, 246, 0.2);
+  color: #3b82f6;
+}
+
+.detail-meta-status.in_progress {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+
+.detail-meta-status.done {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+
+.detail-meta-status.rejected {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.detail-meta-status.boundary {
+  background: rgba(245, 158, 11, 0.2);
+  color: #f59e0b;
+}
+
+.detail-section {
+  margin-top: 14px;
+}
+
+.detail-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  margin-bottom: 8px;
 }
 
 .dialogue-turn {

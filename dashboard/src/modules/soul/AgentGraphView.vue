@@ -27,6 +27,46 @@
       </defs>
       <g ref="rootG" class="root-group" />
     </svg>
+
+    <!-- Agent detail panel -->
+    <Transition name="panel-slide">
+      <div v-if="selectedAgent" class="agent-detail-panel">
+        <div class="detail-header">
+          <span class="detail-icon">{{ selectedAgent.icon }}</span>
+          <span class="detail-name">{{ selectedAgent.label }}</span>
+          <span class="detail-status" :class="selectedAgent.active ? 'active' : 'idle'">
+            {{ selectedAgent.active ? 'Active' : 'Idle' }}
+          </span>
+          <button class="detail-close" @click="selectedAgent = null">&times;</button>
+        </div>
+        <div class="detail-body">
+          <div v-if="selectedAgent.currentActivity" class="detail-section">
+            <div class="detail-section-title">Currently working on</div>
+            <div class="detail-current">
+              <div class="detail-current-summary">{{ selectedAgent.currentActivity.summary }}</div>
+              <div v-if="selectedAgent.currentActivity.entityId" class="detail-current-entity">
+                {{ selectedAgent.currentActivity.entityId }}
+              </div>
+            </div>
+          </div>
+          <div v-else class="detail-section">
+            <div class="detail-section-title">Currently working on</div>
+            <div class="detail-empty">No current activity</div>
+          </div>
+          <div class="detail-section">
+            <div class="detail-section-title">Recent activity</div>
+            <div v-if="selectedAgent.recentEvents.length" class="detail-events">
+              <div v-for="ev in selectedAgent.recentEvents" :key="ev.timestamp + ev.summary" class="detail-event">
+                <div class="detail-event-time">{{ formatTime(ev.timestamp) }}</div>
+                <div class="detail-event-summary">{{ ev.summary }}</div>
+                <div v-if="ev.entityId" class="detail-event-entity">{{ ev.entityId }}</div>
+              </div>
+            </div>
+            <div v-else class="detail-empty">No recent events</div>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -92,11 +132,23 @@ const ACTIVITY_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 const ACTIVE_THRESHOLD_MS = 30_000;        // 30 seconds
 const PARTICLE_DURATION_MS = 2000;
 
+// --- Detail panel types ---
+
+interface SelectedAgentInfo {
+  id: string;
+  label: string;
+  icon: string;
+  active: boolean;
+  currentActivity: ActivityEvent | null;
+  recentEvents: ActivityEvent[];
+}
+
 // --- Refs ---
 
 const containerEl = ref<HTMLElement | null>(null);
 const svgEl = ref<SVGSVGElement | null>(null);
 const rootG = ref<SVGGElement | null>(null);
+const selectedAgent = ref<SelectedAgentInfo | null>(null);
 
 // --- State ---
 
@@ -275,6 +327,35 @@ function spawnParticle(ev: ActivityEvent) {
   });
 }
 
+// --- Detail panel helpers ---
+
+function formatTime(ts: number): string {
+  const d = new Date(ts);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+function selectAgent(agentId: string) {
+  const node = nodes.find((n) => n.id === agentId);
+  if (!node) return;
+
+  const agentEvents = props.activity
+    .filter((ev) => ev.agent === agentId || ev.from === agentId)
+    .sort((a, b) => b.timestamp - a.timestamp);
+
+  const current = agentEvents.length > 0 && (Date.now() - agentEvents[0].timestamp < ACTIVE_THRESHOLD_MS)
+    ? agentEvents[0]
+    : null;
+
+  selectedAgent.value = {
+    id: node.id,
+    label: node.label,
+    icon: node.icon,
+    active: isActive(node),
+    currentActivity: current,
+    recentEvents: agentEvents.slice(0, 10),
+  };
+}
+
 // --- Rendering ---
 
 function initSvg() {
@@ -422,6 +503,11 @@ function renderTick() {
     .attr('font-size', '11px')
     .attr('font-weight', '500')
     .attr('pointer-events', 'none');
+
+  // Click handler for detail panel
+  nodeEnter.on('click', (_event, d) => {
+    selectAgent(d.id);
+  });
 
   // Drag behavior
   nodeEnter.call(
@@ -613,10 +699,172 @@ onUnmounted(() => {
 
 /* Node cursor */
 .agent-graph-svg :deep(.agent-node) {
-  cursor: grab;
+  cursor: pointer;
 }
 
 .agent-graph-svg :deep(.agent-node:active) {
   cursor: grabbing;
+}
+
+/* Agent detail panel */
+.agent-detail-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 300px;
+  height: 100%;
+  background: #1e293b;
+  border-left: 1px solid #4b5563;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
+  z-index: 10;
+}
+
+.detail-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #4b5563;
+  flex-shrink: 0;
+}
+
+.detail-icon {
+  font-size: 20px;
+}
+
+.detail-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e7eb;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-status {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.detail-status.active {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+
+.detail-status.idle {
+  background: rgba(107, 114, 128, 0.2);
+  color: #9ca3af;
+}
+
+.detail-close {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.detail-close:hover {
+  color: #f3f4f6;
+}
+
+.detail-body {
+  overflow-y: auto;
+  padding: 12px 14px;
+  flex: 1;
+}
+
+.detail-section {
+  margin-bottom: 16px;
+}
+
+.detail-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+
+.detail-current {
+  padding: 8px 10px;
+  background: #111827;
+  border-radius: 6px;
+  border-left: 3px solid #7c3aed;
+}
+
+.detail-current-summary {
+  font-size: 12px;
+  color: #d1d5db;
+  line-height: 1.4;
+}
+
+.detail-current-entity {
+  font-size: 10px;
+  color: #6b7280;
+  margin-top: 4px;
+  font-family: monospace;
+}
+
+.detail-empty {
+  color: #6b7280;
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.detail-events {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.detail-event {
+  padding: 6px 10px;
+  background: #111827;
+  border-radius: 6px;
+  border-left: 3px solid #4b5563;
+}
+
+.detail-event-time {
+  font-size: 10px;
+  color: #6b7280;
+  margin-bottom: 2px;
+  font-family: monospace;
+}
+
+.detail-event-summary {
+  font-size: 12px;
+  color: #d1d5db;
+  line-height: 1.3;
+}
+
+.detail-event-entity {
+  font-size: 10px;
+  color: #6b7280;
+  margin-top: 2px;
+  font-family: monospace;
+}
+
+/* Panel slide transition */
+.panel-slide-enter-active,
+.panel-slide-leave-active {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.panel-slide-enter-from,
+.panel-slide-leave-to {
+  transform: translateX(20px);
+  opacity: 0;
 }
 </style>
