@@ -143,6 +143,11 @@ export class AlarmClock {
     } catch (err) {
       logger.error({ err, alarmId: alarm.id, agentId: alarm.agentId }, 'Alarm fire failed');
     }
+
+    // Auto-reschedule: every alarm automatically sets the next one.
+    // Agents can change the interval by calling alarm_set with a different delay.
+    this.set(alarm.agentId, alarm.delaySeconds, alarm.payload, alarm.subject);
+    logger.debug({ agentId: alarm.agentId, delaySeconds: alarm.delaySeconds }, 'Alarm auto-rescheduled');
   }
 
   private persist(): void {
