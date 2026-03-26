@@ -48,7 +48,7 @@ const HUB_CACHE_DIR = '/tmp/hub';
  * Base agents — always present in every instance.
  * Installed from hub on first startup, started automatically.
  */
-const BASE_AGENTS = ['chat-agent', 'consciousness', 'conscience', 'strategist', 'foreman'];
+const BASE_AGENTS = ['chat-agent', 'consciousness', 'conscience', 'strategist', 'foreman', 'dispatcher'];
 
 /**
  * Fetch the hub catalog and ensure it's available locally.
