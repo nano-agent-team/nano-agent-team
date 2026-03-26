@@ -199,6 +199,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`650002b`](https://github.com/nano-agent-team/nano-agent-team/commit/650002bc53639699934d596ef007cd029001e275))
 - **ci:** Update CHANGELOG [skip ci] ([`f22c5d2`](https://github.com/nano-agent-team/nano-agent-team/commit/f22c5d2bbeb0c11e827e72fda75835284e4c92cc))
 - **ci:** Update CHANGELOG [skip ci] ([`9063fa9`](https://github.com/nano-agent-team/nano-agent-team/commit/9063fa9537709e51ea69026bd6e019e5bf0da134))
+- **ci:** Update CHANGELOG [skip ci] ([`d8e96c0`](https://github.com/nano-agent-team/nano-agent-team/commit/d8e96c0f322fd4ff3ff158584153da5b81d749a7))
 
 ### Features
 
@@ -311,6 +312,11 @@ All notable changes to this project will be documented in this file.
 - **dashboard:** Add thought journal panel and /api/soul/journal endpoint ([`ab5c2c4`](https://github.com/nano-agent-team/nano-agent-team/commit/ab5c2c4ed404d629bb02133e8fe760a4db1f93d2))
 - **dashboard:** Add thought journal to agent detail panel ([`83261ee`](https://github.com/nano-agent-team/nano-agent-team/commit/83261ee865c8979b4d10e78c65584df4fbe05686))
 - **agent-runner:** Add --version flag and startup version logging (#110) ([`6d2770b`](https://github.com/nano-agent-team/nano-agent-team/commit/6d2770b6ad5108066655093e67f3bcd231e786b8))
+- **api:** Add pipeline.> to AGENTS JetStream stream subjects ([`eebf9e3`](https://github.com/nano-agent-team/nano-agent-team/commit/eebf9e374b2ef531069c4da7967cc40fa0a71bdc))
+- **api:** Extend PortDefinition with subject, add resolveOutputMap ([`c725d2e`](https://github.com/nano-agent-team/nano-agent-team/commit/c725d2eb2b89c6f02238c36821d2e75e217dc91e))
+- **api:** Add publish_signal MCP tool + gateway plumbing ([`234685d`](https://github.com/nano-agent-team/nano-agent-team/commit/234685d54327af23f4a976e43d85fe6ec1f281b6))
+- **agent-runner:** Ack only after publish_signal called — output validation ([`b66ff16`](https://github.com/nano-agent-team/nano-agent-team/commit/b66ff16e1fcb5d6270f67cb61d2833bb6a8b756f))
+- **api:** Floating timer — wake consciousness after 30 min global silence ([`f372abf`](https://github.com/nano-agent-team/nano-agent-team/commit/f372abfcfe4d51c421427762fbb04d1644e553b6))
 
 ### Miscellaneous
 
