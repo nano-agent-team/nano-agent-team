@@ -22,7 +22,7 @@ import { DATA_DIR, NATS_URL, MCP_GATEWAY_PORT } from './config.js';
 import { logger } from './logger.js';
 import { startCredentialProxy, startAutoRefresh, stopAutoRefresh } from './credential-proxy.js';
 import { connectNats, ensureStream, ensureConsumer, closeNats, publish } from './nats-client.js';
-import { loadAgents, loadManifest, resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
+import { loadAgents, loadManifest, resolveTopicsForAgent, getInstanceId, resolveOutputMap } from './agent-registry.js';
 import { AgentManager } from './agent-manager.js';
 import { startApiServer } from './api-server.js';
 import { McpGateway, type GatewayOptions } from './mcp-gateway.js';
@@ -261,6 +261,10 @@ async function main(): Promise<void> {
     mcpManager,
     mcpServerRegistry,
     gatewayOpts,
+    (agentId) => {
+      const agent = manager.getAgent(agentId);
+      return agent ? resolveOutputMap(agent.manifest) : {};
+    },
   );
   mcpGateway.start(MCP_GATEWAY_PORT);
 

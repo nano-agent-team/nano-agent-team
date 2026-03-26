@@ -90,6 +90,7 @@ export function registerSoulTools(
   dataDir: string,
   agentId: string,
   permissions: string[] | '*',
+  agentOutputs?: Record<string, string>,
 ): void {
   const obsidianBase = path.join(dataDir, 'obsidian', 'Consciousness');
   const questionsBase = path.join(dataDir, 'questions');
@@ -436,6 +437,28 @@ export function registerSoulTools(
         logger.warn({ err }, 'evaluate_self publish failed (AlarmClock will retry)');
         return { content: [{ type: 'text', text: 'Self-evaluation publish failed; AlarmClock will retry.' }] };
       }
+    });
+  }
+
+  // ── publish_signal ──────────────────────────────────────────────────────────
+
+  if (allowed('publish_signal')) {
+    server.tool('publish_signal', 'Publish a signal to a named output declared in your manifest.', {
+      output: z.string().describe('Output port name from your manifest'),
+      payload: z.string().describe('JSON payload'),
+    }, async ({ output, payload }) => {
+      try { JSON.parse(payload); } catch { return errorResult('payload must be valid JSON'); }
+
+      if (!agentOutputs || !agentOutputs[output]) {
+        return errorResult(`Unknown output "${output}". Available: ${Object.keys(agentOutputs || {}).join(', ')}`);
+      }
+      const subject = agentOutputs[output];
+      await publish(nc, subject, payload);
+      emitActivity(nc, {
+        agent: agentId, type: 'action',
+        summary: `Signal: ${output}`, timestamp: Date.now(),
+      });
+      return textResult({ ok: true, output, subject });
     });
   }
 
