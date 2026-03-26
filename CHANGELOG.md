@@ -200,6 +200,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`f22c5d2`](https://github.com/nano-agent-team/nano-agent-team/commit/f22c5d2bbeb0c11e827e72fda75835284e4c92cc))
 - **ci:** Update CHANGELOG [skip ci] ([`9063fa9`](https://github.com/nano-agent-team/nano-agent-team/commit/9063fa9537709e51ea69026bd6e019e5bf0da134))
 - **ci:** Update CHANGELOG [skip ci] ([`d8e96c0`](https://github.com/nano-agent-team/nano-agent-team/commit/d8e96c0f322fd4ff3ff158584153da5b81d749a7))
+- **ci:** Update CHANGELOG [skip ci] ([`ab34e96`](https://github.com/nano-agent-team/nano-agent-team/commit/ab34e9687dc986ed6ff6edaf92360163b780bff3))
 
 ### Features
 
@@ -317,6 +318,7 @@ All notable changes to this project will be documented in this file.
 - **api:** Add publish_signal MCP tool + gateway plumbing ([`234685d`](https://github.com/nano-agent-team/nano-agent-team/commit/234685d54327af23f4a976e43d85fe6ec1f281b6))
 - **agent-runner:** Ack only after publish_signal called — output validation ([`b66ff16`](https://github.com/nano-agent-team/nano-agent-team/commit/b66ff16e1fcb5d6270f67cb61d2833bb6a8b756f))
 - **api:** Floating timer — wake consciousness after 30 min global silence ([`f372abf`](https://github.com/nano-agent-team/nano-agent-team/commit/f372abfcfe4d51c421427762fbb04d1644e553b6))
+- **api:** Add dispatcher to BASE_AGENTS ([`7dc9be9`](https://github.com/nano-agent-team/nano-agent-team/commit/7dc9be932057189f3ebd239744d4792a66955048))
 
 ### Miscellaneous
 
