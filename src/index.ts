@@ -191,7 +191,7 @@ async function main(): Promise<void> {
   const nc = await connectNats(natsUrl);
 
   // ── 3. Ensure AGENTS stream ─────────────────────────────────────────────────
-  await ensureStream(nc, 'AGENTS', ['agent.>', 'topic.>', 'health.>', 'soul.>', 'user.message.>', 'secret.>']);
+  await ensureStream(nc, 'AGENTS', ['agent.>', 'topic.>', 'health.>', 'soul.>', 'user.message.>', 'secret.>', 'pipeline.>']);
   logger.info('Stream AGENTS ready');
 
   const configService = new ConfigService(DATA_DIR);
