@@ -17,6 +17,8 @@ import { logger } from './logger.js';
 export interface PortDefinition {
   port: string;
   description?: string;
+  /** NATS subject this output port maps to. Used by publish_signal. */
+  subject?: string;
 }
 
 // ─── Agent Manifest ───────────────────────────────────────────────────────────
@@ -93,6 +95,21 @@ export interface AgentManifest {
   handler?: string;
   /** Mount host Obsidian vault at /obsidian in container. Requires HOST_OBSIDIAN_VAULT_PATH env var. */
   obsidian_mount?: boolean;
+}
+
+/** Resolve named outputs to { portName: natsSubject } map */
+export function resolveOutputMap(manifest: AgentManifest): Record<string, string> {
+  const map: Record<string, string> = {};
+  if (manifest.outputs) {
+    for (const out of manifest.outputs) {
+      if (out.subject) map[out.port] = out.subject;
+    }
+  }
+  // Fallback: legacy publish_topics as identity map
+  if (Object.keys(map).length === 0 && manifest.publish_topics) {
+    for (const t of manifest.publish_topics) { map[t] = t; }
+  }
+  return map;
 }
 
 // ─── Workflow Binding ─────────────────────────────────────────────────────────
