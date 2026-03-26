@@ -348,6 +348,32 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── Floating timer: wake consciousness after 30 min of global silence ──────
+  {
+    const SILENCE_TIMEOUT_MS = 30 * 60 * 1000;
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+
+    function resetSilenceTimer() {
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(async () => {
+        logger.info('Global silence 30 min — waking consciousness');
+        try {
+          await publish(nc, 'soul.consciousness.inbox', JSON.stringify({
+            type: 'reflection', reason: 'Global silence. Read insights, check goals.', ts: Date.now(),
+          }));
+        } catch (err) { logger.error({ err }, 'Failed to wake consciousness'); }
+      }, SILENCE_TIMEOUT_MS);
+    }
+
+    // Track business-relevant NATS activity (core sub sees JetStream publishes too)
+    for (const pattern of ['soul.>', 'pipeline.>', 'agent.>']) {
+      const sub = nc.subscribe(pattern);
+      void (async () => { for await (const _msg of sub) { resetSilenceTimer(); } })();
+    }
+    resetSilenceTimer();
+    logger.info({ timeoutMs: SILENCE_TIMEOUT_MS }, 'Floating silence timer started');
+  }
+
   // ── 6. Start API server ─────────────────────────────────────────────────────
   // Settings feature is always loaded inside startApiServer
   const httpServer = await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry, workspaceProvider });
