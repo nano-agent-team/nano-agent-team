@@ -104,6 +104,25 @@ const allMcpServers: Record<string, McpServerConfig> = {
     : {}),
 };
 
+// ─── Output Validation ───────────────────────────────────────────────────────
+
+// Output validation: check if agent has declared outputs in manifest
+let outputValidationEnabled = false;
+try {
+  const manifestPath = '/workspace/agent/manifest.json';
+  if (fs.existsSync(manifestPath)) {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+    const hasOutputs = Array.isArray(manifest.outputs) && manifest.outputs.some((o: { subject?: string }) => !!o.subject);
+    if (!hasOutputs && Array.isArray(manifest.publish_topics) && manifest.publish_topics.length > 0) {
+      outputValidationEnabled = true; // legacy format
+    } else {
+      outputValidationEnabled = hasOutputs;
+    }
+  }
+} catch {
+  // Failed to read manifest for output validation — disable silently
+}
+
 // ─── Logger ──────────────────────────────────────────────────────────────────
 
 /** OTel trace correlation mixin — adds traceId/spanId to every log line */
@@ -187,6 +206,10 @@ async function main(): Promise<void> {
     { agentId: AGENT_ID, version: RUNNER_VERSION, provider: PROVIDER_NAME, model: MODEL, natsUrl: NATS_URL, sessionType: SESSION_TYPE, waitForStart: WAIT_FOR_START_SIGNAL },
     'Agent runner starting',
   );
+
+  if (outputValidationEnabled) {
+    log.info({ agentId: AGENT_ID }, 'Output validation enabled — will check for publish_signal calls');
+  }
 
   if (SUBSCRIBE_TOPICS.length === 0) {
     log.warn('SUBSCRIBE_TOPICS is empty — agent will not receive any messages');
@@ -551,6 +574,9 @@ async function main(): Promise<void> {
         ? String(payloadForPrompt.text)
         : `Event on topic "${subject}":\n\n${JSON.stringify(payloadForPrompt, null, 2)}`;
 
+      // ── Output validation: reset per-message tracking ─────────────────────
+      let publishSignalCalled = false;
+
       // ── Provider invocation ───────────────────────────────────────────────
       const existingSessionId = firstMessageOfLifecycle ? undefined : loadSessionId();
 
@@ -611,6 +637,12 @@ async function main(): Promise<void> {
             if (querySpan) {
               querySpan.span.addEvent('tool_call', { 'tool.name': event.toolName });
             }
+            // Output validation: track publish_signal calls
+            // MCP tools have namespaced names: mcp__soul__publish_signal
+            const bareName = event.toolName.replace(/^mcp__soul__/, '');
+            if (bareName === 'publish_signal') {
+              publishSignalCalled = true;
+            }
           } else if (event.type === 'result') {
             result = event.result;
             errorSubtype = event.errorSubtype;
@@ -648,6 +680,8 @@ async function main(): Promise<void> {
           log.info({ agentId: AGENT_ID }, 'First message completed — subsequent messages will resume session');
         }
       }
+      // Capture session ID for potential output-validation retry before cleanup
+      const retrySessionId = currentSessionId;
       currentSessionId = undefined;
 
       // ── Signal stream end ─────────────────────────────────────────────────
@@ -700,7 +734,31 @@ async function main(): Promise<void> {
       currentTicketId = undefined;
       publishHeartbeat();
 
-      msg.ack();
+      // ── Output validation: retry if publish_signal was not called ────────
+      if (!outputValidationEnabled || publishSignalCalled) {
+        msg.ack();
+      } else {
+        log.warn({ agentId: AGENT_ID }, 'No publish_signal called — retrying once');
+        const retryWorking = setInterval(() => { try { msg.working(); } catch {} }, 30_000);
+        try {
+          for await (const ev of provider.run({
+            model: MODEL, cwd: '/workspace',
+            prompt: 'You processed a message but did not call publish_signal. Every input must produce an output. Use publish_signal to send your result to the next agent.',
+            sessionId: retrySessionId, maxTurns: 1,
+            mcpServers: allMcpServers,
+          })) {
+            if (ev.type === 'tool_call') {
+              const bn = ev.toolName.replace(/^mcp__soul__/, '');
+              if (bn === 'publish_signal') publishSignalCalled = true;
+            }
+          }
+        } catch (err) { log.error({ err }, 'Output retry failed'); }
+        clearInterval(retryWorking);
+        msg.ack();
+        if (!publishSignalCalled) {
+          log.error({ agentId: AGENT_ID }, 'Agent swallowed message — no publish_signal after retry');
+        }
+      }
 
       // ── Phase 5: Exit after drain ────────────────────────────────────────
       if (draining) {
