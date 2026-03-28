@@ -979,6 +979,91 @@ export async function createApiApp(
     });
   }
 
+  // ── Chat Threads API ────────────────────────────────────────────────────────
+  const CHAT_DIR = path.join(DATA_DIR, 'chat', 'threads');
+  fs.mkdirSync(CHAT_DIR, { recursive: true });
+
+  // Ensure main thread exists
+  const mainThreadPath = path.join(CHAT_DIR, 'main.json');
+  if (!fs.existsSync(mainThreadPath)) {
+    fs.writeFileSync(mainThreadPath, JSON.stringify({
+      id: 'main', title: 'General', messages: [], pending: false, createdAt: Date.now()
+    }, null, 2));
+  }
+
+  function loadThread(id: string) {
+    const p = path.join(CHAT_DIR, `${id}.json`);
+    if (!fs.existsSync(p)) return null;
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  }
+
+  function saveThread(thread: Record<string, unknown>) {
+    fs.writeFileSync(path.join(CHAT_DIR, `${thread.id}.json`), JSON.stringify(thread, null, 2));
+  }
+
+  // List threads
+  app.get('/api/chat/threads', (_req: Request, res: Response) => {
+    const files = fs.readdirSync(CHAT_DIR).filter(f => f.endsWith('.json'));
+    const threads = files.map(f => {
+      const t = JSON.parse(fs.readFileSync(path.join(CHAT_DIR, f), 'utf8'));
+      const msgs = t.messages ?? [];
+      const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+      return { id: t.id, title: t.title, pending: t.pending ?? false, lastMessage: last, messageCount: msgs.length };
+    });
+    res.json(threads);
+  });
+
+  // Get thread messages
+  app.get('/api/chat/threads/:id/messages', (req: Request, res: Response) => {
+    const thread = loadThread(req.params.id);
+    if (!thread) return res.status(404).json({ error: 'Thread not found' });
+    res.json(thread.messages ?? []);
+  });
+
+  // Send message to thread (proxies to chat-agent via NATS)
+  app.post('/api/chat/threads/:id/messages', async (req: Request, res: Response) => {
+    const { text } = req.body ?? {};
+    if (!text) return res.status(400).json({ error: 'text required' });
+    const thread = loadThread(req.params.id);
+    if (!thread) return res.status(404).json({ error: 'Thread not found' });
+
+    // Append user message
+    thread.messages.push({ role: 'user', text, ts: Date.now() });
+    saveThread(thread);
+
+    // Send to chat-agent via NATS and collect response
+    const replySubject = `chat.thread.reply.${Date.now()}`;
+    const sub = nc.subscribe(replySubject, { max: 1, timeout: 60000 });
+
+    await publish(nc, 'agent.chat-agent.inbox', JSON.stringify({
+      text,
+      replySubject,
+      threadId: thread.id,
+    }));
+
+    try {
+      for await (const msg of sub) {
+        const reply = JSON.parse(codec.decode(msg.data));
+        thread.messages.push({ role: 'agent', text: reply.result ?? '', agentId: 'chat-agent', ts: Date.now() });
+        if (thread.pending) thread.pending = false;
+        saveThread(thread);
+        res.json({ ok: true, reply: reply.result });
+        return;
+      }
+    } catch {
+      res.json({ ok: true, reply: '(waiting for response)' });
+    }
+  });
+
+  // Create new thread
+  app.post('/api/chat/threads', (req: Request, res: Response) => {
+    const { title } = req.body ?? {};
+    const id = `thread-${Date.now()}`;
+    const thread = { id, title: title ?? 'New Thread', messages: [], pending: false, createdAt: Date.now() };
+    saveThread(thread);
+    res.json(thread);
+  });
+
   // ── Chat with any agent (NATS bridge) ──────────────────────────────────────
   // Default: consciousness (user.message.inbound)
   // With ?agent=foreman: agent.foreman.inbox

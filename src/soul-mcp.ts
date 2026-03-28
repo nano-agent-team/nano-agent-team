@@ -324,6 +324,24 @@ export function registerSoulTools(
             agent: agentId, type: 'user', summary: 'Question asked',
             from: agentId, to: 'user', subtype: 'question', timestamp: Date.now(),
           });
+
+          // Create a chat thread for this question
+          const threadDir = path.join(dataDir, 'chat', 'threads');
+          try {
+            fs.mkdirSync(threadDir, { recursive: true });
+            const threadId = `ask-${questionId}`;
+            const threadPath = path.join(threadDir, `${threadId}.json`);
+            const thread = {
+              id: threadId,
+              title: question.substring(0, 50),
+              messages: [{ role: 'agent', text: question, agentId, ts: Date.now() }],
+              pending: true,
+              questionId,
+              createdAt: Date.now(),
+            };
+            fs.writeFileSync(threadPath, JSON.stringify(thread, null, 2));
+          } catch { /* ignore thread creation failure */ }
+
           return textResult({ questionId, status: 'pending' });
         } catch (err: unknown) {
           return errorResult((err as Error).message);
