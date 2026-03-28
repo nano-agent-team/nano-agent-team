@@ -407,7 +407,7 @@ async function main(): Promise<void> {
 
   // ── 6. Start API server ─────────────────────────────────────────────────────
   // Settings feature is always loaded inside startApiServer
-  const httpServer = await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry, workspaceProvider });
+  const httpServer = await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry, workspaceProvider, secretManager });
 
   // ── 6b. Post-restart deploy verification ──────────────────────────────────
   const pendingDeployPath = path.join(DATA_DIR, 'pending-deploy.json');

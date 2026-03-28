@@ -303,7 +303,7 @@ export async function createApiApp(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider; secretManager?: import('./secret-manager.js').SecretManager },
 ): Promise<express.Application> {
   const app = express();
   app.use(express.json());
@@ -948,6 +948,37 @@ export async function createApiApp(
     res.json({ agents, edges });
   });
 
+  // ── Secrets API ─────────────────────────────────────────────────────────────
+  if (opts.secretManager) {
+    const sm = opts.secretManager;
+
+    app.get('/api/secrets', (_req: Request, res: Response) => {
+      const keys = sm.listKeys();
+      const agents = manager.getAllAgents();
+      const required: Record<string, string[]> = {};
+      for (const a of agents) {
+        const reqs = (a.manifest as unknown as Record<string, unknown>).required_env as string[] | undefined ?? [];
+        if (reqs.length > 0) required[a.manifest.id] = reqs;
+      }
+      res.json({
+        secrets: keys.map(k => ({ key: k, set: true })),
+        required,
+      });
+    });
+
+    app.post('/api/secrets', (req: Request, res: Response) => {
+      const { key, value } = req.body ?? {};
+      if (!key || !value) return res.status(400).json({ error: 'key and value required' });
+      sm.set(key, value);
+      res.json({ ok: true, key });
+    });
+
+    app.delete('/api/secrets/:key', (req: Request, res: Response) => {
+      sm.delete(req.params.key);
+      res.json({ ok: true });
+    });
+  }
+
   // ── Chat with any agent (NATS bridge) ──────────────────────────────────────
   // Default: consciousness (user.message.inbound)
   // With ?agent=foreman: agent.foreman.inbox
@@ -1373,7 +1404,7 @@ export async function startApiServer(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider; secretManager?: import('./secret-manager.js').SecretManager },
 ): Promise<http.Server> {
   const app = await createApiApp(manager, nc, configService, opts);
 
