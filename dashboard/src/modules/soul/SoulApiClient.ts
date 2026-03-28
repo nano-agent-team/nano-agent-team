@@ -47,3 +47,88 @@ export function connectActivityStream(onEvent: (event: ActivityEvent) => void): 
   es.onerror = () => { /* auto-reconnects */ };
   return () => es.close();
 }
+
+// ── Chat Threads ────────────────────────────────────────────────────────────
+
+export interface ChatThread {
+  id: string;
+  title: string;
+  pending: boolean;
+  lastMessage?: { role: string; text: string; ts: number };
+  messageCount: number;
+}
+
+export interface ChatMessage {
+  role: 'user' | 'agent';
+  text: string;
+  agentId?: string;
+  ts: number;
+}
+
+export async function fetchThreads(): Promise<ChatThread[]> {
+  const res = await fetch('/api/chat/threads');
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function fetchMessages(threadId: string): Promise<ChatMessage[]> {
+  const res = await fetch(`/api/chat/threads/${threadId}/messages`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
+export async function sendMessage(threadId: string, text: string): Promise<string> {
+  const res = await fetch(`/api/chat/threads/${threadId}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!res.ok) return '';
+  const data = await res.json();
+  return data.reply ?? '';
+}
+
+export async function createThread(title: string): Promise<ChatThread | null> {
+  const res = await fetch('/api/chat/threads', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title }),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// ── Agent Activity Stream ───────────────────────────────────────────────────
+
+export interface AgentActivityEvent {
+  type: 'tool_call' | 'thinking' | 'text' | 'signal';
+  summary: string;
+  detail?: string;
+  toolName?: string;
+  timestamp: number;
+}
+
+export function connectAgentStream(agentId: string, onEvent: (e: AgentActivityEvent) => void): () => void {
+  const es = new EventSource(`/api/agents/${agentId}/stream`);
+  es.onmessage = (e) => {
+    try {
+      onEvent(JSON.parse(e.data));
+    } catch { /* ignore */ }
+  };
+  es.onerror = () => { /* auto-reconnects */ };
+  return () => es.close();
+}
+
+// ── Journal ─────────────────────────────────────────────────────────────────
+
+export interface JournalEntry {
+  timestamp: string;
+  agent: string;
+  text: string;
+}
+
+export async function fetchJournal(): Promise<JournalEntry[]> {
+  const res = await fetch('/api/soul/journal');
+  if (!res.ok) return [];
+  return res.json();
+}
