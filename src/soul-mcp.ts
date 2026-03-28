@@ -535,6 +535,13 @@ export function registerSoulTools(
     }, async ({ targetAgent, payload }) => {
       try { JSON.parse(payload); } catch { return errorResult('payload must be valid JSON'); }
 
+      if (listAgents) {
+        const agents = listAgents();
+        if (!agents.some(a => a.id === targetAgent)) {
+          return errorResult(`Agent "${targetAgent}" not found. Available: ${agents.map(a => a.id).join(', ')}`);
+        }
+      }
+
       const subject = `agent.${targetAgent}.inbox`;
       await publish(nc, subject, payload);
       emitActivity(nc, {

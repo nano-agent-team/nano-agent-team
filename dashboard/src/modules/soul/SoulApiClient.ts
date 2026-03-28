@@ -109,7 +109,7 @@ export interface AgentActivityEvent {
 }
 
 export function connectAgentStream(agentId: string, onEvent: (e: AgentActivityEvent) => void): () => void {
-  const es = new EventSource(`/api/agents/${agentId}/stream`);
+  const es = new EventSource(`/api/agents/${encodeURIComponent(agentId)}/stream`);
   es.onmessage = (e) => {
     try {
       onEvent(JSON.parse(e.data));

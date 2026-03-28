@@ -974,7 +974,9 @@ export async function createApiApp(
     });
 
     app.delete('/api/secrets/:key', (req: Request, res: Response) => {
-      sm.delete(req.params.key);
+      const key = req.params.key;
+      if (!/^[a-zA-Z0-9_-]+$/.test(key)) return res.status(400).json({ error: 'Invalid key' });
+      sm.delete(key);
       res.json({ ok: true });
     });
   }
@@ -991,14 +993,19 @@ export async function createApiApp(
     }, null, 2));
   }
 
+  const SAFE_THREAD_ID = /^[a-zA-Z0-9_-]+$/;
+
   function loadThread(id: string) {
+    if (!SAFE_THREAD_ID.test(id)) return null;
     const p = path.join(CHAT_DIR, `${id}.json`);
     if (!fs.existsSync(p)) return null;
     return JSON.parse(fs.readFileSync(p, 'utf8'));
   }
 
   function saveThread(thread: Record<string, unknown>) {
-    fs.writeFileSync(path.join(CHAT_DIR, `${thread.id}.json`), JSON.stringify(thread, null, 2));
+    const id = thread.id as string;
+    if (!SAFE_THREAD_ID.test(id)) throw new Error('Invalid thread ID');
+    fs.writeFileSync(path.join(CHAT_DIR, `${id}.json`), JSON.stringify(thread, null, 2));
   }
 
   // List threads
@@ -1032,7 +1039,7 @@ export async function createApiApp(
     saveThread(thread);
 
     // Send to chat-agent via NATS and collect response
-    const replySubject = `chat.thread.reply.${Date.now()}`;
+    const replySubject = `chat.thread.reply.${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const sub = nc.subscribe(replySubject, { max: 1, timeout: 60000 });
 
     await publish(nc, 'agent.chat-agent.inbox', JSON.stringify({
@@ -1067,6 +1074,7 @@ export async function createApiApp(
   // ── Per-agent activity SSE stream ─────────────────────────────────────────
   app.get('/api/agents/:agentId/stream', (req: Request, res: Response) => {
     const { agentId } = req.params;
+    if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
