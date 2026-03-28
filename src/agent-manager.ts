@@ -1039,6 +1039,31 @@ export class AgentManager {
       ? fs.readFileSync(claudeMdPath, 'utf8')
       : '';
 
+    // ── Constitution + Shards assembly ──────────────────────────────────────
+    // Read global constitution from hub mount
+    const hubDir = '/tmp/hub'; // hub is mounted as :ro
+    const constitutionPath = path.join(hubDir, 'constitution.md');
+    let policyPrefix = '';
+    if (fs.existsSync(constitutionPath)) {
+      policyPrefix = fs.readFileSync(constitutionPath, 'utf8') + '\n\n';
+    }
+
+    // Read shards referenced in manifest
+    const shards = agent.manifest.shards ?? [];
+    for (const shard of shards) {
+      const shardPath = path.join(hubDir, 'shards', `${shard}.md`);
+      if (fs.existsSync(shardPath)) {
+        policyPrefix += fs.readFileSync(shardPath, 'utf8') + '\n\n';
+      } else {
+        logger.warn({ agentId, shard }, 'Shard file not found — skipping');
+      }
+    }
+
+    // Prepend policy to CLAUDE.md content (constitution > shards > CLAUDE.md)
+    if (policyPrefix) {
+      claudeMdContent = policyPrefix + claudeMdContent;
+    }
+
     // Resolve team config from config.json (set during team install)
     let repoUrl = process.env.REPO_URL ?? '';
     let githubToken = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? '';
