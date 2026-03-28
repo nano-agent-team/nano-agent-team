@@ -446,6 +446,79 @@ export function registerSoulTools(
     );
   }
 
+  // ── journal_reflect ───────────────────────────────────────────────────────
+
+  if (allowed('journal_reflect')) {
+    server.tool(
+      'journal_reflect',
+      'Record self-reflection after completing a task. Appends learning to your agent profile in Obsidian.',
+      {
+        verdict_self: z.enum(['good', 'mixed', 'poor']).describe('Self-assessment of task performance'),
+        category: z.enum(['scope', 'quality', 'communication', 'process', 'tooling']).nullable().describe('Learning category, or null if noop'),
+        learning: z.string().nullable().describe('Specific actionable learning, or null if nothing new'),
+      },
+      async ({ verdict_self, category, learning }) => {
+        try {
+          const agentDir = path.join(obsidianBase, 'agents', agentId);
+          fs.mkdirSync(agentDir, { recursive: true });
+
+          const timestamp = new Date().toISOString();
+          const ticketId = process.env.EPHEMERAL_TICKET_ID ?? 'unknown';
+          const taskResult = process.env.EPHEMERAL_TASK_RESULT ?? 'done';
+          const taskSummary = process.env.EPHEMERAL_TASK_SUMMARY ?? 'unknown';
+          const learningText = learning ?? 'null (noop)';
+          const categoryText = category ?? 'null';
+
+          const entry = [
+            `\n## ${timestamp} — ${ticketId} (${taskResult})`,
+            '',
+            `- **verdict_self:** ${verdict_self}`,
+            `- **category:** ${categoryText}`,
+            `- **task:** ${taskSummary}`,
+            `- **learning:** ${learningText}`,
+            '',
+            '---',
+            '',
+          ].join('\n');
+
+          const learningsPath = path.join(agentDir, 'learnings.md');
+          fs.appendFileSync(learningsPath, entry, 'utf-8');
+
+          // Emit activity for dashboard
+          emitActivity(nc, {
+            agent: agentId,
+            type: 'reflect',
+            summary: learning
+              ? `Reflect (${verdict_self}/${category}): ${learning.slice(0, 120)}`
+              : `Reflect (${verdict_self}): noop`,
+            timestamp: Date.now(),
+          });
+
+          // Track learning count — publish batch_ready when threshold reached
+          const counterPath = path.join(obsidianBase, 'agents', '.reflect_counter');
+          let count = 0;
+          try {
+            count = parseInt(fs.readFileSync(counterPath, 'utf-8').trim(), 10) || 0;
+          } catch { /* file doesn't exist yet */ }
+          count += 1;
+          fs.writeFileSync(counterPath, String(count), 'utf-8');
+
+          if (count >= 5) {
+            await publish(nc, 'soul.reflect.batch_ready', JSON.stringify({
+              count,
+              timestamp,
+            }));
+            fs.writeFileSync(counterPath, '0', 'utf-8');
+          }
+
+          return textResult({ ok: true, verdict_self, category, learning: !!learning });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+
   // ── evaluate_self ────────────────────────────────────────────────────────────
 
   if (allowed('evaluate_self')) {
