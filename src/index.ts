@@ -149,6 +149,14 @@ async function bootstrapBaseAgents(
     return [];
   }
 
+  // Copy ARCHITECTURE.md from hub to data dir so agent-manager can mount it into containers
+  const hubArchPath = path.join(HUB_CACHE_DIR, 'ARCHITECTURE.md');
+  const dataArchPath = path.join(dataDir, 'ARCHITECTURE.md');
+  if (fs.existsSync(hubArchPath)) {
+    fs.copyFileSync(hubArchPath, dataArchPath);
+    logger.debug('Copied ARCHITECTURE.md from hub to data dir');
+  }
+
   const agents: Array<{ manifest: ReturnType<typeof loadManifest>; dir: string }> = [];
   for (const agentId of BASE_AGENTS) {
     const agent = installAgentFromHub(dataDir, agentId);

@@ -1251,6 +1251,12 @@ export class AgentManager {
     fs.mkdirSync(obsidianDir, { recursive: true });
     binds.push(`${obsidianDir}:/obsidian:rw`);
 
+    // Volume: ARCHITECTURE.md → /workspace/agent/ARCHITECTURE.md (system knowledge for all agents)
+    const archFile = path.join(hostDataDir, 'ARCHITECTURE.md');
+    if (fs.existsSync(archFile)) {
+      binds.push(`${archFile}:/workspace/agent/ARCHITECTURE.md:ro`);
+    }
+
     // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
     if (agent.manifest.project_workspace && !agent.manifest.repo_path) {
       const projectRoot = path.resolve(hostDataDir, '..', '..');
