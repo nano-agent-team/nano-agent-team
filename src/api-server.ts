@@ -1064,6 +1064,33 @@ export async function createApiApp(
     res.json(thread);
   });
 
+  // ── Per-agent activity SSE stream ─────────────────────────────────────────
+  app.get('/api/agents/:agentId/stream', (req: Request, res: Response) => {
+    const { agentId } = req.params;
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    res.write(':\n\n');
+
+    const sub = nc.subscribe(`activity.${agentId}`);
+    const actCodec = StringCodec();
+
+    (async () => {
+      for await (const msg of sub) {
+        try {
+          const data = actCodec.decode(msg.data);
+          res.write(`data: ${data}\n\n`);
+        } catch { /* connection closed */ }
+      }
+    })();
+
+    req.on('close', () => {
+      sub.unsubscribe();
+    });
+  });
+
   // ── Chat with any agent (NATS bridge) ──────────────────────────────────────
   // Default: consciousness (user.message.inbound)
   // With ?agent=foreman: agent.foreman.inbox

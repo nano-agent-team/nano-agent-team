@@ -576,6 +576,7 @@ async function main(): Promise<void> {
 
       // ── Output validation: reset per-message tracking ─────────────────────
       let publishSignalCalled = false;
+      let lastThinkingEmit = 0;
 
       // ── Provider invocation ───────────────────────────────────────────────
       const existingSessionId = firstMessageOfLifecycle ? undefined : loadSessionId();
@@ -628,6 +629,18 @@ async function main(): Promise<void> {
             if (streamSubject) {
               nc.publish(streamSubject, codec.encode(JSON.stringify({ type: 'chunk', text: event.text })));
             }
+            // Debounced thinking activity for per-agent SSE stream
+            if (Date.now() - lastThinkingEmit > 5000) {
+              lastThinkingEmit = Date.now();
+              try {
+                nc.publish(`activity.${AGENT_ID}`, codec.encode(JSON.stringify({
+                  type: 'thinking',
+                  summary: 'Thinking...',
+                  preview: event.text.substring(0, 100),
+                  timestamp: Date.now(),
+                })));
+              } catch { /* ignore */ }
+            }
           } else if (event.type === 'tool_call') {
             currentTask = baseTask ? `${baseTask} → ${toolActivity(event.toolName)}` : toolActivity(event.toolName);
             publishHeartbeat();
@@ -644,6 +657,15 @@ async function main(): Promise<void> {
             if (bareName === 'publish_signal') {
               publishSignalCalled = true;
             }
+            // Publish activity event for per-agent SSE stream
+            try {
+              nc.publish(`activity.${AGENT_ID}`, codec.encode(JSON.stringify({
+                type: 'tool_call',
+                summary: toolActivity(event.toolName),
+                toolName: event.toolName,
+                timestamp: Date.now(),
+              })));
+            } catch { /* ignore activity publish failure */ }
           } else if (event.type === 'result') {
             result = event.result;
             errorSubtype = event.errorSubtype;
