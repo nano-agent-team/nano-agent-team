@@ -1040,7 +1040,7 @@ export async function createApiApp(
 
     // Send to chat-agent via NATS and collect response
     const replySubject = `chat.thread.reply.${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    const sub = nc.subscribe(replySubject, { max: 1, timeout: 60000 });
+    const sub = nc.subscribe(replySubject, { max: 1 });
 
     await publish(nc, 'agent.chat-agent.inbox', JSON.stringify({
       text,
@@ -1048,17 +1048,27 @@ export async function createApiApp(
       threadId: thread.id,
     }));
 
-    try {
+    // Wait for reply with 60s timeout
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 60_000));
+    const replyPromise = (async () => {
       for await (const msg of sub) {
-        const reply = JSON.parse(codec.decode(msg.data));
-        thread.messages.push({ role: 'agent', text: reply.result ?? '', agentId: 'chat-agent', ts: Date.now() });
-        if (thread.pending) thread.pending = false;
-        saveThread(thread);
-        res.json({ ok: true, reply: reply.result });
-        return;
+        return JSON.parse(codec.decode(msg.data));
       }
-    } catch {
-      res.json({ ok: true, reply: '(waiting for response)' });
+      return null;
+    })();
+
+    const reply = await Promise.race([replyPromise, timeout]) as Record<string, unknown> | null;
+    sub.unsubscribe();
+
+    if (reply) {
+      const replyText = (reply.result as string) ?? '';
+      thread.messages.push({ role: 'agent', text: replyText, agentId: 'chat-agent', ts: Date.now() });
+      if (thread.pending) (thread as Record<string, unknown>).pending = false;
+      saveThread(thread);
+      res.json({ ok: true, reply: replyText });
+    } else {
+      saveThread(thread);
+      res.json({ ok: true, reply: '(timeout — agent is processing)' });
     }
   });
 

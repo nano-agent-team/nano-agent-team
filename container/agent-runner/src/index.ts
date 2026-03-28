@@ -225,9 +225,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Write system prompt via provider
-  const systemPromptContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
-  let systemPrompt = systemPromptContent || `# ${AGENT_ID}\n\nYou are ${AGENT_ID}, a helpful AI agent.\n`;
+  // Build system prompt: ARCHITECTURE.md (shared) + CLAUDE.md (agent-specific)
+  const ARCHITECTURE_PATH = '/workspace/ARCHITECTURE.md';
+  const architectureContent = fs.existsSync(ARCHITECTURE_PATH) ? fs.readFileSync(ARCHITECTURE_PATH, 'utf8') : '';
+  const agentContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
+  const combined = [architectureContent, agentContent].filter(Boolean).join('\n\n---\n\n');
+  let systemPrompt = combined || `# ${AGENT_ID}\n\nYou are ${AGENT_ID}, a helpful AI agent.\n`;
 
   try {
     provider.writeSystemPrompt('/workspace', systemPrompt);
