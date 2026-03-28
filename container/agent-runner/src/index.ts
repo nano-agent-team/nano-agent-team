@@ -240,6 +240,45 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // ── Reflect phase helpers ──────────────────────────────────────────────────
+  function buildReflectPrompt(taskSummary: string, taskResult: string, rejectionReason: string, prevLearnings: string): string {
+    return [
+      '## Reflect Phase',
+      '',
+      'You just completed a task. Review your work and call `journal_reflect`.',
+      '',
+      '### Task',
+      taskSummary,
+      '',
+      '### Result',
+      taskResult,
+      rejectionReason ? `**Rejection reason:** ${rejectionReason}` : '',
+      '',
+      '### Your Previous Learnings (last 10)',
+      prevLearnings || '_No previous learnings._',
+    ].join('\n');
+  }
+
+  function readLastLearnings(agentId: string, obsidianBase: string, maxEntries: number = 10): string {
+    const learningsPath = path.join(obsidianBase, 'Consciousness', 'agents', agentId, 'learnings.md');
+    try {
+      const content = fs.readFileSync(learningsPath, 'utf-8');
+      const entries = content.split(/^---$/m).filter(e => e.trim());
+      return entries.slice(-maxEntries).join('\n---\n');
+    } catch {
+      return '';
+    }
+  }
+
+  function readAgentProfile(agentId: string, obsidianBase: string): string {
+    const profilePath = path.join(obsidianBase, 'Consciousness', 'agents', agentId, 'profile.md');
+    try {
+      return fs.readFileSync(profilePath, 'utf-8');
+    } catch {
+      return '';
+    }
+  }
+
   // ── Ephemeral mode: process a single task from env var, then exit ─────────
   const ephemeralTaskB64 = process.env.EPHEMERAL_TASK_MESSAGE;
   if (ephemeralTaskB64) {
@@ -315,24 +354,78 @@ async function main(): Promise<void> {
       log.warn({ err }, 'Failed to write ephemeral result file');
     }
 
-    // ── After-work hook: set ticket to done (deterministic handoff) ──────
+    // ── Reflect phase: self-reflect before setting ticket to done ───────────
     // Only on success — failed agents leave ticket in_progress for orphan detection
     const ephemeralTicketId = process.env.EPHEMERAL_TICKET_ID;
     if (!errorSubtype && ephemeralTicketId) {
+      const taskSummary = (payload as Record<string, unknown>).text as string
+        ?? JSON.stringify(payloadForPrompt, null, 2).slice(0, 2000);
+      const prevLearnings = readLastLearnings(AGENT_ID, '/obsidian');
+      const profile = readAgentProfile(AGENT_ID, '/obsidian');
+      const reflectContext = profile
+        ? `${prevLearnings}\n\n### Your Learning Profile\n${profile}`
+        : prevLearnings;
+      const reflectPrompt = buildReflectPrompt(taskSummary, 'done', '', reflectContext);
+
+      log.info({ agentId: AGENT_ID, ticketId: ephemeralTicketId }, 'Starting reflect phase');
+
+      let reflectDone = false;
       try {
-        const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
-        const resp = await fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
+        const reflectTimeout = setTimeout(() => {
+          if (!reflectDone) {
+            log.warn({ agentId: AGENT_ID }, 'Reflect phase timed out (60s) — falling back to direct ticket_update');
+            const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
+            fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
+            }).catch(() => {});
+          }
+        }, 60_000);
+
+        const reflectRun = provider.run({
+          model: MODEL,
+          modelExplicit: MODEL_EXPLICIT,
+          cwd: '/workspace',
+          prompt: reflectPrompt,
+          maxTurns: 3,
+          systemPrompt: (systemPrompt || '') + '\n\nYou are in REFLECT PHASE. Call journal_reflect with your self-assessment. Do not do any other work.',
+          ...(AGENT_ALLOWED_TOOLS.length > 0 ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),
+          mcpServers: allMcpServers,
         });
-        if (resp.ok) {
-          log.info({ ticketId: ephemeralTicketId }, 'After-work: ticket set to done');
-        } else {
-          log.warn({ ticketId: ephemeralTicketId, status: resp.status }, 'After-work: failed to set done');
+
+        for await (const event of reflectRun) {
+          if (event.type === 'result') {
+            reflectDone = true;
+            log.info({ agentId: AGENT_ID }, 'Reflect phase completed');
+          }
         }
+
+        clearTimeout(reflectTimeout);
       } catch (err) {
-        log.warn({ err, ticketId: ephemeralTicketId }, 'After-work: error (non-fatal)');
+        log.warn({ err, agentId: AGENT_ID }, 'Reflect phase failed — falling back to direct ticket_update');
+      }
+
+      // Always set ticket to done after reflect (reflect only writes to Obsidian)
+      if (!reflectDone) {
+        // reflect timed out — ticket already set to done by timeout handler above
+      } else {
+        // reflect completed — now set ticket to done
+        try {
+          const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
+          const resp = await fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
+          });
+          if (resp.ok) {
+            log.info({ ticketId: ephemeralTicketId }, 'After-work: ticket set to done');
+          } else {
+            log.warn({ ticketId: ephemeralTicketId, status: resp.status }, 'After-work: failed to set done');
+          }
+        } catch (err) {
+          log.warn({ err, ticketId: ephemeralTicketId }, 'After-work: error (non-fatal)');
+        }
       }
     }
 
