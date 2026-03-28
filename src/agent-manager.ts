@@ -1274,6 +1274,8 @@ export class AgentManager {
     // Volume: instance Obsidian vault → /obsidian (shared knowledge base for all agents)
     const obsidianDir = path.join(hostDataDir, 'obsidian');
     fs.mkdirSync(obsidianDir, { recursive: true });
+    // Ensure agents learning directory exists for journal_reflect
+    fs.mkdirSync(path.join(obsidianDir, 'Consciousness', 'agents'), { recursive: true });
     binds.push(`${obsidianDir}:/obsidian:rw`);
 
     // Volume: ARCHITECTURE.md → /workspace/ARCHITECTURE.md (system knowledge for all agents)
