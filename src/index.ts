@@ -371,15 +371,21 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Floating timer: wake consciousness after 30 min of global silence ──────
+  // ── Floating timer: wake consciousness after configurable silence ────────
   {
-    const SILENCE_TIMEOUT_MS = 30 * 60 * 1000;
+    const silenceMinutes = (() => {
+      try {
+        const cfg = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'config.json'), 'utf8'));
+        return cfg.silenceTimeoutMinutes ?? 30;
+      } catch { return 30; }
+    })();
+    const SILENCE_TIMEOUT_MS = silenceMinutes * 60 * 1000;
     let silenceTimer: ReturnType<typeof setTimeout> | null = null;
 
     function resetSilenceTimer() {
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(async () => {
-        logger.info('Global silence 30 min — waking consciousness');
+        logger.info('Global silence %d min — waking consciousness', silenceMinutes);
         try {
           await publish(nc, 'soul.consciousness.inbox', JSON.stringify({
             type: 'reflection', reason: 'Global silence. Read insights, check goals.', ts: Date.now(),
