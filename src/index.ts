@@ -34,6 +34,7 @@ import { detectSetupMode, isSetupRequired } from './setup-detector.js';
 import { ConfigService } from './config-service.js';
 import { startEmbeddedNats, stopEmbeddedNats } from './nats-embedded.js';
 import { SecretStore } from './secret-store.js';
+import { SecretManager } from './secret-manager.js';
 import { McpServerRegistry } from './mcp-server-registry.js';
 import { McpManager } from './mcp-manager.js';
 import { WorkspaceProvider } from './workspace-provider.js';
@@ -200,10 +201,11 @@ async function main(): Promise<void> {
   const { AlarmClock } = await import('./alarm-clock.js');
   const alarmClock = new AlarmClock(nc, DATA_DIR);
 
-  const manager = new AgentManager(nc, configService, alarmClock);
-
-  // ── Secret store + MCP server registry + MCP manager ────────────────────────
+  // ── Secret store + SecretManager + MCP server registry + MCP manager ────────
   const secretStore = new SecretStore();
+  const secretManager = new SecretManager(DATA_DIR);
+
+  const manager = new AgentManager(nc, configService, alarmClock, secretManager);
   const mcpServerRegistry = new McpServerRegistry();
   mcpServerRegistry.load();
   const mcpManager = new McpManager(secretStore);

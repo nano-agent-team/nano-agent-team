@@ -95,6 +95,10 @@ export interface AgentManifest {
   handler?: string;
   /** Mount host Obsidian vault at /obsidian in container. Requires HOST_OBSIDIAN_VAULT_PATH env var. */
   obsidian_mount?: boolean;
+  /** Secret keys to inject as env vars (deterministic agents only). */
+  required_env?: string[];
+  /** Secrets to mount as files (deterministic agents only). */
+  required_files?: Array<{ secret: string; path: string; mode?: string }>;
 }
 
 /** Resolve named outputs to { portName: natsSubject } map */

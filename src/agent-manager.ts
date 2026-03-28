@@ -37,6 +37,7 @@ import { codec, ensureConsumer } from './nats-client.js';
 import { WorkflowDispatcher } from './workflow-dispatcher.js';
 import type { AlarmClock } from './alarm-clock.js';
 import { emitActivity } from './activity-emitter.js';
+import type { SecretManager } from './secret-manager.js';
 
 interface ObservabilityConfig {
   level?: string;
@@ -120,6 +121,7 @@ export class AgentManager {
     private readonly nc: NatsConnection,
     private readonly configService?: ConfigService,
     alarmClock?: AlarmClock,
+    private readonly secretManager?: SecretManager,
   ) {
     // Default: connects via /var/run/docker.sock on Linux
     this.docker = new Dockerode();
@@ -1256,6 +1258,15 @@ export class AgentManager {
       logger.debug({ agentId, projectRoot }, 'Mounting project workspace');
     } else if (agent.manifest.project_workspace && agent.manifest.repo_path) {
       logger.warn({ agentId }, 'project_workspace ignored: repo_path already set for /workspace/repo');
+    }
+
+    // ── Secret injection (deterministic agents only) ────────────────────────
+    if (this.secretManager) {
+      const resolved = this.secretManager.resolve(agent.manifest, isDeterministic);
+      env.push(...resolved.envVars);
+      for (const fm of resolved.fileMounts) {
+        binds.push(`${fm.hostPath}:${fm.containerPath}:ro`);
+      }
     }
 
     // Use per-agent image if specified in manifest.
