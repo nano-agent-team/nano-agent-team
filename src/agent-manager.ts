@@ -31,9 +31,9 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import type { LoadedAgent, DispatchConfig } from './agent-registry.js';
-import { resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
+import { resolveTopicsForAgent, getInstanceId, loadManifest, findBindingForAgent } from './agent-registry.js';
 import type { ConfigService, NanoConfig } from './config-service.js';
-import { codec } from './nats-client.js';
+import { codec, ensureConsumer } from './nats-client.js';
 import { WorkflowDispatcher } from './workflow-dispatcher.js';
 import type { AlarmClock } from './alarm-clock.js';
 import { emitActivity } from './activity-emitter.js';
@@ -844,6 +844,34 @@ export class AgentManager {
     });
 
     await this.startAgent(agent);
+  }
+
+  /**
+   * Hot-reload an agent: re-read manifest from disk, recreate JetStream consumer,
+   * and restart the container with fresh env vars derived from the new manifest.
+   */
+  async reloadAgent(agentId: string): Promise<void> {
+    const state = this.states.get(agentId);
+    if (!state) {
+      throw new Error(`Agent '${agentId}' not found`);
+    }
+
+    const agentDir = path.join(DATA_DIR, 'agents', agentId);
+    const manifest = loadManifest(agentDir);
+    const binding = findBindingForAgent(agentId, path.join(DATA_DIR, 'teams'));
+    const topics = resolveTopicsForAgent(manifest, binding);
+
+    // Update in-memory agent definition
+    const updatedAgent: LoadedAgent = { manifest, dir: agentDir, binding };
+    state.agent = updatedAgent;
+
+    // Recreate JetStream consumer with (potentially changed) filter subjects
+    await ensureConsumer(this.nc, 'AGENTS', manifest.id, topics);
+
+    // Restart container so it picks up new env vars from updated manifest
+    await this.restartAgent(agentId);
+
+    logger.info({ agentId, topics }, 'Agent hot-reloaded from disk');
   }
 
   /**

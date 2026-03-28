@@ -663,6 +663,30 @@ export async function createApiApp(
     }
   });
 
+  // ── Hot-reload: re-read manifest + recreate consumer + restart container ──
+
+  app.post('/api/agents/:agentId/reload', async (req: Request, res: Response) => {
+    try {
+      const agentId = req.params.agentId;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+
+      const agent = manager.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+      const lastRestart = restartCooldowns.get(agentId) ?? 0;
+      if (Date.now() - lastRestart < RESTART_COOLDOWN_MS) {
+        return res.status(429).json({ error: 'Reload cooldown active, please wait' });
+      }
+      restartCooldowns.set(agentId, Date.now());
+
+      await manager.reloadAgent(agentId);
+      res.json({ ok: true });
+    } catch (err) {
+      logger.error({ err }, 'POST /api/agents/:agentId/reload error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── Phase 5: Zero-downtime deploy ─────────────────────────────────────────
 
   app.post('/api/agents/:agentId/deploy', async (req: Request, res: Response) => {
