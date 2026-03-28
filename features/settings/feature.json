@@ -18,6 +18,11 @@
         "path": "/settings",
         "component": "SettingsView",
         "nav": { "label": "Settings", "icon": "⚙️" }
+      },
+      {
+        "path": "/secrets",
+        "component": "SecretsView",
+        "nav": { "label": "Secrets", "icon": "🔐" }
       }
     ]
   }

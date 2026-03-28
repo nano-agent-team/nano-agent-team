@@ -22,6 +22,7 @@ export default defineConfig({
       exposes: {
         './SetupWizard': './src/SetupWizard.vue',
         './SettingsView': './src/SettingsView.vue',
+        './SecretsView': './src/SecretsView.vue',
       },
       shared: {
         vue: { singleton: true, requiredVersion: '^3.4.0' },
