@@ -2,7 +2,6 @@
   <div ref="containerEl" class="agent-graph-container">
     <svg ref="svgEl" class="agent-graph-svg">
       <defs>
-        <!-- Gradient for nodes -->
         <radialGradient id="node-gradient-active" cx="40%" cy="35%">
           <stop offset="0%" stop-color="#a78bfa" />
           <stop offset="100%" stop-color="#4c1d95" />
@@ -11,7 +10,6 @@
           <stop offset="0%" stop-color="#4b5563" />
           <stop offset="100%" stop-color="#1f2937" />
         </radialGradient>
-        <!-- Glow filter for active nodes -->
         <filter id="agent-glow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="6" result="blur" />
           <feMerge>
@@ -19,7 +17,6 @@
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
-        <!-- Arrow marker for edges -->
         <marker id="arrow" viewBox="0 -4 8 8" refX="8" refY="0"
                 markerWidth="6" markerHeight="6" orient="auto">
           <path d="M0,-3L8,0L0,3" fill="#6b7280" opacity="0.6" />
@@ -32,46 +29,42 @@
     <Transition name="panel-slide">
       <div v-if="selectedAgent" class="agent-detail-panel">
         <div class="detail-header">
-          <span class="detail-icon">{{ selectedAgent.icon }}</span>
-          <span class="detail-name">{{ selectedAgent.label }}</span>
-          <span class="detail-status" :class="selectedAgent.active ? 'active' : 'idle'">
-            {{ selectedAgent.active ? 'Active' : 'Idle' }}
+          <span class="detail-name">{{ selectedAgent.name }}</span>
+          <span class="detail-status" :class="selectedAgent.status">
+            {{ selectedAgent.status }}
           </span>
           <button class="detail-close" @click="selectedAgent = null">&times;</button>
         </div>
         <div class="detail-body">
+          <div class="detail-section">
+            <div class="detail-section-title">Description</div>
+            <div class="detail-desc">{{ selectedAgent.description || 'No description' }}</div>
+          </div>
           <div v-if="selectedAgent.currentActivity" class="detail-section">
             <div class="detail-section-title">Currently working on</div>
             <div class="detail-current">
               <div class="detail-current-summary">{{ selectedAgent.currentActivity.summary }}</div>
-              <div v-if="selectedAgent.currentActivity.entityId" class="detail-current-entity">
-                {{ selectedAgent.currentActivity.entityId }}
+            </div>
+          </div>
+          <div v-if="selectedAgent.connections.length" class="detail-section">
+            <div class="detail-section-title">Connections</div>
+            <div class="detail-connections">
+              <div v-for="conn in selectedAgent.connections" :key="conn.target + conn.port" class="detail-conn">
+                <span class="conn-direction">{{ conn.direction === 'out' ? '→' : '←' }}</span>
+                <span class="conn-agent">{{ conn.target }}</span>
+                <span class="conn-port">{{ conn.port }}</span>
+                <span v-if="conn.messageCount" class="conn-count">{{ conn.messageCount }} msgs</span>
               </div>
             </div>
           </div>
-          <div v-else class="detail-section">
-            <div class="detail-section-title">Currently working on</div>
-            <div class="detail-empty">No current activity</div>
-          </div>
-          <div v-if="selectedAgent.journal.length" class="detail-section">
-            <div class="detail-section-title">💭 Thoughts</div>
-            <div class="detail-journal">
-              <div v-for="(entry, idx) in selectedAgent.journal" :key="idx" class="journal-entry">
-                <div class="journal-time">{{ entry.timestamp.split('T')[1] }}</div>
-                <div class="journal-text">{{ entry.text }}</div>
-              </div>
-            </div>
-          </div>
-          <div class="detail-section">
+          <div v-if="selectedAgent.recentEvents.length" class="detail-section">
             <div class="detail-section-title">Recent activity</div>
-            <div v-if="selectedAgent.recentEvents.length" class="detail-events">
+            <div class="detail-events">
               <div v-for="ev in selectedAgent.recentEvents" :key="ev.timestamp + ev.summary" class="detail-event">
                 <div class="detail-event-time">{{ formatTime(ev.timestamp) }}</div>
                 <div class="detail-event-summary">{{ ev.summary }}</div>
-                <div v-if="ev.entityId" class="detail-event-entity">{{ ev.entityId }}</div>
               </div>
             </div>
-            <div v-else class="detail-empty">No recent events</div>
           </div>
         </div>
       </div>
@@ -82,7 +75,8 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import * as d3 from 'd3';
-import type { ActivityEvent } from './SoulApiClient';
+import type { ActivityEvent, AgentTopology, AgentTopologyEdge } from './SoulApiClient';
+import { fetchAgentTopology } from './SoulApiClient';
 
 const props = defineProps<{
   activity: ActivityEvent[];
@@ -92,9 +86,10 @@ const props = defineProps<{
 
 interface AgentNode extends d3.SimulationNodeDatum {
   id: string;
-  label: string;
+  name: string;
   icon: string;
-  known: boolean;
+  description: string;
+  apiStatus: string;
   activityCount: number;
   lastActive: number;
 }
@@ -102,9 +97,10 @@ interface AgentNode extends d3.SimulationNodeDatum {
 interface AgentEdge extends d3.SimulationLinkDatum<AgentNode> {
   sourceId: string;
   targetId: string;
-  count: number;
+  port: string;
+  subject: string;
+  messageCount: number;
   lastTimestamp: number;
-  lastSummary: string;
   lastType: string;
 }
 
@@ -116,48 +112,39 @@ interface Particle {
   birth: number;
 }
 
-// --- Constants ---
-
-const KNOWN_AGENTS: { id: string; label: string; icon: string }[] = [
-  { id: 'chat-agent', label: 'Chat Agent', icon: '\uD83D\uDCAC' },
-  { id: 'consciousness', label: 'Consciousness', icon: '\uD83E\uDDE0' },
-  { id: 'conscience', label: 'Conscience', icon: '\u2696\uFE0F' },
-  { id: 'strategist', label: 'Strategist', icon: '\uD83D\uDCD0' },
-  { id: 'foreman', label: 'Foreman', icon: '\uD83D\uDD27' },
-];
-
-const KNOWN_MAP = new Map(KNOWN_AGENTS.map((a) => [a.id, a]));
-
-const EVENT_COLORS: Record<string, string> = {
-  idea: '#a855f7',      // purple
-  plan: '#3b82f6',      // blue
-  dialogue: '#f97316',  // orange
-  action: '#22c55e',    // green
-  user: '#06b6d4',      // cyan
-  goal: '#eab308',      // yellow
-};
-
-const ACTIVITY_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
-const ACTIVE_THRESHOLD_MS = 30_000;        // 30 seconds
-const PARTICLE_DURATION_MS = 2000;
-
-// --- Detail panel types ---
-
-interface JournalEntry {
-  timestamp: string;
-  agent: string;
-  text: string;
+interface ConnectionInfo {
+  direction: 'in' | 'out';
+  target: string;
+  port: string;
+  messageCount: number;
 }
 
 interface SelectedAgentInfo {
   id: string;
-  label: string;
-  icon: string;
-  active: boolean;
+  name: string;
+  description: string;
+  status: string;
   currentActivity: ActivityEvent | null;
   recentEvents: ActivityEvent[];
-  journal: JournalEntry[];
+  connections: ConnectionInfo[];
 }
+
+// --- Constants ---
+
+const DEFAULT_ICON = '🤖';
+
+const EVENT_COLORS: Record<string, string> = {
+  idea: '#a855f7',
+  plan: '#3b82f6',
+  dialogue: '#f97316',
+  action: '#22c55e',
+  user: '#06b6d4',
+  goal: '#eab308',
+};
+
+const ACTIVE_THRESHOLD_MS = 30_000;
+const PARTICLE_DURATION_MS = 2000;
+const TOPOLOGY_POLL_MS = 10_000;
 
 // --- Refs ---
 
@@ -175,10 +162,10 @@ let particleIdCounter = 0;
 let simulation: d3.Simulation<AgentNode, AgentEdge> | null = null;
 let animationFrame: number | null = null;
 let resizeObserver: ResizeObserver | null = null;
+let topologyInterval: ReturnType<typeof setInterval> | null = null;
 let width = 800;
 let height = 600;
 
-// D3 selections (stored for updates without full re-render)
 let svgSelection: d3.Selection<SVGSVGElement, unknown, null, undefined> | null = null;
 let gSelection: d3.Selection<SVGGElement, unknown, null, undefined> | null = null;
 let edgeGroup: d3.Selection<SVGGElement, unknown, null, undefined> | null = null;
@@ -187,75 +174,45 @@ let particleGroup: d3.Selection<SVGGElement, unknown, null, undefined> | null = 
 
 // --- Helpers ---
 
-function getParticleColor(type: string): string {
-  return EVENT_COLORS[type] || EVENT_COLORS.action;
-}
-
 function edgeKey(from: string, to: string): string {
   return `${from}→${to}`;
 }
 
-function getOrCreateNode(id: string): AgentNode {
-  let node = nodes.find((n) => n.id === id);
-  if (!node) {
-    const known = KNOWN_MAP.get(id);
-    node = {
-      id,
-      label: known?.label || id,
-      icon: known?.icon || '\uD83E\uDD16',
-      known: !!known,
-      activityCount: 0,
-      lastActive: 0,
-    };
-    nodes.push(node);
-  }
-  return node;
-}
-
-function getOrCreateEdge(from: string, to: string): AgentEdge {
-  const key = edgeKey(from, to);
-  let edge = edges.find((e) => e.sourceId === from && e.targetId === to);
-  if (!edge) {
-    const sourceNode = getOrCreateNode(from);
-    const targetNode = getOrCreateNode(to);
-    edge = {
-      source: sourceNode,
-      target: targetNode,
-      sourceId: from,
-      targetId: to,
-      count: 0,
-      lastTimestamp: 0,
-      lastSummary: '',
-      lastType: '',
-    };
-    edges.push(edge);
-  }
-  return edge;
-}
-
 function nodeRadius(node: AgentNode): number {
-  const base = 30;
-  const extra = Math.min(node.activityCount * 0.5, 10);
+  const base = 28;
+  const extra = Math.min(node.activityCount * 0.8, 14);
   return base + extra;
 }
 
 function isActive(node: AgentNode): boolean {
+  return node.apiStatus === 'running' && Date.now() - node.lastActive < ACTIVE_THRESHOLD_MS;
+}
+
+function isBusy(node: AgentNode): boolean {
   return Date.now() - node.lastActive < ACTIVE_THRESHOLD_MS;
 }
 
+function edgeWidth(edge: AgentEdge): number {
+  if (edge.messageCount === 0) return 1;
+  return Math.min(1 + Math.log2(edge.messageCount + 1) * 1.5, 6);
+}
+
 function edgeOpacity(edge: AgentEdge): number {
+  if (edge.messageCount === 0) return 0.15; // static topology edge, no messages yet
   const age = Date.now() - edge.lastTimestamp;
-  if (age < 10_000) return 0.8;
-  if (age < 60_000) return 0.5;
-  if (age < ACTIVITY_WINDOW_MS) return 0.25;
-  return 0.1;
+  if (age < 10_000) return 0.9;
+  if (age < 60_000) return 0.6;
+  if (age < 300_000) return 0.35;
+  return 0.2;
 }
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max - 1) + '\u2026' : text;
+function edgeColor(edge: AgentEdge): string {
+  if (edge.messageCount === 0) return '#4b5563';
+  const age = Date.now() - edge.lastTimestamp;
+  if (age < 30_000) return '#a78bfa'; // recent = purple
+  return '#6b7280';
 }
 
-// Compute a curved path between two points
 function edgePath(sx: number, sy: number, tx: number, ty: number): string {
   const dx = tx - sx;
   const dy = ty - sy;
@@ -263,16 +220,13 @@ function edgePath(sx: number, sy: number, tx: number, ty: number): string {
   return `M${sx},${sy}A${dr},${dr} 0 0,1 ${tx},${ty}`;
 }
 
-// Get point along the edge path at parameter t (0..1)
 function pointOnEdge(sx: number, sy: number, tx: number, ty: number, t: number): { x: number; y: number } {
-  // Simple quadratic bezier approximation for the arc
   const dx = tx - sx;
   const dy = ty - sy;
   const dist = Math.sqrt(dx * dx + dy * dy);
-  const offset = dist * 0.15; // perpendicular offset for curve
+  const offset = dist * 0.15;
   const mx = (sx + tx) / 2 - (dy / dist) * offset;
   const my = (sy + ty) / 2 + (dx / dist) * offset;
-  // Quadratic bezier: P = (1-t)^2*S + 2(1-t)t*M + t^2*T
   const u = 1 - t;
   return {
     x: u * u * sx + 2 * u * t * mx + t * t * tx,
@@ -280,60 +234,123 @@ function pointOnEdge(sx: number, sy: number, tx: number, ty: number, t: number):
   };
 }
 
-// --- Build graph from activity events ---
+function getParticleColor(type: string): string {
+  return EVENT_COLORS[type] || EVENT_COLORS.action;
+}
 
-function rebuildGraph() {
-  const now = Date.now();
-  const cutoff = now - ACTIVITY_WINDOW_MS;
+function formatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
 
-  // Reset counts
-  nodes.forEach((n) => { n.activityCount = 0; });
+// --- Topology loading ---
 
-  // Always ensure known agents exist
-  KNOWN_AGENTS.forEach((ka) => getOrCreateNode(ka.id));
+async function loadTopology() {
+  const topology = await fetchAgentTopology();
 
-  // Process activity
-  const recentActivity = props.activity.filter((ev) => ev.timestamp > cutoff);
+  // Sync nodes from API
+  const apiIds = new Set(topology.agents.map(a => a.id));
 
-  for (const ev of recentActivity) {
-    // Update source agent
-    const agentNode = getOrCreateNode(ev.agent);
-    agentNode.activityCount++;
-    agentNode.lastActive = Math.max(agentNode.lastActive, ev.timestamp);
-
-    // Update from/to nodes and edges
-    if (ev.from) {
-      const fromNode = getOrCreateNode(ev.from);
-      fromNode.activityCount++;
-      fromNode.lastActive = Math.max(fromNode.lastActive, ev.timestamp);
+  // Add new agents
+  for (const agent of topology.agents) {
+    let node = nodes.find(n => n.id === agent.id);
+    if (!node) {
+      node = {
+        id: agent.id,
+        name: agent.name,
+        icon: agent.icon || DEFAULT_ICON,
+        description: agent.description,
+        apiStatus: agent.status,
+        activityCount: 0,
+        lastActive: 0,
+      };
+      nodes.push(node);
+    } else {
+      node.name = agent.name;
+      node.icon = agent.icon || DEFAULT_ICON;
+      node.description = agent.description;
+      node.apiStatus = agent.status;
     }
-    if (ev.to) {
-      const toNode = getOrCreateNode(ev.to);
-      toNode.activityCount++;
-      toNode.lastActive = Math.max(toNode.lastActive, ev.timestamp);
+  }
+
+  // Remove agents no longer in API
+  nodes = nodes.filter(n => apiIds.has(n.id));
+
+  // Sync static edges from topology
+  for (const te of topology.edges) {
+    let edge = edges.find(e => e.sourceId === te.from && e.targetId === te.to && e.port === te.port);
+    if (!edge) {
+      const sourceNode = nodes.find(n => n.id === te.from);
+      const targetNode = nodes.find(n => n.id === te.to);
+      if (sourceNode && targetNode) {
+        edge = {
+          source: sourceNode,
+          target: targetNode,
+          sourceId: te.from,
+          targetId: te.to,
+          port: te.port,
+          subject: te.subject,
+          messageCount: 0,
+          lastTimestamp: 0,
+          lastType: '',
+        };
+        edges.push(edge);
+      }
+    }
+  }
+
+  // Remove edges whose agents no longer exist
+  edges = edges.filter(e => apiIds.has(e.sourceId) && apiIds.has(e.targetId));
+
+  updateSimulation();
+}
+
+// --- Activity processing ---
+
+function processActivity() {
+  const now = Date.now();
+  const cutoff = now - 5 * 60 * 1000;
+
+  // Reset activity counts
+  nodes.forEach(n => { n.activityCount = 0; });
+
+  // Count per-edge message volume
+  const edgeMessageCounts = new Map<string, number>();
+
+  for (const ev of props.activity) {
+    if (ev.timestamp < cutoff) continue;
+
+    const agentNode = nodes.find(n => n.id === ev.agent);
+    if (agentNode) {
+      agentNode.activityCount++;
+      agentNode.lastActive = Math.max(agentNode.lastActive, ev.timestamp);
     }
 
     if (ev.from && ev.to) {
-      const edge = getOrCreateEdge(ev.from, ev.to);
-      edge.count++;
-      if (ev.timestamp > edge.lastTimestamp) {
-        edge.lastTimestamp = ev.timestamp;
-        edge.lastSummary = ev.summary;
+      const key = edgeKey(ev.from, ev.to);
+      edgeMessageCounts.set(key, (edgeMessageCounts.get(key) ?? 0) + 1);
+
+      // Update edge timestamp
+      const edge = edges.find(e => e.sourceId === ev.from && e.targetId === ev.to);
+      if (edge) {
+        edge.lastTimestamp = Math.max(edge.lastTimestamp, ev.timestamp);
         edge.lastType = ev.subtype || ev.type;
       }
     }
   }
 
-  // Prune stale edges (older than activity window)
-  edges = edges.filter((e) => e.lastTimestamp > cutoff);
+  // Apply message counts to edges
+  for (const edge of edges) {
+    const key = edgeKey(edge.sourceId, edge.targetId);
+    edge.messageCount = edgeMessageCounts.get(key) ?? edge.messageCount;
+  }
 }
 
-// --- Spawn particle for a new event ---
+// --- Particle spawning ---
 
 function spawnParticle(ev: ActivityEvent) {
   if (!ev.from || !ev.to) return;
   const key = edgeKey(ev.from, ev.to);
-  if (!edges.find((e) => e.sourceId === ev.from && e.targetId === ev.to)) return;
+  if (!edges.find(e => e.sourceId === ev.from && e.targetId === ev.to)) return;
   particles.push({
     id: ++particleIdCounter,
     edgeKey: key,
@@ -343,43 +360,37 @@ function spawnParticle(ev: ActivityEvent) {
   });
 }
 
-// --- Detail panel helpers ---
+// --- Detail panel ---
 
-function formatTime(ts: number): string {
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-}
-
-async function selectAgent(agentId: string) {
-  const node = nodes.find((n) => n.id === agentId);
+function selectAgent(agentId: string) {
+  const node = nodes.find(n => n.id === agentId);
   if (!node) return;
 
   const agentEvents = props.activity
-    .filter((ev) => ev.agent === agentId || ev.from === agentId)
+    .filter(ev => ev.agent === agentId || ev.from === agentId)
     .sort((a, b) => b.timestamp - a.timestamp);
 
   const current = agentEvents.length > 0 && (Date.now() - agentEvents[0].timestamp < ACTIVE_THRESHOLD_MS)
-    ? agentEvents[0]
-    : null;
+    ? agentEvents[0] : null;
 
-  // Fetch journal entries for this agent
-  let journal: JournalEntry[] = [];
-  try {
-    const res = await fetch('/api/soul/journal');
-    if (res.ok) {
-      const allEntries: JournalEntry[] = await res.json();
-      journal = allEntries.filter((e) => e.agent === agentId);
+  const connections: ConnectionInfo[] = [];
+  for (const edge of edges) {
+    if (edge.sourceId === agentId) {
+      connections.push({ direction: 'out', target: edge.targetId, port: edge.port, messageCount: edge.messageCount });
     }
-  } catch { /* ignore */ }
+    if (edge.targetId === agentId) {
+      connections.push({ direction: 'in', target: edge.sourceId, port: edge.port, messageCount: edge.messageCount });
+    }
+  }
 
   selectedAgent.value = {
     id: node.id,
-    label: node.label,
-    icon: node.icon,
-    active: isActive(node),
+    name: node.name,
+    description: node.description,
+    status: node.apiStatus,
     currentActivity: current,
     recentEvents: agentEvents.slice(0, 10),
-    journal,
+    connections,
   };
 }
 
@@ -391,36 +402,29 @@ function initSvg() {
   width = containerEl.value.clientWidth || 800;
   height = containerEl.value.clientHeight || 600;
 
-  svgSelection = d3.select(svgEl.value)
-    .attr('width', width)
-    .attr('height', height);
-
+  svgSelection = d3.select(svgEl.value).attr('width', width).attr('height', height);
   gSelection = d3.select(rootG.value);
   gSelection.selectAll('*').remove();
 
-  // Layer order: edges -> particles -> nodes (nodes on top)
   edgeGroup = gSelection.append('g').attr('class', 'edges');
   particleGroup = gSelection.append('g').attr('class', 'particles');
   nodeGroup = gSelection.append('g').attr('class', 'nodes');
 
-  // Zoom & pan
   const zoom = d3.zoom<SVGSVGElement, unknown>()
     .scaleExtent([0.3, 3])
-    .on('zoom', (event) => {
-      gSelection!.attr('transform', event.transform);
-    });
+    .on('zoom', (event) => { gSelection!.attr('transform', event.transform); });
 
   svgSelection.call(zoom);
 }
 
 function setupSimulation() {
   simulation = d3.forceSimulation<AgentNode, AgentEdge>(nodes)
-    .force('link', d3.forceLink<AgentNode, AgentEdge>(edges).id((d) => d.id).distance(160).strength(0.4))
-    .force('charge', d3.forceManyBody().strength(-400))
+    .force('link', d3.forceLink<AgentNode, AgentEdge>(edges).id(d => d.id).distance(180).strength(0.3))
+    .force('charge', d3.forceManyBody().strength(-500))
     .force('center', d3.forceCenter(width / 2, height / 2))
-    .force('collision', d3.forceCollide<AgentNode>().radius((d) => nodeRadius(d) + 10))
-    .force('x', d3.forceX(width / 2).strength(0.05))
-    .force('y', d3.forceY(height / 2).strength(0.05))
+    .force('collision', d3.forceCollide<AgentNode>().radius(d => nodeRadius(d) + 15))
+    .force('x', d3.forceX(width / 2).strength(0.04))
+    .force('y', d3.forceY(height / 2).strength(0.04))
     .alphaDecay(0.02)
     .on('tick', renderTick);
 }
@@ -430,189 +434,126 @@ function updateSimulation() {
     setupSimulation();
     return;
   }
-
   simulation.nodes(nodes);
   const linkForce = simulation.force<d3.ForceLink<AgentNode, AgentEdge>>('link');
-  if (linkForce) {
-    linkForce.links(edges);
-  }
-  simulation.force('center', d3.forceCenter(width / 2, height / 2));
+  if (linkForce) linkForce.links(edges);
   simulation.alpha(0.3).restart();
 }
 
 function renderTick() {
   if (!edgeGroup || !nodeGroup || !particleGroup) return;
-
   const now = Date.now();
 
   // --- Edges ---
   const edgeSel = edgeGroup.selectAll<SVGGElement, AgentEdge>('.edge-group')
-    .data(edges, (d) => edgeKey(d.sourceId, d.targetId));
+    .data(edges, d => edgeKey(d.sourceId, d.targetId) + d.port);
 
   const edgeEnter = edgeSel.enter().append('g').attr('class', 'edge-group');
   edgeEnter.append('path').attr('class', 'edge-path');
-  edgeEnter.append('text').attr('class', 'edge-label');
 
   const edgeMerged = edgeEnter.merge(edgeSel);
 
   edgeMerged.select('.edge-path')
-    .attr('d', (d) => {
+    .attr('d', d => {
       const s = d.source as AgentNode;
       const t = d.target as AgentNode;
       return edgePath(s.x || 0, s.y || 0, t.x || 0, t.y || 0);
     })
     .attr('fill', 'none')
-    .attr('stroke', '#6b7280')
-    .attr('stroke-width', (d) => Math.min(1 + d.count * 0.2, 3))
-    .attr('stroke-opacity', (d) => edgeOpacity(d))
+    .attr('stroke', d => edgeColor(d))
+    .attr('stroke-width', d => edgeWidth(d))
+    .attr('stroke-opacity', d => edgeOpacity(d))
     .attr('marker-end', 'url(#arrow)');
-
-  edgeMerged.select('.edge-label')
-    .attr('x', (d) => {
-      const s = d.source as AgentNode;
-      const t = d.target as AgentNode;
-      const pt = pointOnEdge(s.x || 0, s.y || 0, t.x || 0, t.y || 0, 0.5);
-      return pt.x;
-    })
-    .attr('y', (d) => {
-      const s = d.source as AgentNode;
-      const t = d.target as AgentNode;
-      const pt = pointOnEdge(s.x || 0, s.y || 0, t.x || 0, t.y || 0, 0.5);
-      return pt.y - 8;
-    })
-    .attr('text-anchor', 'middle')
-    .attr('fill', '#9ca3af')
-    .attr('font-size', '9px')
-    .attr('opacity', (d) => edgeOpacity(d) * 0.8)
-    .text((d) => truncate(d.lastSummary, 30));
 
   edgeSel.exit().remove();
 
   // --- Nodes ---
   const nodeSel = nodeGroup.selectAll<SVGGElement, AgentNode>('.agent-node')
-    .data(nodes, (d) => d.id);
+    .data(nodes, d => d.id);
 
   const nodeEnter = nodeSel.enter().append('g').attr('class', 'agent-node');
 
-  // Activity ring (pulse outward)
-  nodeEnter.append('circle')
-    .attr('class', 'activity-ring')
-    .attr('r', (d) => nodeRadius(d))
-    .attr('fill', 'none')
-    .attr('stroke', '#7c3aed')
-    .attr('stroke-width', 2)
-    .attr('opacity', 0);
+  nodeEnter.append('circle').attr('class', 'activity-ring')
+    .attr('fill', 'none').attr('stroke', '#7c3aed').attr('stroke-width', 2).attr('opacity', 0);
 
-  // Main circle
-  nodeEnter.append('circle')
-    .attr('class', 'node-circle')
-    .attr('stroke-width', 2);
+  nodeEnter.append('circle').attr('class', 'node-circle').attr('stroke-width', 2);
 
-  // Status indicator dot
-  nodeEnter.append('circle')
-    .attr('class', 'status-dot')
-    .attr('r', 5)
-    .attr('stroke', '#111827')
-    .attr('stroke-width', 1.5);
+  nodeEnter.append('circle').attr('class', 'status-dot')
+    .attr('r', 5).attr('stroke', '#111827').attr('stroke-width', 1.5);
 
-  // Icon text (emoji)
-  nodeEnter.append('text')
-    .attr('class', 'node-icon')
-    .attr('text-anchor', 'middle')
-    .attr('dominant-baseline', 'central')
+  nodeEnter.append('text').attr('class', 'node-icon')
+    .attr('text-anchor', 'middle').attr('dominant-baseline', 'central')
     .attr('pointer-events', 'none');
 
-  // Label text
-  nodeEnter.append('text')
-    .attr('class', 'node-label')
-    .attr('text-anchor', 'middle')
-    .attr('fill', '#d1d5db')
-    .attr('font-size', '11px')
-    .attr('font-weight', '500')
-    .attr('pointer-events', 'none');
+  nodeEnter.append('text').attr('class', 'node-label')
+    .attr('text-anchor', 'middle').attr('fill', '#d1d5db')
+    .attr('font-size', '11px').attr('font-weight', '500').attr('pointer-events', 'none');
 
-  // Click handler for detail panel
-  nodeEnter.on('click', (_event, d) => {
-    selectAgent(d.id);
-  });
+  nodeEnter.on('click', (_event, d) => { selectAgent(d.id); });
 
-  // Drag behavior
   nodeEnter.call(
     d3.drag<SVGGElement, AgentNode>()
       .on('start', (event, d) => {
         if (!event.active) simulation?.alphaTarget(0.2).restart();
-        d.fx = d.x;
-        d.fy = d.y;
+        d.fx = d.x; d.fy = d.y;
       })
-      .on('drag', (event, d) => {
-        d.fx = event.x;
-        d.fy = event.y;
-      })
+      .on('drag', (event, d) => { d.fx = event.x; d.fy = event.y; })
       .on('end', (event, d) => {
         if (!event.active) simulation?.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
+        d.fx = null; d.fy = null;
       })
   );
 
   const nodeMerged = nodeEnter.merge(nodeSel);
 
-  nodeMerged.attr('transform', (d) => `translate(${d.x || 0},${d.y || 0})`);
+  nodeMerged.attr('transform', d => `translate(${d.x || 0},${d.y || 0})`);
 
   nodeMerged.select('.node-circle')
-    .attr('r', (d) => nodeRadius(d))
-    .attr('fill', (d) => isActive(d) ? 'url(#node-gradient-active)' : 'url(#node-gradient-idle)')
-    .attr('stroke', (d) => isActive(d) ? '#a78bfa' : '#4b5563')
-    .attr('filter', (d) => isActive(d) ? 'url(#agent-glow)' : null);
+    .attr('r', d => nodeRadius(d))
+    .attr('fill', d => isBusy(d) ? 'url(#node-gradient-active)' : 'url(#node-gradient-idle)')
+    .attr('stroke', d => isBusy(d) ? '#a78bfa' : (d.apiStatus === 'running' ? '#4b5563' : '#991b1b'))
+    .attr('filter', d => isBusy(d) ? 'url(#agent-glow)' : null);
 
   nodeMerged.select('.status-dot')
-    .attr('cx', (d) => nodeRadius(d) * 0.7)
-    .attr('cy', (d) => -nodeRadius(d) * 0.7)
-    .attr('fill', (d) => isActive(d) ? '#22c55e' : '#6b7280');
+    .attr('cx', d => nodeRadius(d) * 0.7)
+    .attr('cy', d => -nodeRadius(d) * 0.7)
+    .attr('fill', d => d.apiStatus === 'running' ? (isBusy(d) ? '#22c55e' : '#6b7280') : '#ef4444');
 
   nodeMerged.select('.node-icon')
-    .attr('font-size', (d) => `${nodeRadius(d) * 0.8}px`)
-    .text((d) => d.icon);
+    .attr('font-size', d => `${nodeRadius(d) * 0.8}px`)
+    .text(d => d.icon);
 
   nodeMerged.select('.node-label')
-    .attr('y', (d) => nodeRadius(d) + 16)
-    .text((d) => d.label);
+    .attr('y', d => nodeRadius(d) + 16)
+    .text(d => d.name);
 
-  // Pulse active ring
   nodeMerged.select('.activity-ring')
-    .attr('r', (d) => nodeRadius(d))
-    .attr('stroke', (d) => isActive(d) ? '#7c3aed' : 'none')
-    .attr('opacity', (d) => isActive(d) ? 0.4 + 0.3 * Math.sin(now / 600) : 0)
-    .attr('stroke-width', (d) => isActive(d) ? 2 + Math.sin(now / 600) : 0);
+    .attr('r', d => nodeRadius(d))
+    .attr('stroke', d => isBusy(d) ? '#7c3aed' : 'none')
+    .attr('opacity', d => isBusy(d) ? 0.4 + 0.3 * Math.sin(now / 600) : 0)
+    .attr('stroke-width', d => isBusy(d) ? 2 + Math.sin(now / 600) : 0);
 
   nodeSel.exit().remove();
 
   // --- Particles ---
-  // Advance particles
-  particles = particles.filter((p) => {
+  particles = particles.filter(p => {
     const age = now - p.birth;
     p.progress = age / PARTICLE_DURATION_MS;
     return p.progress < 1;
   });
 
   const particleSel = particleGroup.selectAll<SVGCircleElement, Particle>('.particle')
-    .data(particles, (d) => d.id);
+    .data(particles, d => d.id);
 
   particleSel.enter()
-    .append('circle')
-    .attr('class', 'particle')
-    .attr('r', 4)
-    .attr('opacity', 0.9)
+    .append('circle').attr('class', 'particle').attr('r', 4).attr('opacity', 0.9)
     .merge(particleSel)
-    .attr('fill', (d) => d.color)
-    .attr('opacity', (d) => 1 - d.progress * 0.5)
-    .attr('r', (d) => 3 + (1 - d.progress) * 2)
+    .attr('fill', d => d.color)
+    .attr('opacity', d => 1 - d.progress * 0.5)
+    .attr('r', d => 3 + (1 - d.progress) * 2)
     .each(function (d) {
-      const edge = edges.find((e) => edgeKey(e.sourceId, e.targetId) === d.edgeKey);
-      if (!edge) {
-        d3.select(this).attr('opacity', 0);
-        return;
-      }
+      const edge = edges.find(e => edgeKey(e.sourceId, e.targetId) === d.edgeKey);
+      if (!edge) { d3.select(this).attr('opacity', 0); return; }
       const s = edge.source as AgentNode;
       const t = edge.target as AgentNode;
       const pt = pointOnEdge(s.x || 0, s.y || 0, t.x || 0, t.y || 0, d.progress);
@@ -630,13 +571,6 @@ function startAnimationLoop() {
   animationFrame = requestAnimationFrame(loop);
 }
 
-function stopAnimationLoop() {
-  if (animationFrame !== null) {
-    cancelAnimationFrame(animationFrame);
-    animationFrame = null;
-  }
-}
-
 function handleResize() {
   if (!containerEl.value || !svgSelection) return;
   width = containerEl.value.clientWidth || 800;
@@ -644,8 +578,6 @@ function handleResize() {
   svgSelection.attr('width', width).attr('height', height);
   if (simulation) {
     simulation.force('center', d3.forceCenter(width / 2, height / 2));
-    simulation.force('x', d3.forceX(width / 2).strength(0.05));
-    simulation.force('y', d3.forceY(height / 2).strength(0.05));
     simulation.alpha(0.3).restart();
   }
 }
@@ -657,14 +589,11 @@ let prevActivityLength = 0;
 watch(
   () => props.activity,
   (newActivity) => {
-    // Detect new events (appended to the end)
     const newEvents = newActivity.slice(prevActivityLength);
     prevActivityLength = newActivity.length;
 
-    rebuildGraph();
-    updateSimulation();
+    processActivity();
 
-    // Spawn particles for new events
     for (const ev of newEvents) {
       spawnParticle(ev);
     }
@@ -673,11 +602,13 @@ watch(
 );
 
 onMounted(() => {
-  nextTick(() => {
+  nextTick(async () => {
     initSvg();
-    rebuildGraph();
-    setupSimulation();
+    await loadTopology();
+    processActivity();
     startAnimationLoop();
+
+    topologyInterval = setInterval(loadTopology, TOPOLOGY_POLL_MS);
 
     if (containerEl.value) {
       resizeObserver = new ResizeObserver(() => handleResize());
@@ -687,7 +618,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
-  stopAnimationLoop();
+  if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+  if (topologyInterval !== null) clearInterval(topologyInterval);
   simulation?.stop();
   resizeObserver?.disconnect();
 });
@@ -709,22 +641,10 @@ onUnmounted(() => {
   height: 100%;
 }
 
-/* Pulse animation for activity rings */
-.agent-graph-svg :deep(.activity-ring) {
-  transition: opacity 0.3s ease;
-}
-
-/* Particle glow */
 .agent-graph-svg :deep(.particle) {
   filter: drop-shadow(0 0 3px currentColor);
 }
 
-/* Edge hover */
-.agent-graph-svg :deep(.edge-path) {
-  transition: stroke-opacity 0.2s ease;
-}
-
-/* Node cursor */
 .agent-graph-svg :deep(.agent-node) {
   cursor: pointer;
 }
@@ -738,7 +658,7 @@ onUnmounted(() => {
   position: absolute;
   top: 0;
   right: 0;
-  width: 300px;
+  width: 320px;
   height: 100%;
   background: #1e293b;
   border-left: 1px solid #4b5563;
@@ -758,18 +678,11 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.detail-icon {
-  font-size: 20px;
-}
-
 .detail-name {
   font-size: 14px;
   font-weight: 600;
   color: #e5e7eb;
   flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .detail-status {
@@ -778,17 +691,16 @@ onUnmounted(() => {
   border-radius: 10px;
   font-weight: 600;
   text-transform: uppercase;
-  flex-shrink: 0;
 }
 
-.detail-status.active {
+.detail-status.running {
   background: rgba(34, 197, 94, 0.2);
   color: #22c55e;
 }
 
-.detail-status.idle {
-  background: rgba(107, 114, 128, 0.2);
-  color: #9ca3af;
+.detail-status.dead, .detail-status.stopped {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
 }
 
 .detail-close {
@@ -799,7 +711,6 @@ onUnmounted(() => {
   cursor: pointer;
   padding: 0 4px;
   line-height: 1;
-  flex-shrink: 0;
 }
 
 .detail-close:hover {
@@ -824,6 +735,12 @@ onUnmounted(() => {
   margin-bottom: 8px;
 }
 
+.detail-desc {
+  font-size: 12px;
+  color: #d1d5db;
+  line-height: 1.4;
+}
+
 .detail-current {
   padding: 8px 10px;
   background: #111827;
@@ -837,45 +754,42 @@ onUnmounted(() => {
   line-height: 1.4;
 }
 
-.detail-current-entity {
-  font-size: 10px;
-  color: #6b7280;
-  margin-top: 4px;
-  font-family: monospace;
+.detail-connections {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.detail-empty {
-  color: #6b7280;
-  font-size: 12px;
-  padding: 8px 0;
-}
-
-.detail-journal {
-  max-height: 300px;
-  overflow-y: auto;
-}
-
-.journal-entry {
-  margin-bottom: 10px;
-  padding: 8px;
+.detail-conn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
   background: #111827;
-  border-radius: 6px;
-  border-left: 3px solid #7c3aed;
+  border-radius: 4px;
+  font-size: 12px;
 }
 
-.journal-time {
-  font-size: 10px;
+.conn-direction {
+  color: #6b7280;
+  font-weight: 600;
+}
+
+.conn-agent {
+  color: #a78bfa;
+  font-weight: 500;
+}
+
+.conn-port {
   color: #6b7280;
   font-family: monospace;
-  margin-bottom: 4px;
+  font-size: 10px;
 }
 
-.journal-text {
-  font-size: 12px;
-  color: #d1d5db;
-  line-height: 1.5;
-  white-space: pre-wrap;
-  word-break: break-word;
+.conn-count {
+  margin-left: auto;
+  color: #9ca3af;
+  font-size: 10px;
 }
 
 .detail-events {
@@ -904,14 +818,6 @@ onUnmounted(() => {
   line-height: 1.3;
 }
 
-.detail-event-entity {
-  font-size: 10px;
-  color: #6b7280;
-  margin-top: 2px;
-  font-family: monospace;
-}
-
-/* Panel slide transition */
 .panel-slide-enter-active,
 .panel-slide-leave-active {
   transition: transform 0.2s ease, opacity 0.2s ease;

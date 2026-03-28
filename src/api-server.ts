@@ -886,6 +886,44 @@ export async function createApiApp(
     });
   });
 
+  // ── Agent topology (for graph visualization) ─────────────────────────────
+  app.get('/api/agents/topology', (_req: Request, res: Response) => {
+    const agents = manager.getAllAgents().map(a => ({
+      id: a.manifest.id,
+      name: a.manifest.name ?? a.manifest.id,
+      description: a.manifest.description ?? '',
+      icon: (a.manifest as unknown as Record<string, unknown>).icon as string ?? '',
+      status: a.status,
+      subscribe_topics: a.manifest.subscribe_topics ?? [],
+      outputs: (a.manifest.outputs ?? []).map((o: { port: string; subject?: string }) => ({
+        port: o.port,
+        subject: o.subject ?? '',
+      })),
+    }));
+
+    // Build edges: output.subject of agent A matches subscribe_topic of agent B
+    const edges: Array<{ from: string; to: string; subject: string; port: string }> = [];
+    for (const src of agents) {
+      for (const output of src.outputs) {
+        if (!output.subject) continue;
+        for (const dst of agents) {
+          if (dst.id === src.id) continue;
+          const matches = dst.subscribe_topics.some((topic: string) => {
+            // Exact match or wildcard match (agent.*.task matches agent.foreman.task)
+            if (topic === output.subject) return true;
+            const regex = new RegExp('^' + topic.replace(/\./g, '\\.').replace(/\*/g, '[^.]+').replace(/>/g, '.+') + '$');
+            return regex.test(output.subject);
+          });
+          if (matches) {
+            edges.push({ from: src.id, to: dst.id, subject: output.subject, port: output.port });
+          }
+        }
+      }
+    }
+
+    res.json({ agents, edges });
+  });
+
   // ── Chat with any agent (NATS bridge) ──────────────────────────────────────
   // Default: consciousness (user.message.inbound)
   // With ?agent=foreman: agent.foreman.inbox

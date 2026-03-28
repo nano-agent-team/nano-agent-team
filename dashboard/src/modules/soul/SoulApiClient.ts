@@ -14,6 +14,19 @@ export interface ActivityEvent {
   from?: string; to?: string; subtype?: string; timestamp: number;
 }
 
+export interface AgentTopologyNode {
+  id: string; name: string; description: string; icon: string; status: string;
+  subscribe_topics: string[]; outputs: Array<{ port: string; subject: string }>;
+}
+export interface AgentTopologyEdge { from: string; to: string; subject: string; port: string; }
+export interface AgentTopology { agents: AgentTopologyNode[]; edges: AgentTopologyEdge[]; }
+
+export async function fetchAgentTopology(): Promise<AgentTopology> {
+  const res = await fetch('/api/agents/topology');
+  if (!res.ok) return { agents: [], edges: [] };
+  return res.json();
+}
+
 export async function fetchSoulState(filters?: { status?: string }): Promise<SoulState> {
   const params = new URLSearchParams();
   if (filters?.status) params.set('status', filters.status);

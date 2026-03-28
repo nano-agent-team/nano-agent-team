@@ -166,8 +166,15 @@ export class AgentManager {
       // Read current token from credentials.json so SDK doesn't refuse to start.
       const credPath = path.join(DATA_DIR, 'credentials.json');
       try {
-        const creds = JSON.parse(fs.readFileSync(credPath, 'utf8')) as { oauth_token?: string };
-        if (creds.oauth_token) vars.push(`CLAUDE_CODE_OAUTH_TOKEN=${creds.oauth_token}`);
+        const creds = JSON.parse(fs.readFileSync(credPath, 'utf8')) as {
+          oauth_token?: string;
+          anthropic?: { apiKey?: string };
+        };
+        if (creds.oauth_token) {
+          vars.push(`CLAUDE_CODE_OAUTH_TOKEN=${creds.oauth_token}`);
+        } else if (creds.anthropic?.apiKey) {
+          vars.push(`ANTHROPIC_API_KEY=${creds.anthropic.apiKey}`);
+        }
       } catch { /* ignore */ }
       return vars;
     }
@@ -391,6 +398,13 @@ export class AgentManager {
 
   getAgent(agentId: string): LoadedAgent | undefined {
     return this.states.get(agentId)?.agent;
+  }
+
+  getAllAgents(): Array<LoadedAgent & { status: string }> {
+    return Array.from(this.states.values()).map(s => ({
+      ...s.agent,
+      status: s.status,
+    }));
   }
 
   /**

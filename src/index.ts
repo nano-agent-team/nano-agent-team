@@ -251,6 +251,14 @@ async function main(): Promise<void> {
   const mcpGateway = new McpGateway(
     ticketRegistry,
     (agentId) => {
+      // Hot-reload: re-read manifest from disk on each request for fresh permissions
+      try {
+        const manifestPath = path.join(DATA_DIR, 'agents', agentId, 'manifest.json');
+        if (fs.existsSync(manifestPath)) {
+          const fresh = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          return fresh.mcp_permissions ?? {};
+        }
+      } catch { /* fallback to in-memory */ }
       const agent = manager.getAgent(agentId);
       return agent?.manifest.mcp_permissions ?? {};
     },
@@ -262,8 +270,23 @@ async function main(): Promise<void> {
     mcpServerRegistry,
     gatewayOpts,
     (agentId) => {
+      // Hot-reload: re-read manifest from disk for fresh output map
+      try {
+        const manifestPath = path.join(DATA_DIR, 'agents', agentId, 'manifest.json');
+        if (fs.existsSync(manifestPath)) {
+          const fresh = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          return resolveOutputMap(fresh);
+        }
+      } catch { /* fallback to in-memory */ }
       const agent = manager.getAgent(agentId);
       return agent ? resolveOutputMap(agent.manifest) : {};
+    },
+    () => {
+      return manager.getAllAgents().map(a => ({
+        id: a.manifest.id,
+        status: a.status,
+        description: a.manifest.description ?? '',
+      }));
     },
   );
   mcpGateway.start(MCP_GATEWAY_PORT);

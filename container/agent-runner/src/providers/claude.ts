@@ -108,10 +108,21 @@ export class ClaudeProvider implements Provider {
           }
         }
 
-        // Record tool calls
-        if (msg['type'] === 'tool_use_summary') {
-          const toolName = typeof msg['tool_name'] === 'string' ? msg['tool_name'] : 'unknown';
-          yield { type: 'tool_call', toolName };
+        // Extract tool calls from assistant messages
+        // SDK emits tool_use as content blocks within assistant messages (not as separate events)
+        if (msg['type'] === 'assistant') {
+          const message = msg['message'] as Record<string, unknown> | undefined;
+          const content = message?.['content'];
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block && typeof block === 'object' && (block as Record<string, unknown>)['type'] === 'tool_use') {
+                const toolName = typeof (block as Record<string, unknown>)['name'] === 'string'
+                  ? (block as Record<string, unknown>)['name'] as string
+                  : 'unknown';
+                yield { type: 'tool_call', toolName };
+              }
+            }
+          }
         }
 
         // Check for result

@@ -640,6 +640,7 @@ async function main(): Promise<void> {
             // Output validation: track publish_signal calls
             // MCP tools have namespaced names: mcp__soul__publish_signal
             const bareName = event.toolName.replace(/^mcp__soul__/, '');
+            log.info({ agentId: AGENT_ID, toolName: event.toolName, bareName }, 'Tool call detected');
             if (bareName === 'publish_signal') {
               publishSignalCalled = true;
             }
@@ -738,7 +739,7 @@ async function main(): Promise<void> {
       if (!outputValidationEnabled || publishSignalCalled) {
         msg.ack();
       } else {
-        log.warn({ agentId: AGENT_ID }, 'No publish_signal called — retrying once');
+        log.warn({ agentId: AGENT_ID, resultPreview: result.substring(0, 500) }, 'No publish_signal called — retrying once');
         const retryWorking = setInterval(() => { try { msg.working(); } catch {} }, 30_000);
         try {
           for await (const ev of provider.run({
@@ -757,6 +758,20 @@ async function main(): Promise<void> {
         msg.ack();
         if (!publishSignalCalled) {
           log.error({ agentId: AGENT_ID }, 'Agent swallowed message — no publish_signal after retry');
+          // Fallback: publish pipeline.task.failed so dispatcher knows the task didn't complete properly
+          try {
+            const failPayload = JSON.stringify({
+              agentId: AGENT_ID,
+              reason: 'Agent completed work but did not call publish_signal — likely missing mcp_permissions.soul',
+              resultPreview: result.substring(0, 300),
+              subject,
+              ts: Date.now(),
+            });
+            nc.publish('pipeline.task.failed', codec.encode(failPayload));
+            log.info({ agentId: AGENT_ID }, 'Published pipeline.task.failed fallback signal');
+          } catch (fallbackErr) {
+            log.error({ err: fallbackErr }, 'Failed to publish fallback signal');
+          }
         }
       }
 

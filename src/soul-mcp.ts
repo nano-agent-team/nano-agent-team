@@ -1,8 +1,9 @@
 /**
  * Soul MCP Tools — atomic Obsidian file write + NATS kick for each tool.
  *
- * 8 tools: create_goal, create_idea, update_idea, create_plan,
- *          ask_user, answer_question, send_to_consciousness, journal_log
+ * 10 tools: create_goal, create_idea, update_idea, create_plan,
+ *           ask_user, answer_question, send_to_consciousness, journal_log,
+ *           dispatch_task, list_agents
  *
  * Each tool validates IDs, writes atomically (tmp + rename), and publishes
  * a NATS kick where applicable.
@@ -84,6 +85,13 @@ function errorResult(msg: string) {
  * @param agentId   ID of the calling agent (used as "from" in ask_user).
  * @param permissions Array of allowed tool names (e.g. ["create_goal","create_idea"]).
  */
+/** Agent info returned by listAgents callback */
+export interface AgentInfo {
+  id: string;
+  status: string;
+  description?: string;
+}
+
 export function registerSoulTools(
   server: McpServer,
   nc: NatsConnection,
@@ -91,6 +99,7 @@ export function registerSoulTools(
   agentId: string,
   permissions: string[] | '*',
   agentOutputs?: Record<string, string>,
+  listAgents?: () => AgentInfo[],
 ): void {
   const obsidianBase = path.join(dataDir, 'obsidian', 'Consciousness');
   const questionsBase = path.join(dataDir, 'questions');
@@ -496,6 +505,37 @@ export function registerSoulTools(
       });
 
       return { content: [{ type: 'text', text: `Dialogue continued on idea ${ideaId}, turn ${turnNum}.` }] };
+    });
+  }
+
+  // ── dispatch_task ───────────────────────────────────────────────────────────
+
+  if (allowed('dispatch_task')) {
+    server.tool('dispatch_task', 'Send a task to any agent by ID. Publishes to agent.{agentId}.inbox.', {
+      targetAgent: z.string().regex(SAFE_ID).describe('Agent ID to send the task to'),
+      payload: z.string().describe('JSON payload describing the task'),
+    }, async ({ targetAgent, payload }) => {
+      try { JSON.parse(payload); } catch { return errorResult('payload must be valid JSON'); }
+
+      const subject = `agent.${targetAgent}.inbox`;
+      await publish(nc, subject, payload);
+      emitActivity(nc, {
+        agent: agentId, type: 'action',
+        summary: `Dispatched task to ${targetAgent}`, timestamp: Date.now(),
+      });
+      return textResult({ ok: true, targetAgent, subject });
+    });
+  }
+
+  // ── list_agents ─────────────────────────────────────────────────────────────
+
+  if (allowed('list_agents')) {
+    server.tool('list_agents', 'List all currently registered agents and their status.', {}, async () => {
+      if (!listAgents) {
+        return errorResult('list_agents not available in this context');
+      }
+      const agents = listAgents();
+      return textResult({ agents });
     });
   }
 }

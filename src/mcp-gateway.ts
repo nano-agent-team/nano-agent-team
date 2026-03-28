@@ -290,6 +290,7 @@ function buildMcpServer(
   permissions: PermissionMap,
   opts?: GatewayOptions,
   agentOutputs?: Record<string, string>,
+  listAgentsFn?: () => import('./soul-mcp.js').AgentInfo[],
 ): McpServer {
   const server = new McpServer({ name: 'nano-agent-mcp-gateway', version: '1.0.0' });
 
@@ -912,7 +913,7 @@ function buildMcpServer(
   // ── Built-in: soul (consciousness layer tools) ─────────────────────────────
 
   if (opts && opts.nc && permissions['soul'] !== undefined) {
-    registerSoulTools(server, opts.nc, opts.dataDir, agentId, permissions['soul'] as string[], agentOutputs);
+    registerSoulTools(server, opts.nc, opts.dataDir, agentId, permissions['soul'] as string[], agentOutputs, listAgentsFn);
   }
 
   return server;
@@ -935,6 +936,7 @@ export class McpGateway {
     private readonly mcpServerRegistry?: McpServerRegistry,
     private readonly gatewayOpts?: GatewayOptions,
     private readonly resolveAgentOutputs?: (agentId: string) => Record<string, string>,
+    private readonly listAgentsFn?: () => import('./soul-mcp.js').AgentInfo[],
   ) {}
 
   start(port: number): void {
@@ -996,7 +998,7 @@ export class McpGateway {
 
         // ── Built-in tools (tickets, etc.) via McpServer SDK ──────────────────
         const agentOutputs = this.resolveAgentOutputs?.(agentId) ?? {};
-        const server = buildMcpServer(this.ticketRegistry, agentId, permissions, this.gatewayOpts, agentOutputs);
+        const server = buildMcpServer(this.ticketRegistry, agentId, permissions, this.gatewayOpts, agentOutputs, this.listAgentsFn);
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: undefined, // stateless
         });
@@ -1224,6 +1226,8 @@ export class McpGateway {
         { name: 'evaluate_self', description: 'Trigger consciousness self-evaluation loop.', inputSchema: { type: 'object' as const, properties: {} } },
         { name: 'continue_dialogue', description: 'Continue dialogue with conscience — add counter-arguments to an idea.', inputSchema: { type: 'object' as const, required: ['ideaId', 'argument'], properties: { ideaId: { type: 'string' }, argument: { type: 'string' } } } },
         { name: 'publish_signal', description: 'Publish a signal to a named output declared in your manifest.', inputSchema: { type: 'object' as const, required: ['output', 'payload'], properties: { output: { type: 'string' }, payload: { type: 'string' } } } },
+        { name: 'dispatch_task', description: 'Send a task to any agent by ID. Publishes to agent.{agentId}.task.', inputSchema: { type: 'object' as const, required: ['targetAgent', 'payload'], properties: { targetAgent: { type: 'string' }, payload: { type: 'string' } } } },
+        { name: 'list_agents', description: 'List all currently registered agents and their status.', inputSchema: { type: 'object' as const, properties: {} } },
       ];
       const soulPerms = permissions['soul'];
       for (const tool of soulTools) {

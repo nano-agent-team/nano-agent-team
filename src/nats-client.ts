@@ -15,6 +15,7 @@
 
 import {
   AckPolicy,
+  DeliverPolicy,
   connect,
   headers as natsHeaders,
   NatsConnection,
@@ -112,6 +113,7 @@ export async function ensureConsumer(
   const config: Partial<ConsumerConfig> = {
     durable_name: consumerName,
     ack_policy: AckPolicy.Explicit,
+    deliver_policy: DeliverPolicy.New,
     max_deliver: 3,
     ack_wait: 600_000_000_000, // 10 min in nanoseconds (agents may run long tasks)
   };
@@ -123,23 +125,16 @@ export async function ensureConsumer(
     (config as Record<string, unknown>).filter_subjects = filterSubjects;
   }
 
-  // Check if an existing consumer has different filter subjects — JetStream cannot
-  // update filter_subject(s) in place, so we must delete and recreate.
-  let needsRecreate = false;
+  // Always delete and recreate consumer on startup to ensure:
+  // 1. Filter subjects are up to date (JetStream can't update in place)
+  // 2. deliver_policy: new takes effect (prevents replay of old messages)
   try {
-    const existing = await jsm.consumers.info(streamName, consumerName);
-    const existingFilters: string[] =
-      existing.config.filter_subjects ??
-      (existing.config.filter_subject ? [existing.config.filter_subject] : []);
-    const sorted = (a: string[]) => [...a].sort().join(',');
-    if (sorted(existingFilters) !== sorted(filterSubjects)) {
-      needsRecreate = true;
-      await jsm.consumers.delete(streamName, consumerName);
-      logger.debug({ agentId, old: existingFilters, new: filterSubjects }, 'Consumer filter changed — deleted for recreation');
-    }
+    await jsm.consumers.delete(streamName, consumerName);
+    logger.debug({ agentId }, 'Deleted existing consumer for clean recreation');
   } catch {
     // Consumer doesn't exist yet — will be created below
   }
+  const needsRecreate = true;
 
   try {
     await jsm.consumers.add(streamName, config as ConsumerConfig);
