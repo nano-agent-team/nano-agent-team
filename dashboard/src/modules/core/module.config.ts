@@ -7,7 +7,7 @@ export const module = {
   routes: [
     {
       path: '/',
-      component: () => import('./HomeView.vue'),
+      redirect: '/soul',
     },
   ] as RouteRecordRaw[],
 }

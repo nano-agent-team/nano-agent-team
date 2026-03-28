@@ -25,50 +25,6 @@
       <g ref="rootG" class="root-group" />
     </svg>
 
-    <!-- Agent detail panel -->
-    <Transition name="panel-slide">
-      <div v-if="selectedAgent" class="agent-detail-panel">
-        <div class="detail-header">
-          <span class="detail-name">{{ selectedAgent.name }}</span>
-          <span class="detail-status" :class="selectedAgent.status">
-            {{ selectedAgent.status }}
-          </span>
-          <button class="detail-close" @click="selectedAgent = null">&times;</button>
-        </div>
-        <div class="detail-body">
-          <div class="detail-section">
-            <div class="detail-section-title">Description</div>
-            <div class="detail-desc">{{ selectedAgent.description || 'No description' }}</div>
-          </div>
-          <div v-if="selectedAgent.currentActivity" class="detail-section">
-            <div class="detail-section-title">Currently working on</div>
-            <div class="detail-current">
-              <div class="detail-current-summary">{{ selectedAgent.currentActivity.summary }}</div>
-            </div>
-          </div>
-          <div v-if="selectedAgent.connections.length" class="detail-section">
-            <div class="detail-section-title">Connections</div>
-            <div class="detail-connections">
-              <div v-for="conn in selectedAgent.connections" :key="conn.target + conn.port" class="detail-conn">
-                <span class="conn-direction">{{ conn.direction === 'out' ? '→' : '←' }}</span>
-                <span class="conn-agent">{{ conn.target }}</span>
-                <span class="conn-port">{{ conn.port }}</span>
-                <span v-if="conn.messageCount" class="conn-count">{{ conn.messageCount }} msgs</span>
-              </div>
-            </div>
-          </div>
-          <div v-if="selectedAgent.recentEvents.length" class="detail-section">
-            <div class="detail-section-title">Recent activity</div>
-            <div class="detail-events">
-              <div v-for="ev in selectedAgent.recentEvents" :key="ev.timestamp + ev.summary" class="detail-event">
-                <div class="detail-event-time">{{ formatTime(ev.timestamp) }}</div>
-                <div class="detail-event-summary">{{ ev.summary }}</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </Transition>
   </div>
 </template>
 
@@ -80,6 +36,10 @@ import { fetchAgentTopology } from './SoulApiClient';
 
 const props = defineProps<{
   activity: ActivityEvent[];
+}>();
+
+const emit = defineEmits<{
+  'select-agent': [agentId: string];
 }>();
 
 // --- Types ---
@@ -112,22 +72,7 @@ interface Particle {
   birth: number;
 }
 
-interface ConnectionInfo {
-  direction: 'in' | 'out';
-  target: string;
-  port: string;
-  messageCount: number;
-}
-
-interface SelectedAgentInfo {
-  id: string;
-  name: string;
-  description: string;
-  status: string;
-  currentActivity: ActivityEvent | null;
-  recentEvents: ActivityEvent[];
-  connections: ConnectionInfo[];
-}
+// Detail panel types removed — now in AgentDetailPanel.vue
 
 // --- Constants ---
 
@@ -151,7 +96,7 @@ const TOPOLOGY_POLL_MS = 10_000;
 const containerEl = ref<HTMLElement | null>(null);
 const svgEl = ref<SVGSVGElement | null>(null);
 const rootG = ref<SVGGElement | null>(null);
-const selectedAgent = ref<SelectedAgentInfo | null>(null);
+// selectedAgent removed — parent handles via emit
 
 // --- State ---
 
@@ -360,38 +305,10 @@ function spawnParticle(ev: ActivityEvent) {
   });
 }
 
-// --- Detail panel ---
+// --- Agent selection (emits to parent) ---
 
 function selectAgent(agentId: string) {
-  const node = nodes.find(n => n.id === agentId);
-  if (!node) return;
-
-  const agentEvents = props.activity
-    .filter(ev => ev.agent === agentId || ev.from === agentId)
-    .sort((a, b) => b.timestamp - a.timestamp);
-
-  const current = agentEvents.length > 0 && (Date.now() - agentEvents[0].timestamp < ACTIVE_THRESHOLD_MS)
-    ? agentEvents[0] : null;
-
-  const connections: ConnectionInfo[] = [];
-  for (const edge of edges) {
-    if (edge.sourceId === agentId) {
-      connections.push({ direction: 'out', target: edge.targetId, port: edge.port, messageCount: edge.messageCount });
-    }
-    if (edge.targetId === agentId) {
-      connections.push({ direction: 'in', target: edge.sourceId, port: edge.port, messageCount: edge.messageCount });
-    }
-  }
-
-  selectedAgent.value = {
-    id: node.id,
-    name: node.name,
-    description: node.description,
-    status: node.apiStatus,
-    currentActivity: current,
-    recentEvents: agentEvents.slice(0, 10),
-    connections,
-  };
+  emit('select-agent', agentId);
 }
 
 // --- Rendering ---
@@ -653,179 +570,5 @@ onUnmounted(() => {
   cursor: grabbing;
 }
 
-/* Agent detail panel */
-.agent-detail-panel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  width: 320px;
-  height: 100%;
-  background: #1e293b;
-  border-left: 1px solid #4b5563;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
-  z-index: 10;
-}
-
-.detail-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
-  border-bottom: 1px solid #4b5563;
-  flex-shrink: 0;
-}
-
-.detail-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #e5e7eb;
-  flex: 1;
-}
-
-.detail-status {
-  font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-}
-
-.detail-status.running {
-  background: rgba(34, 197, 94, 0.2);
-  color: #22c55e;
-}
-
-.detail-status.dead, .detail-status.stopped {
-  background: rgba(239, 68, 68, 0.2);
-  color: #ef4444;
-}
-
-.detail-close {
-  background: none;
-  border: none;
-  color: #9ca3af;
-  font-size: 20px;
-  cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
-}
-
-.detail-close:hover {
-  color: #f3f4f6;
-}
-
-.detail-body {
-  overflow-y: auto;
-  padding: 12px 14px;
-  flex: 1;
-}
-
-.detail-section {
-  margin-bottom: 16px;
-}
-
-.detail-section-title {
-  font-size: 11px;
-  font-weight: 600;
-  color: #9ca3af;
-  text-transform: uppercase;
-  margin-bottom: 8px;
-}
-
-.detail-desc {
-  font-size: 12px;
-  color: #d1d5db;
-  line-height: 1.4;
-}
-
-.detail-current {
-  padding: 8px 10px;
-  background: #111827;
-  border-radius: 6px;
-  border-left: 3px solid #7c3aed;
-}
-
-.detail-current-summary {
-  font-size: 12px;
-  color: #d1d5db;
-  line-height: 1.4;
-}
-
-.detail-connections {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.detail-conn {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  background: #111827;
-  border-radius: 4px;
-  font-size: 12px;
-}
-
-.conn-direction {
-  color: #6b7280;
-  font-weight: 600;
-}
-
-.conn-agent {
-  color: #a78bfa;
-  font-weight: 500;
-}
-
-.conn-port {
-  color: #6b7280;
-  font-family: monospace;
-  font-size: 10px;
-}
-
-.conn-count {
-  margin-left: auto;
-  color: #9ca3af;
-  font-size: 10px;
-}
-
-.detail-events {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.detail-event {
-  padding: 6px 10px;
-  background: #111827;
-  border-radius: 6px;
-  border-left: 3px solid #4b5563;
-}
-
-.detail-event-time {
-  font-size: 10px;
-  color: #6b7280;
-  margin-bottom: 2px;
-  font-family: monospace;
-}
-
-.detail-event-summary {
-  font-size: 12px;
-  color: #d1d5db;
-  line-height: 1.3;
-}
-
-.panel-slide-enter-active,
-.panel-slide-leave-active {
-  transition: transform 0.2s ease, opacity 0.2s ease;
-}
-
-.panel-slide-enter-from,
-.panel-slide-leave-to {
-  transform: translateX(20px);
-  opacity: 0;
-}
+/* Detail panel CSS removed — now in AgentDetailPanel.vue */
 </style>

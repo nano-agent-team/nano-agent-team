@@ -38,9 +38,8 @@ const route = useRoute()
 const collapsed = ref(false)
 const connected = ref(true)
 
-// Core nav item
+// Core nav items — Thinking is primary, Settings via plugins
 const coreNavItems = [
-  { path: coreModule.routes[0].path as string, label: coreModule.label, icon: coreModule.icon },
   { path: '/soul', label: soulModule.label, icon: soulModule.icon },
 ]
 
