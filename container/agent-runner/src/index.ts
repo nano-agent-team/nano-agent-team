@@ -406,26 +406,25 @@ async function main(): Promise<void> {
         log.warn({ err, agentId: AGENT_ID }, 'Reflect phase failed — falling back to direct ticket_update');
       }
 
-      // Always set ticket to done after reflect (reflect only writes to Obsidian)
-      if (!reflectDone) {
-        // reflect timed out — ticket already set to done by timeout handler above
-      } else {
-        // reflect completed — now set ticket to done
-        try {
-          const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
-          const resp = await fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
-          });
-          if (resp.ok) {
-            log.info({ ticketId: ephemeralTicketId }, 'After-work: ticket set to done');
-          } else {
-            log.warn({ ticketId: ephemeralTicketId, status: resp.status }, 'After-work: failed to set done');
-          }
-        } catch (err) {
-          log.warn({ err, ticketId: ephemeralTicketId }, 'After-work: error (non-fatal)');
+      // Always set ticket to done — reflect only writes to Obsidian, ticket_update is our responsibility
+      // Three cases: reflect succeeded, reflect threw, or timeout already fired
+      try {
+        const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
+        const resp = await fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
+        });
+        if (resp.ok) {
+          log.info({ ticketId: ephemeralTicketId, reflectDone }, 'After-work: ticket set to done');
+        } else if (resp.status === 409) {
+          // 409 = expected_status mismatch — timeout handler already set it to done
+          log.info({ ticketId: ephemeralTicketId }, 'After-work: ticket already done (timeout handler)');
+        } else {
+          log.warn({ ticketId: ephemeralTicketId, status: resp.status }, 'After-work: failed to set done');
         }
+      } catch (err) {
+        log.warn({ err, ticketId: ephemeralTicketId }, 'After-work: error (non-fatal)');
       }
     }
 
