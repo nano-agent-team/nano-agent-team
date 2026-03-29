@@ -1049,8 +1049,13 @@ export class AgentManager {
     }
 
     // Read shards referenced in manifest
+    const SAFE_SHARD = /^[a-zA-Z0-9_-]+$/;
     const shards = agent.manifest.shards ?? [];
     for (const shard of shards) {
+      if (!SAFE_SHARD.test(shard)) {
+        logger.warn({ agentId, shard }, 'Shard name contains invalid characters — skipping');
+        continue;
+      }
       const shardPath = path.join(hubDir, 'shards', `${shard}.md`);
       if (fs.existsSync(shardPath)) {
         policyPrefix += fs.readFileSync(shardPath, 'utf8') + '\n\n';
@@ -1278,12 +1283,7 @@ export class AgentManager {
     fs.mkdirSync(path.join(obsidianDir, 'Consciousness', 'agents'), { recursive: true });
     binds.push(`${obsidianDir}:/obsidian:rw`);
 
-    // Volume: ARCHITECTURE.md → /workspace/ARCHITECTURE.md (system knowledge for all agents)
-    // Mounted at /workspace/ (writable layer) not /workspace/agent/ (read-only COPY layer)
-    const archFile = path.join(hostDataDir, 'ARCHITECTURE.md');
-    if (fs.existsSync(archFile)) {
-      binds.push(`${archFile}:/workspace/ARCHITECTURE.md:ro`);
-    }
+    // ARCHITECTURE.md removed — now delivered via shards/architecture.md in system prompt
 
     // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
     if (agent.manifest.project_workspace && !agent.manifest.repo_path) {
