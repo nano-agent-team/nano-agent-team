@@ -1,8 +1,9 @@
 /**
  * Soul MCP Tools — atomic Obsidian file write + NATS kick for each tool.
  *
- * 8 tools: create_goal, create_idea, update_idea, create_plan,
- *          ask_user, answer_question, send_to_consciousness, journal_log
+ * 10 tools: create_goal, create_idea, update_idea, create_plan,
+ *           ask_user, answer_question, send_to_consciousness, journal_log,
+ *           dispatch_task, list_agents
  *
  * Each tool validates IDs, writes atomically (tmp + rename), and publishes
  * a NATS kick where applicable.
@@ -84,6 +85,13 @@ function errorResult(msg: string) {
  * @param agentId   ID of the calling agent (used as "from" in ask_user).
  * @param permissions Array of allowed tool names (e.g. ["create_goal","create_idea"]).
  */
+/** Agent info returned by listAgents callback */
+export interface AgentInfo {
+  id: string;
+  status: string;
+  description?: string;
+}
+
 export function registerSoulTools(
   server: McpServer,
   nc: NatsConnection,
@@ -91,9 +99,11 @@ export function registerSoulTools(
   agentId: string,
   permissions: string[] | '*',
   agentOutputs?: Record<string, string>,
+  listAgents?: () => AgentInfo[],
 ): void {
   const obsidianBase = path.join(dataDir, 'obsidian', 'Consciousness');
   const questionsBase = path.join(dataDir, 'questions');
+  let reflectCounter = 0;
 
   function allowed(toolName: string): boolean {
     if (permissions === '*') return true;
@@ -315,6 +325,24 @@ export function registerSoulTools(
             agent: agentId, type: 'user', summary: 'Question asked',
             from: agentId, to: 'user', subtype: 'question', timestamp: Date.now(),
           });
+
+          // Create a chat thread for this question
+          const threadDir = path.join(dataDir, 'chat', 'threads');
+          try {
+            fs.mkdirSync(threadDir, { recursive: true });
+            const threadId = `ask-${questionId}`;
+            const threadPath = path.join(threadDir, `${threadId}.json`);
+            const thread = {
+              id: threadId,
+              title: question.substring(0, 50),
+              messages: [{ role: 'agent', text: question, agentId, ts: Date.now() }],
+              pending: true,
+              questionId,
+              createdAt: Date.now(),
+            };
+            fs.writeFileSync(threadPath, JSON.stringify(thread, null, 2));
+          } catch { /* ignore thread creation failure */ }
+
           return textResult({ questionId, status: 'pending' });
         } catch (err: unknown) {
           return errorResult((err as Error).message);
@@ -419,6 +447,73 @@ export function registerSoulTools(
     );
   }
 
+  // ── journal_reflect ───────────────────────────────────────────────────────
+
+  if (allowed('journal_reflect')) {
+    server.tool(
+      'journal_reflect',
+      'Record self-reflection after completing a task. Appends learning to your agent profile in Obsidian.',
+      {
+        verdict_self: z.enum(['good', 'mixed', 'poor']).describe('Self-assessment of task performance'),
+        category: z.enum(['scope', 'quality', 'communication', 'process', 'tooling']).nullable().describe('Learning category, or null if noop'),
+        learning: z.string().nullable().describe('Specific actionable learning, or null if nothing new'),
+        task_summary: z.string().optional().describe('Brief description of the task that was completed'),
+      },
+      async ({ verdict_self, category, learning, task_summary }) => {
+        try {
+          const agentDir = path.join(obsidianBase, 'agents', agentId);
+          fs.mkdirSync(agentDir, { recursive: true });
+
+          const timestamp = new Date().toISOString();
+          const ticketId = process.env.EPHEMERAL_TICKET_ID ?? 'unknown';
+          const taskResult = process.env.EPHEMERAL_TASK_RESULT ?? 'done';
+          const taskSummary = task_summary ?? process.env.EPHEMERAL_TASK_SUMMARY ?? 'unknown';
+          const learningText = learning ?? 'null (noop)';
+          const categoryText = category ?? 'null';
+
+          const entry = [
+            `\n## ${timestamp} — ${ticketId} (${taskResult})`,
+            '',
+            `- **verdict_self:** ${verdict_self}`,
+            `- **category:** ${categoryText}`,
+            `- **task:** ${taskSummary}`,
+            `- **learning:** ${learningText}`,
+            '',
+            '---',
+            '',
+          ].join('\n');
+
+          const learningsPath = path.join(agentDir, 'learnings.md');
+          fs.appendFileSync(learningsPath, entry, 'utf-8');
+
+          // Emit activity for dashboard
+          emitActivity(nc, {
+            agent: agentId,
+            type: 'reflect',
+            summary: learning
+              ? `Reflect (${verdict_self}/${category}): ${learning.slice(0, 120)}`
+              : `Reflect (${verdict_self}): noop`,
+            timestamp: Date.now(),
+          });
+
+          // Track learning count — publish batch_ready when threshold reached
+          reflectCounter += 1;
+          if (reflectCounter >= 5) {
+            await publish(nc, 'soul.reflect.batch_ready', JSON.stringify({
+              count: reflectCounter,
+              timestamp,
+            }));
+            reflectCounter = 0;
+          }
+
+          return textResult({ ok: true, verdict_self, category, learning: !!learning });
+        } catch (err: unknown) {
+          return errorResult((err as Error).message);
+        }
+      },
+    );
+  }
+
   // ── evaluate_self ────────────────────────────────────────────────────────────
 
   if (allowed('evaluate_self')) {
@@ -496,6 +591,44 @@ export function registerSoulTools(
       });
 
       return { content: [{ type: 'text', text: `Dialogue continued on idea ${ideaId}, turn ${turnNum}.` }] };
+    });
+  }
+
+  // ── dispatch_task ───────────────────────────────────────────────────────────
+
+  if (allowed('dispatch_task')) {
+    server.tool('dispatch_task', 'Send a task to any agent by ID. Publishes to agent.{agentId}.inbox.', {
+      targetAgent: z.string().regex(SAFE_ID).describe('Agent ID to send the task to'),
+      payload: z.string().describe('JSON payload describing the task'),
+    }, async ({ targetAgent, payload }) => {
+      try { JSON.parse(payload); } catch { return errorResult('payload must be valid JSON'); }
+
+      if (listAgents) {
+        const agents = listAgents();
+        if (!agents.some(a => a.id === targetAgent)) {
+          return errorResult(`Agent "${targetAgent}" not found. Available: ${agents.map(a => a.id).join(', ')}`);
+        }
+      }
+
+      const subject = `agent.${targetAgent}.inbox`;
+      await publish(nc, subject, payload);
+      emitActivity(nc, {
+        agent: agentId, type: 'action',
+        summary: `Dispatched task to ${targetAgent}`, timestamp: Date.now(),
+      });
+      return textResult({ ok: true, targetAgent, subject });
+    });
+  }
+
+  // ── list_agents ─────────────────────────────────────────────────────────────
+
+  if (allowed('list_agents')) {
+    server.tool('list_agents', 'List all currently registered agents and their status.', {}, async () => {
+      if (!listAgents) {
+        return errorResult('list_agents not available in this context');
+      }
+      const agents = listAgents();
+      return textResult({ agents });
     });
   }
 }

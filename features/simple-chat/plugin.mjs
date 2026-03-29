@@ -21,18 +21,12 @@ export default {
     const { publishNats } = opts;
 
     // ── POST /api/chat/simple-chat ────────────────────────────────────────────
-    // agentId in body overrides default; fallback: first running stateful agent or 'foreman'
+    // agentId in body overrides default; fallback: chat-agent (always present in BASE_AGENTS)
     app.post('/api/chat/simple-chat', async (req, res) => {
       const { message, sessionId, agentId: bodyAgentId } = req.body ?? {};
       if (!message) return res.status(400).json({ error: '"message" required' });
 
-      // Resolve target agent: explicit > first running inbox agent > foreman
-      let targetAgent = bodyAgentId;
-      if (!targetAgent) {
-        const states = _manager.getStates?.() ?? [];
-        const running = states.find(s => s.status === 'running');
-        targetAgent = running?.agentId ?? 'foreman';
-      }
+      const targetAgent = bodyAgentId ?? 'chat-agent';
 
       const sid = sessionId ?? 'default';
       const streamSubject = `chat.stream.${sid}.${Date.now()}`;

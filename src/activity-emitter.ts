@@ -6,7 +6,7 @@ const sc = StringCodec();
 
 export interface ActivityEvent {
   agent: string;
-  type: 'thinking' | 'dialogue' | 'idea' | 'plan' | 'action' | 'user';
+  type: 'thinking' | 'dialogue' | 'idea' | 'plan' | 'action' | 'user' | 'reflect';
   entityId?: string;
   summary: string;
   from?: string;

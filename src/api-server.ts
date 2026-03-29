@@ -303,7 +303,7 @@ export async function createApiApp(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider; secretManager?: import('./secret-manager.js').SecretManager },
 ): Promise<express.Application> {
   const app = express();
   app.use(express.json());
@@ -663,6 +663,30 @@ export async function createApiApp(
     }
   });
 
+  // ── Hot-reload: re-read manifest + recreate consumer + restart container ──
+
+  app.post('/api/agents/:agentId/reload', async (req: Request, res: Response) => {
+    try {
+      const agentId = req.params.agentId;
+      if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+
+      const agent = manager.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: 'Agent not found' });
+
+      const lastRestart = restartCooldowns.get(agentId) ?? 0;
+      if (Date.now() - lastRestart < RESTART_COOLDOWN_MS) {
+        return res.status(429).json({ error: 'Reload cooldown active, please wait' });
+      }
+      restartCooldowns.set(agentId, Date.now());
+
+      await manager.reloadAgent(agentId);
+      res.json({ ok: true });
+    } catch (err) {
+      logger.error({ err }, 'POST /api/agents/:agentId/reload error');
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── Phase 5: Zero-downtime deploy ─────────────────────────────────────────
 
   app.post('/api/agents/:agentId/deploy', async (req: Request, res: Response) => {
@@ -877,6 +901,205 @@ export async function createApiApp(
         try {
           const data = activityCodec.decode(msg.data);
           res.write(`event: activity\ndata: ${data}\n\n`);
+        } catch { /* connection closed */ }
+      }
+    })();
+
+    req.on('close', () => {
+      sub.unsubscribe();
+    });
+  });
+
+  // ── Agent topology (for graph visualization) ─────────────────────────────
+  app.get('/api/agents/topology', (_req: Request, res: Response) => {
+    const agents = manager.getAllAgents().map(a => ({
+      id: a.manifest.id,
+      name: a.manifest.name ?? a.manifest.id,
+      description: a.manifest.description ?? '',
+      icon: (a.manifest as unknown as Record<string, unknown>).icon as string ?? '',
+      status: a.status,
+      subscribe_topics: a.manifest.subscribe_topics ?? [],
+      outputs: (a.manifest.outputs ?? []).map((o: { port: string; subject?: string }) => ({
+        port: o.port,
+        subject: o.subject ?? '',
+      })),
+    }));
+
+    // Build edges: output.subject of agent A matches subscribe_topic of agent B
+    const edges: Array<{ from: string; to: string; subject: string; port: string }> = [];
+    for (const src of agents) {
+      for (const output of src.outputs) {
+        if (!output.subject) continue;
+        for (const dst of agents) {
+          if (dst.id === src.id) continue;
+          const matches = dst.subscribe_topics.some((topic: string) => {
+            // Exact match or wildcard match (agent.*.task matches agent.foreman.task)
+            if (topic === output.subject) return true;
+            const regex = new RegExp('^' + topic.replace(/\./g, '\\.').replace(/\*/g, '[^.]+').replace(/>/g, '.+') + '$');
+            return regex.test(output.subject);
+          });
+          if (matches) {
+            edges.push({ from: src.id, to: dst.id, subject: output.subject, port: output.port });
+          }
+        }
+      }
+    }
+
+    res.json({ agents, edges });
+  });
+
+  // ── Secrets API ─────────────────────────────────────────────────────────────
+  if (opts.secretManager) {
+    const sm = opts.secretManager;
+
+    app.get('/api/secrets', (_req: Request, res: Response) => {
+      const keys = sm.listKeys();
+      const agents = manager.getAllAgents();
+      const required: Record<string, string[]> = {};
+      for (const a of agents) {
+        const reqs = (a.manifest as unknown as Record<string, unknown>).required_env as string[] | undefined ?? [];
+        if (reqs.length > 0) required[a.manifest.id] = reqs;
+      }
+      res.json({
+        secrets: keys.map(k => ({ key: k, set: true })),
+        required,
+      });
+    });
+
+    app.post('/api/secrets', (req: Request, res: Response) => {
+      const { key, value } = req.body ?? {};
+      if (!key || !value) return res.status(400).json({ error: 'key and value required' });
+      sm.set(key, value);
+      res.json({ ok: true, key });
+    });
+
+    app.delete('/api/secrets/:key', (req: Request, res: Response) => {
+      const key = req.params.key;
+      if (!/^[a-zA-Z0-9_-]+$/.test(key)) return res.status(400).json({ error: 'Invalid key' });
+      sm.delete(key);
+      res.json({ ok: true });
+    });
+  }
+
+  // ── Chat Threads API ────────────────────────────────────────────────────────
+  const CHAT_DIR = path.join(DATA_DIR, 'chat', 'threads');
+  fs.mkdirSync(CHAT_DIR, { recursive: true });
+
+  // Ensure main thread exists
+  const mainThreadPath = path.join(CHAT_DIR, 'main.json');
+  if (!fs.existsSync(mainThreadPath)) {
+    fs.writeFileSync(mainThreadPath, JSON.stringify({
+      id: 'main', title: 'General', messages: [], pending: false, createdAt: Date.now()
+    }, null, 2));
+  }
+
+  const SAFE_THREAD_ID = /^[a-zA-Z0-9_-]+$/;
+
+  function loadThread(id: string) {
+    if (!SAFE_THREAD_ID.test(id)) return null;
+    const p = path.join(CHAT_DIR, `${id}.json`);
+    if (!fs.existsSync(p)) return null;
+    return JSON.parse(fs.readFileSync(p, 'utf8'));
+  }
+
+  function saveThread(thread: Record<string, unknown>) {
+    const id = thread.id as string;
+    if (!SAFE_THREAD_ID.test(id)) throw new Error('Invalid thread ID');
+    fs.writeFileSync(path.join(CHAT_DIR, `${id}.json`), JSON.stringify(thread, null, 2));
+  }
+
+  // List threads
+  app.get('/api/chat/threads', (_req: Request, res: Response) => {
+    const files = fs.readdirSync(CHAT_DIR).filter(f => f.endsWith('.json'));
+    const threads = files.map(f => {
+      const t = JSON.parse(fs.readFileSync(path.join(CHAT_DIR, f), 'utf8'));
+      const msgs = t.messages ?? [];
+      const last = msgs.length > 0 ? msgs[msgs.length - 1] : null;
+      return { id: t.id, title: t.title, pending: t.pending ?? false, lastMessage: last, messageCount: msgs.length };
+    });
+    res.json(threads);
+  });
+
+  // Get thread messages
+  app.get('/api/chat/threads/:id/messages', (req: Request, res: Response) => {
+    const thread = loadThread(req.params.id);
+    if (!thread) return res.status(404).json({ error: 'Thread not found' });
+    res.json(thread.messages ?? []);
+  });
+
+  // Send message to thread (proxies to chat-agent via NATS)
+  app.post('/api/chat/threads/:id/messages', async (req: Request, res: Response) => {
+    const { text } = req.body ?? {};
+    if (!text) return res.status(400).json({ error: 'text required' });
+    const thread = loadThread(req.params.id);
+    if (!thread) return res.status(404).json({ error: 'Thread not found' });
+
+    // Append user message
+    thread.messages.push({ role: 'user', text, ts: Date.now() });
+    saveThread(thread);
+
+    // Send to chat-agent via NATS and collect response
+    const replySubject = `chat.thread.reply.${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const sub = nc.subscribe(replySubject, { max: 1 });
+
+    await publish(nc, 'agent.chat-agent.inbox', JSON.stringify({
+      text,
+      replySubject,
+      threadId: thread.id,
+    }));
+
+    // Wait for reply with 60s timeout
+    const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), 60_000));
+    const replyPromise = (async () => {
+      for await (const msg of sub) {
+        return JSON.parse(codec.decode(msg.data));
+      }
+      return null;
+    })();
+
+    const reply = await Promise.race([replyPromise, timeout]) as Record<string, unknown> | null;
+    sub.unsubscribe();
+
+    if (reply) {
+      const replyText = (reply.result as string) ?? '';
+      thread.messages.push({ role: 'agent', text: replyText, agentId: 'chat-agent', ts: Date.now() });
+      if (thread.pending) (thread as Record<string, unknown>).pending = false;
+      saveThread(thread);
+      res.json({ ok: true, reply: replyText });
+    } else {
+      saveThread(thread);
+      res.json({ ok: true, reply: '(timeout — agent is processing)' });
+    }
+  });
+
+  // Create new thread
+  app.post('/api/chat/threads', (req: Request, res: Response) => {
+    const { title } = req.body ?? {};
+    const id = `thread-${Date.now()}`;
+    const thread = { id, title: title ?? 'New Thread', messages: [], pending: false, createdAt: Date.now() };
+    saveThread(thread);
+    res.json(thread);
+  });
+
+  // ── Per-agent activity SSE stream ─────────────────────────────────────────
+  app.get('/api/agents/:agentId/stream', (req: Request, res: Response) => {
+    const { agentId } = req.params;
+    if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    });
+    res.write(':\n\n');
+
+    const sub = nc.subscribe(`activity.${agentId}`);
+    const actCodec = StringCodec();
+
+    (async () => {
+      for await (const msg of sub) {
+        try {
+          const data = actCodec.decode(msg.data);
+          res.write(`data: ${data}\n\n`);
         } catch { /* connection closed */ }
       }
     })();
@@ -1311,7 +1534,7 @@ export async function startApiServer(
   manager: AgentManager,
   nc: NatsConnection,
   configService: ConfigService,
-  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider },
+  opts: { setupMode: SetupMode; mcpManager?: McpManager; mcpGateway?: McpGateway; ticketRegistry?: TicketRegistry; workspaceProvider?: WorkspaceProvider; secretManager?: import('./secret-manager.js').SecretManager },
 ): Promise<http.Server> {
   const app = await createApiApp(manager, nc, configService, opts);
 

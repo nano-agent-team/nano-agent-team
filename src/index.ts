@@ -34,6 +34,7 @@ import { detectSetupMode, isSetupRequired } from './setup-detector.js';
 import { ConfigService } from './config-service.js';
 import { startEmbeddedNats, stopEmbeddedNats } from './nats-embedded.js';
 import { SecretStore } from './secret-store.js';
+import { SecretManager } from './secret-manager.js';
 import { McpServerRegistry } from './mcp-server-registry.js';
 import { McpManager } from './mcp-manager.js';
 import { WorkspaceProvider } from './workspace-provider.js';
@@ -148,6 +149,14 @@ async function bootstrapBaseAgents(
     return [];
   }
 
+  // Copy ARCHITECTURE.md from hub to data dir so agent-manager can mount it into containers
+  const hubArchPath = path.join(HUB_CACHE_DIR, 'ARCHITECTURE.md');
+  const dataArchPath = path.join(dataDir, 'ARCHITECTURE.md');
+  if (fs.existsSync(hubArchPath)) {
+    fs.copyFileSync(hubArchPath, dataArchPath);
+    logger.debug('Copied ARCHITECTURE.md from hub to data dir');
+  }
+
   const agents: Array<{ manifest: ReturnType<typeof loadManifest>; dir: string }> = [];
   for (const agentId of BASE_AGENTS) {
     const agent = installAgentFromHub(dataDir, agentId);
@@ -200,10 +209,11 @@ async function main(): Promise<void> {
   const { AlarmClock } = await import('./alarm-clock.js');
   const alarmClock = new AlarmClock(nc, DATA_DIR);
 
-  const manager = new AgentManager(nc, configService, alarmClock);
-
-  // ── Secret store + MCP server registry + MCP manager ────────────────────────
+  // ── Secret store + SecretManager + MCP server registry + MCP manager ────────
   const secretStore = new SecretStore();
+  const secretManager = new SecretManager(DATA_DIR);
+
+  const manager = new AgentManager(nc, configService, alarmClock, secretManager);
   const mcpServerRegistry = new McpServerRegistry();
   mcpServerRegistry.load();
   const mcpManager = new McpManager(secretStore);
@@ -251,6 +261,14 @@ async function main(): Promise<void> {
   const mcpGateway = new McpGateway(
     ticketRegistry,
     (agentId) => {
+      // Hot-reload: re-read manifest from disk on each request for fresh permissions
+      try {
+        const manifestPath = path.join(DATA_DIR, 'agents', agentId, 'manifest.json');
+        if (fs.existsSync(manifestPath)) {
+          const fresh = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          return fresh.mcp_permissions ?? {};
+        }
+      } catch { /* fallback to in-memory */ }
       const agent = manager.getAgent(agentId);
       return agent?.manifest.mcp_permissions ?? {};
     },
@@ -262,8 +280,23 @@ async function main(): Promise<void> {
     mcpServerRegistry,
     gatewayOpts,
     (agentId) => {
+      // Hot-reload: re-read manifest from disk for fresh output map
+      try {
+        const manifestPath = path.join(DATA_DIR, 'agents', agentId, 'manifest.json');
+        if (fs.existsSync(manifestPath)) {
+          const fresh = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+          return resolveOutputMap(fresh);
+        }
+      } catch { /* fallback to in-memory */ }
       const agent = manager.getAgent(agentId);
       return agent ? resolveOutputMap(agent.manifest) : {};
+    },
+    () => {
+      return manager.getAllAgents().map(a => ({
+        id: a.manifest.id,
+        status: a.status,
+        description: a.manifest.description ?? '',
+      }));
     },
   );
   mcpGateway.start(MCP_GATEWAY_PORT);
@@ -348,15 +381,21 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Floating timer: wake consciousness after 30 min of global silence ──────
+  // ── Floating timer: wake consciousness after configurable silence ────────
   {
-    const SILENCE_TIMEOUT_MS = 30 * 60 * 1000;
+    const silenceMinutes = (() => {
+      try {
+        const cfg = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'config.json'), 'utf8'));
+        return cfg.silenceTimeoutMinutes ?? 30;
+      } catch { return 30; }
+    })();
+    const SILENCE_TIMEOUT_MS = silenceMinutes * 60 * 1000;
     let silenceTimer: ReturnType<typeof setTimeout> | null = null;
 
     function resetSilenceTimer() {
       if (silenceTimer) clearTimeout(silenceTimer);
       silenceTimer = setTimeout(async () => {
-        logger.info('Global silence 30 min — waking consciousness');
+        logger.info('Global silence %d min — waking consciousness', silenceMinutes);
         try {
           await publish(nc, 'soul.consciousness.inbox', JSON.stringify({
             type: 'reflection', reason: 'Global silence. Read insights, check goals.', ts: Date.now(),
@@ -376,7 +415,7 @@ async function main(): Promise<void> {
 
   // ── 6. Start API server ─────────────────────────────────────────────────────
   // Settings feature is always loaded inside startApiServer
-  const httpServer = await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry, workspaceProvider });
+  const httpServer = await startApiServer(manager, nc, configService, { setupMode, mcpManager, mcpGateway, ticketRegistry, workspaceProvider, secretManager });
 
   // ── 6b. Post-restart deploy verification ──────────────────────────────────
   const pendingDeployPath = path.join(DATA_DIR, 'pending-deploy.json');

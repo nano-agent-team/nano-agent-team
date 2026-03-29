@@ -225,7 +225,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Write system prompt via provider
+  // System prompt assembled by agent-manager: constitution → shards → CLAUDE.md → team config → vault
   const systemPromptContent = AGENT_SYSTEM_PROMPT || (fs.existsSync(CLAUDE_MD_PATH) ? fs.readFileSync(CLAUDE_MD_PATH, 'utf8') : '');
   let systemPrompt = systemPromptContent || `# ${AGENT_ID}\n\nYou are ${AGENT_ID}, a helpful AI agent.\n`;
 
@@ -235,6 +235,45 @@ async function main(): Promise<void> {
   } catch (err) {
     log.error({ err, provider: PROVIDER_NAME }, 'Failed to write system prompt');
     process.exit(1);
+  }
+
+  // ── Reflect phase helpers ──────────────────────────────────────────────────
+  function buildReflectPrompt(taskSummary: string, taskResult: string, rejectionReason: string, prevLearnings: string): string {
+    return [
+      '## Reflect Phase',
+      '',
+      'You just completed a task. Review your work and call `journal_reflect`.',
+      '',
+      '### Task',
+      taskSummary,
+      '',
+      '### Result',
+      taskResult,
+      rejectionReason ? `**Rejection reason:** ${rejectionReason}` : '',
+      '',
+      '### Your Previous Learnings (last 10)',
+      prevLearnings || '_No previous learnings._',
+    ].join('\n');
+  }
+
+  function readLastLearnings(agentId: string, obsidianBase: string, maxEntries: number = 10): string {
+    const learningsPath = path.join(obsidianBase, 'Consciousness', 'agents', agentId, 'learnings.md');
+    try {
+      const content = fs.readFileSync(learningsPath, 'utf-8');
+      const entries = content.split(/^---$/m).filter(e => e.trim());
+      return entries.slice(-maxEntries).join('\n---\n');
+    } catch {
+      return '';
+    }
+  }
+
+  function readAgentProfile(agentId: string, obsidianBase: string): string {
+    const profilePath = path.join(obsidianBase, 'Consciousness', 'agents', agentId, 'profile.md');
+    try {
+      return fs.readFileSync(profilePath, 'utf-8');
+    } catch {
+      return '';
+    }
   }
 
   // ── Ephemeral mode: process a single task from env var, then exit ─────────
@@ -312,24 +351,79 @@ async function main(): Promise<void> {
       log.warn({ err }, 'Failed to write ephemeral result file');
     }
 
-    // ── After-work hook: set ticket to done (deterministic handoff) ──────
-    // Only on success — failed agents leave ticket in_progress for orphan detection
+    // ── Reflect phase: self-reflect after task completion ────────────────────
     const ephemeralTicketId = process.env.EPHEMERAL_TICKET_ID;
-    if (!errorSubtype && ephemeralTicketId) {
+    if (ephemeralTicketId) {
+      const taskSummary = (payload as Record<string, unknown>).text as string
+        ?? JSON.stringify(payloadForPrompt, null, 2).slice(0, 2000);
+      const taskResult = errorSubtype ? 'rejected' : 'done';
+      const prevLearnings = readLastLearnings(AGENT_ID, '/obsidian');
+      const profile = readAgentProfile(AGENT_ID, '/obsidian');
+      const reflectContext = profile
+        ? `${prevLearnings}\n\n### Your Learning Profile\n${profile}`
+        : prevLearnings;
+      const reflectPrompt = buildReflectPrompt(taskSummary, taskResult, errorSubtype ?? '', reflectContext);
+
+      log.info({ agentId: AGENT_ID, ticketId: ephemeralTicketId, taskResult }, 'Starting reflect phase');
+
+      // Ensure journal_reflect is available for the reflect phase
+      const reflectAllowedTools = AGENT_ALLOWED_TOOLS.length > 0
+        ? [...new Set([...AGENT_ALLOWED_TOOLS, 'mcp__soul__journal_reflect'])]
+        : undefined;
+
+      let reflectDone = false;
       try {
-        const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
-        const resp = await fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
-        });
-        if (resp.ok) {
-          log.info({ ticketId: ephemeralTicketId }, 'After-work: ticket set to done');
-        } else {
-          log.warn({ ticketId: ephemeralTicketId, status: resp.status }, 'After-work: failed to set done');
+        const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 60_000));
+
+        const reflectPromiseRun = (async () => {
+          const reflectRun = provider.run({
+            model: MODEL,
+            modelExplicit: MODEL_EXPLICIT,
+            cwd: '/workspace',
+            prompt: reflectPrompt,
+            maxTurns: 3,
+            systemPrompt: (systemPrompt || '') + '\n\nYou are in REFLECT PHASE. Call journal_reflect with your self-assessment. Do not do any other work.',
+            ...(reflectAllowedTools ? { allowedTools: reflectAllowedTools } : {}),
+            mcpServers: allMcpServers,
+          });
+
+          for await (const event of reflectRun) {
+            if (event.type === 'result') {
+              reflectDone = true;
+              log.info({ agentId: AGENT_ID }, 'Reflect phase completed');
+            }
+          }
+        })();
+
+        await Promise.race([reflectPromiseRun, timeoutPromise]);
+
+        if (!reflectDone) {
+          log.warn({ agentId: AGENT_ID }, 'Reflect phase timed out (60s)');
         }
       } catch (err) {
-        log.warn({ err, ticketId: ephemeralTicketId }, 'After-work: error (non-fatal)');
+        log.warn({ err, agentId: AGENT_ID }, 'Reflect phase failed');
+      }
+
+      // Only set ticket to done on SUCCESS — failed agents leave ticket in_progress for orphan detection
+      if (!errorSubtype) {
+        try {
+          const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
+          const resp = await fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
+          });
+          if (resp.ok) {
+            log.info({ ticketId: ephemeralTicketId, reflectDone }, 'After-work: ticket set to done');
+          } else if (resp.status === 409) {
+            // 409 = expected_status mismatch — concurrent update already set status
+            log.info({ ticketId: ephemeralTicketId }, 'After-work: ticket already updated (409 conflict)');
+          } else {
+            log.warn({ ticketId: ephemeralTicketId, status: resp.status }, 'After-work: failed to set done');
+          }
+        } catch (err) {
+          log.warn({ err, ticketId: ephemeralTicketId }, 'After-work: error (non-fatal)');
+        }
       }
     }
 
@@ -576,6 +670,7 @@ async function main(): Promise<void> {
 
       // ── Output validation: reset per-message tracking ─────────────────────
       let publishSignalCalled = false;
+      let lastThinkingEmit = 0;
 
       // ── Provider invocation ───────────────────────────────────────────────
       const existingSessionId = firstMessageOfLifecycle ? undefined : loadSessionId();
@@ -628,6 +723,18 @@ async function main(): Promise<void> {
             if (streamSubject) {
               nc.publish(streamSubject, codec.encode(JSON.stringify({ type: 'chunk', text: event.text })));
             }
+            // Debounced thinking activity for per-agent SSE stream
+            if (Date.now() - lastThinkingEmit > 5000) {
+              lastThinkingEmit = Date.now();
+              try {
+                nc.publish(`activity.${AGENT_ID}`, codec.encode(JSON.stringify({
+                  type: 'thinking',
+                  summary: 'Thinking...',
+                  preview: event.text.substring(0, 100),
+                  timestamp: Date.now(),
+                })));
+              } catch { /* ignore */ }
+            }
           } else if (event.type === 'tool_call') {
             currentTask = baseTask ? `${baseTask} → ${toolActivity(event.toolName)}` : toolActivity(event.toolName);
             publishHeartbeat();
@@ -640,9 +747,19 @@ async function main(): Promise<void> {
             // Output validation: track publish_signal calls
             // MCP tools have namespaced names: mcp__soul__publish_signal
             const bareName = event.toolName.replace(/^mcp__soul__/, '');
+            log.info({ agentId: AGENT_ID, toolName: event.toolName, bareName }, 'Tool call detected');
             if (bareName === 'publish_signal') {
               publishSignalCalled = true;
             }
+            // Publish activity event for per-agent SSE stream
+            try {
+              nc.publish(`activity.${AGENT_ID}`, codec.encode(JSON.stringify({
+                type: 'tool_call',
+                summary: toolActivity(event.toolName),
+                toolName: event.toolName,
+                timestamp: Date.now(),
+              })));
+            } catch { /* ignore activity publish failure */ }
           } else if (event.type === 'result') {
             result = event.result;
             errorSubtype = event.errorSubtype;
@@ -738,7 +855,7 @@ async function main(): Promise<void> {
       if (!outputValidationEnabled || publishSignalCalled) {
         msg.ack();
       } else {
-        log.warn({ agentId: AGENT_ID }, 'No publish_signal called — retrying once');
+        log.warn({ agentId: AGENT_ID, resultPreview: result.substring(0, 500) }, 'No publish_signal called — retrying once');
         const retryWorking = setInterval(() => { try { msg.working(); } catch {} }, 30_000);
         try {
           for await (const ev of provider.run({
@@ -757,6 +874,20 @@ async function main(): Promise<void> {
         msg.ack();
         if (!publishSignalCalled) {
           log.error({ agentId: AGENT_ID }, 'Agent swallowed message — no publish_signal after retry');
+          // Fallback: publish pipeline.task.failed so dispatcher knows the task didn't complete properly
+          try {
+            const failPayload = JSON.stringify({
+              agentId: AGENT_ID,
+              reason: 'Agent completed work but did not call publish_signal — likely missing mcp_permissions.soul',
+              resultPreview: result.substring(0, 300),
+              subject,
+              ts: Date.now(),
+            });
+            nc.publish('pipeline.task.failed', codec.encode(failPayload));
+            log.info({ agentId: AGENT_ID }, 'Published pipeline.task.failed fallback signal');
+          } catch (fallbackErr) {
+            log.error({ err: fallbackErr }, 'Failed to publish fallback signal');
+          }
         }
       }
 

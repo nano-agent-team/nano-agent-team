@@ -31,12 +31,13 @@ import {
 } from './config.js';
 import { logger } from './logger.js';
 import type { LoadedAgent, DispatchConfig } from './agent-registry.js';
-import { resolveTopicsForAgent, getInstanceId } from './agent-registry.js';
+import { resolveTopicsForAgent, getInstanceId, loadManifest, findBindingForAgent } from './agent-registry.js';
 import type { ConfigService, NanoConfig } from './config-service.js';
-import { codec } from './nats-client.js';
+import { codec, ensureConsumer } from './nats-client.js';
 import { WorkflowDispatcher } from './workflow-dispatcher.js';
 import type { AlarmClock } from './alarm-clock.js';
 import { emitActivity } from './activity-emitter.js';
+import type { SecretManager } from './secret-manager.js';
 
 interface ObservabilityConfig {
   level?: string;
@@ -120,6 +121,7 @@ export class AgentManager {
     private readonly nc: NatsConnection,
     private readonly configService?: ConfigService,
     alarmClock?: AlarmClock,
+    private readonly secretManager?: SecretManager,
   ) {
     // Default: connects via /var/run/docker.sock on Linux
     this.docker = new Dockerode();
@@ -166,8 +168,15 @@ export class AgentManager {
       // Read current token from credentials.json so SDK doesn't refuse to start.
       const credPath = path.join(DATA_DIR, 'credentials.json');
       try {
-        const creds = JSON.parse(fs.readFileSync(credPath, 'utf8')) as { oauth_token?: string };
-        if (creds.oauth_token) vars.push(`CLAUDE_CODE_OAUTH_TOKEN=${creds.oauth_token}`);
+        const creds = JSON.parse(fs.readFileSync(credPath, 'utf8')) as {
+          oauth_token?: string;
+          anthropic?: { apiKey?: string };
+        };
+        if (creds.oauth_token) {
+          vars.push(`CLAUDE_CODE_OAUTH_TOKEN=${creds.oauth_token}`);
+        } else if (creds.anthropic?.apiKey) {
+          vars.push(`ANTHROPIC_API_KEY=${creds.anthropic.apiKey}`);
+        }
       } catch { /* ignore */ }
       return vars;
     }
@@ -391,6 +400,13 @@ export class AgentManager {
 
   getAgent(agentId: string): LoadedAgent | undefined {
     return this.states.get(agentId)?.agent;
+  }
+
+  getAllAgents(): Array<LoadedAgent & { status: string }> {
+    return Array.from(this.states.values()).map(s => ({
+      ...s.agent,
+      status: s.status,
+    }));
   }
 
   /**
@@ -833,6 +849,34 @@ export class AgentManager {
   }
 
   /**
+   * Hot-reload an agent: re-read manifest from disk, recreate JetStream consumer,
+   * and restart the container with fresh env vars derived from the new manifest.
+   */
+  async reloadAgent(agentId: string): Promise<void> {
+    const state = this.states.get(agentId);
+    if (!state) {
+      throw new Error(`Agent '${agentId}' not found`);
+    }
+
+    const agentDir = path.join(DATA_DIR, 'agents', agentId);
+    const manifest = loadManifest(agentDir);
+    const binding = findBindingForAgent(agentId, path.join(DATA_DIR, 'teams'));
+    const topics = resolveTopicsForAgent(manifest, binding);
+
+    // Update in-memory agent definition
+    const updatedAgent: LoadedAgent = { manifest, dir: agentDir, binding };
+    state.agent = updatedAgent;
+
+    // Recreate JetStream consumer with (potentially changed) filter subjects
+    await ensureConsumer(this.nc, 'AGENTS', manifest.id, topics);
+
+    // Restart container so it picks up new env vars from updated manifest
+    await this.restartAgent(agentId);
+
+    logger.info({ agentId, topics }, 'Agent hot-reloaded from disk');
+  }
+
+  /**
    * Zero-downtime agent rollover (Phase 5).
    *
    * Sequence:
@@ -994,6 +1038,36 @@ export class AgentManager {
     let claudeMdContent = fs.existsSync(claudeMdPath)
       ? fs.readFileSync(claudeMdPath, 'utf8')
       : '';
+
+    // ── Constitution + Shards assembly ──────────────────────────────────────
+    // Read global constitution from hub mount
+    const hubDir = '/tmp/hub'; // hub is mounted as :ro
+    const constitutionPath = path.join(hubDir, 'constitution.md');
+    let policyPrefix = '';
+    if (fs.existsSync(constitutionPath)) {
+      policyPrefix = fs.readFileSync(constitutionPath, 'utf8') + '\n\n';
+    }
+
+    // Read shards referenced in manifest
+    const SAFE_SHARD = /^[a-zA-Z0-9_-]+$/;
+    const shards = agent.manifest.shards ?? [];
+    for (const shard of shards) {
+      if (!SAFE_SHARD.test(shard)) {
+        logger.warn({ agentId, shard }, 'Shard name contains invalid characters — skipping');
+        continue;
+      }
+      const shardPath = path.join(hubDir, 'shards', `${shard}.md`);
+      if (fs.existsSync(shardPath)) {
+        policyPrefix += fs.readFileSync(shardPath, 'utf8') + '\n\n';
+      } else {
+        logger.warn({ agentId, shard }, 'Shard file not found — skipping');
+      }
+    }
+
+    // Prepend policy to CLAUDE.md content (constitution > shards > CLAUDE.md)
+    if (policyPrefix) {
+      claudeMdContent = policyPrefix + claudeMdContent;
+    }
 
     // Resolve team config from config.json (set during team install)
     let repoUrl = process.env.REPO_URL ?? '';
@@ -1205,7 +1279,11 @@ export class AgentManager {
     // Volume: instance Obsidian vault → /obsidian (shared knowledge base for all agents)
     const obsidianDir = path.join(hostDataDir, 'obsidian');
     fs.mkdirSync(obsidianDir, { recursive: true });
+    // Ensure agents learning directory exists for journal_reflect
+    fs.mkdirSync(path.join(obsidianDir, 'Consciousness', 'agents'), { recursive: true });
     binds.push(`${obsidianDir}:/obsidian:rw`);
+
+    // ARCHITECTURE.md removed — now delivered via shards/architecture.md in system prompt
 
     // Volume: project root → /workspace/repo (for self-dev agents that edit the project itself)
     if (agent.manifest.project_workspace && !agent.manifest.repo_path) {
@@ -1214,6 +1292,15 @@ export class AgentManager {
       logger.debug({ agentId, projectRoot }, 'Mounting project workspace');
     } else if (agent.manifest.project_workspace && agent.manifest.repo_path) {
       logger.warn({ agentId }, 'project_workspace ignored: repo_path already set for /workspace/repo');
+    }
+
+    // ── Secret injection (deterministic agents only) ────────────────────────
+    if (this.secretManager) {
+      const resolved = this.secretManager.resolve(agent.manifest, isDeterministic);
+      env.push(...resolved.envVars);
+      for (const fm of resolved.fileMounts) {
+        binds.push(`${fm.hostPath}:${fm.containerPath}:ro`);
+      }
     }
 
     // Use per-agent image if specified in manifest.
