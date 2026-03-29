@@ -95,6 +95,11 @@ All notable changes to this project will be documented in this file.
 - **api:** Auto-reschedule alarms so consciousness what-next loop never stops ([`98941e4`](https://github.com/nano-agent-team/nano-agent-team/commit/98941e420506175ffdbbfcc4dc5e691fe70e8447))
 - **api:** Recurring alarms for all persistent agents, not just consciousness ([`dad2c02`](https://github.com/nano-agent-team/nano-agent-team/commit/dad2c0253dede607506802cebb31f8f934074a30))
 - **api:** Remove recurring alarms — wakeup agent will handle scheduling ([`4e67559`](https://github.com/nano-agent-team/nano-agent-team/commit/4e67559854ceef3008a5d34c813603dfbdcd25e9))
+- **security:** Path traversal, NATS injection, reply collision ([`7572f27`](https://github.com/nano-agent-team/nano-agent-team/commit/7572f27ed1f23d6e441b1e38b91f59d08d79e5db))
+- Mount ARCHITECTURE.md at /workspace/ (writable layer) ([`ef5d54a`](https://github.com/nano-agent-team/nano-agent-team/commit/ef5d54acddf380825c403e6864a64c83a94584dc))
+- Chat thread timeout + ARCHITECTURE.md in system prompt ([`4c19258`](https://github.com/nano-agent-team/nano-agent-team/commit/4c19258d5f2299cc108022b99bb5097dbffdb451))
+- Always set ticket to done after reflect phase ([`d8d8fe5`](https://github.com/nano-agent-team/nano-agent-team/commit/d8d8fe5eaf604809e2df19079a976925d18e6d3a))
+- Address review — task summary param, rejected reflect, counter race ([`152b306`](https://github.com/nano-agent-team/nano-agent-team/commit/152b306d911377efbc3cb1c3418e4397253c845f))
 
 ### Documentation
 
@@ -201,6 +206,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`9063fa9`](https://github.com/nano-agent-team/nano-agent-team/commit/9063fa9537709e51ea69026bd6e019e5bf0da134))
 - **ci:** Update CHANGELOG [skip ci] ([`d8e96c0`](https://github.com/nano-agent-team/nano-agent-team/commit/d8e96c0f322fd4ff3ff158584153da5b81d749a7))
 - **ci:** Update CHANGELOG [skip ci] ([`ab34e96`](https://github.com/nano-agent-team/nano-agent-team/commit/ab34e9687dc986ed6ff6edaf92360163b780bff3))
+- **ci:** Update CHANGELOG [skip ci] ([`430d9f5`](https://github.com/nano-agent-team/nano-agent-team/commit/430d9f513b4432522bf5148755c5d2bcea243312))
 
 ### Features
 
@@ -319,6 +325,23 @@ All notable changes to this project will be documented in this file.
 - **agent-runner:** Ack only after publish_signal called — output validation ([`b66ff16`](https://github.com/nano-agent-team/nano-agent-team/commit/b66ff16e1fcb5d6270f67cb61d2833bb6a8b756f))
 - **api:** Floating timer — wake consciousness after 30 min global silence ([`f372abf`](https://github.com/nano-agent-team/nano-agent-team/commit/f372abfcfe4d51c421427762fbb04d1644e553b6))
 - **api:** Add dispatcher to BASE_AGENTS ([`7dc9be9`](https://github.com/nano-agent-team/nano-agent-team/commit/7dc9be932057189f3ebd239744d4792a66955048))
+- Agent flow fixes — dynamic dispatch, fallback signals, topology API ([`aeff9be`](https://github.com/nano-agent-team/nano-agent-team/commit/aeff9be99854c13544ce8905d341f1a37cbccc46))
+- **api:** POST /api/agents/:id/reload — hot-reload manifest + consumer + container ([`5f4ccc1`](https://github.com/nano-agent-team/nano-agent-team/commit/5f4ccc17016f5cf28e8b2690ac1b5fe14724def0))
+- Configurable floating timer (config.silenceTimeoutMinutes, default 30) ([`6b3d839`](https://github.com/nano-agent-team/nano-agent-team/commit/6b3d8394fce69c979eaae4288b4bd4847866d2ae))
+- SecretManager — deterministic-only secret injection with file mounts ([`bc98cb0`](https://github.com/nano-agent-team/nano-agent-team/commit/bc98cb0103da5da3fc856a39c3cdd5f754968852))
+- **api:** /api/secrets CRUD endpoints + wire SecretManager ([`2e4a61c`](https://github.com/nano-agent-team/nano-agent-team/commit/2e4a61cca545d54125ea3333d0e802969483f31d))
+- **dashboard:** SoulApiClient — chat threads, agent stream, journal types ([`9c335af`](https://github.com/nano-agent-team/nano-agent-team/commit/9c335afa20ce0b811a8a9d8cc5c7077070d6dab2))
+- Mount ARCHITECTURE.md into agent containers ([`83ade3d`](https://github.com/nano-agent-team/nano-agent-team/commit/83ade3dee1ade2332ee0ae8615691871e2d243e5))
+- **api:** Chat thread CRUD + ask_user thread integration ([`b9ff63b`](https://github.com/nano-agent-team/nano-agent-team/commit/b9ff63bc7409cc00031ade11981aeedfceee0a5f))
+- **settings:** Secrets UI page — list, add, edit, delete secrets ([`8343471`](https://github.com/nano-agent-team/nano-agent-team/commit/83434715b74142c4a649e751ff797dd2fa6d01b9))
+- **dashboard:** AgentDetailPanel — left slide with live activity stream ([`a864d58`](https://github.com/nano-agent-team/nano-agent-team/commit/a864d5835367af87d6867679850292f9ca8c7790))
+- **dashboard:** ChatPanel — floating chat with thread tabs and pending badges ([`0952d74`](https://github.com/nano-agent-team/nano-agent-team/commit/0952d74e2f2777a68d5422b7fbe4714b12653b00))
+- Per-agent activity SSE stream ([`9ec8205`](https://github.com/nano-agent-team/nano-agent-team/commit/9ec8205ae673e1efa6c3421283283ef7b5cf5268))
+- Add shards field to AgentManifest interface ([`9fe0b62`](https://github.com/nano-agent-team/nano-agent-team/commit/9fe0b62368e0d00b348bda29e079c9ccda941a12))
+- Assemble constitution + shards into agent system prompt ([`e6639f5`](https://github.com/nano-agent-team/nano-agent-team/commit/e6639f55d1a50fc71682869c377ef7a0dddab7e5))
+- Add journal_reflect soul MCP tool for agent self-reflection ([`a4f0b72`](https://github.com/nano-agent-team/nano-agent-team/commit/a4f0b7260b9305aa2f3f14ef01e0c5c0066a003e))
+- Inject reflect phase in agent-runner before ticket_update(done) ([`bdfea0c`](https://github.com/nano-agent-team/nano-agent-team/commit/bdfea0c78a075c406b3874fec1d1fdff3263ee7f))
+- Ensure Obsidian agents/ dir exists for learnings ([`07b3624`](https://github.com/nano-agent-team/nano-agent-team/commit/07b3624bb0002e0b3d62c1e707d4c630fce53617))
 
 ### Miscellaneous
 
@@ -343,6 +366,9 @@ All notable changes to this project will be documented in this file.
 - Scrum-master reads pipeline config from own manifest ([`9d40fa1`](https://github.com/nano-agent-team/nano-agent-team/commit/9d40fa16a9c454bb816ca19c44d7a5ed3398c379))
 - Move agentTeamTools to module scope, rename to camelCase ([`4421a13`](https://github.com/nano-agent-team/nano-agent-team/commit/4421a13676d138527369bd94d6a57629fae26dd5))
 - **api:** Remove deprecated workspace_source:soul ephemeral code path ([`bbcfd4c`](https://github.com/nano-agent-team/nano-agent-team/commit/bbcfd4c64d5658d8e1d50aef49da69b1801fadc9))
+- **dashboard:** MindMapView — collapsible HTML tree, hide done/superseded ([`edf32dc`](https://github.com/nano-agent-team/nano-agent-team/commit/edf32dc8e601c7e5d44cb2763b9d29d4ff7734e4))
+- **dashboard:** Fullscreen layout, simplified sidebar ([`0cb2b1f`](https://github.com/nano-agent-team/nano-agent-team/commit/0cb2b1f717202bff99dfc44b54087077ece02e98))
+- Remove ARCHITECTURE.md mount, use shards system instead ([`5abf93c`](https://github.com/nano-agent-team/nano-agent-team/commit/5abf93ca1436e18b50984461e9bf677311b26eb9))
 
 ### Tests
 
