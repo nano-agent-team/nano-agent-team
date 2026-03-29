@@ -103,6 +103,7 @@ export function registerSoulTools(
 ): void {
   const obsidianBase = path.join(dataDir, 'obsidian', 'Consciousness');
   const questionsBase = path.join(dataDir, 'questions');
+  let reflectCounter = 0;
 
   function allowed(toolName: string): boolean {
     if (permissions === '*') return true;
@@ -456,8 +457,9 @@ export function registerSoulTools(
         verdict_self: z.enum(['good', 'mixed', 'poor']).describe('Self-assessment of task performance'),
         category: z.enum(['scope', 'quality', 'communication', 'process', 'tooling']).nullable().describe('Learning category, or null if noop'),
         learning: z.string().nullable().describe('Specific actionable learning, or null if nothing new'),
+        task_summary: z.string().optional().describe('Brief description of the task that was completed'),
       },
-      async ({ verdict_self, category, learning }) => {
+      async ({ verdict_self, category, learning, task_summary }) => {
         try {
           const agentDir = path.join(obsidianBase, 'agents', agentId);
           fs.mkdirSync(agentDir, { recursive: true });
@@ -465,7 +467,7 @@ export function registerSoulTools(
           const timestamp = new Date().toISOString();
           const ticketId = process.env.EPHEMERAL_TICKET_ID ?? 'unknown';
           const taskResult = process.env.EPHEMERAL_TASK_RESULT ?? 'done';
-          const taskSummary = process.env.EPHEMERAL_TASK_SUMMARY ?? 'unknown';
+          const taskSummary = task_summary ?? process.env.EPHEMERAL_TASK_SUMMARY ?? 'unknown';
           const learningText = learning ?? 'null (noop)';
           const categoryText = category ?? 'null';
 
@@ -495,20 +497,13 @@ export function registerSoulTools(
           });
 
           // Track learning count — publish batch_ready when threshold reached
-          const counterPath = path.join(obsidianBase, 'agents', '.reflect_counter');
-          let count = 0;
-          try {
-            count = parseInt(fs.readFileSync(counterPath, 'utf-8').trim(), 10) || 0;
-          } catch { /* file doesn't exist yet */ }
-          count += 1;
-          fs.writeFileSync(counterPath, String(count), 'utf-8');
-
-          if (count >= 5) {
+          reflectCounter += 1;
+          if (reflectCounter >= 5) {
             await publish(nc, 'soul.reflect.batch_ready', JSON.stringify({
-              count,
+              count: reflectCounter,
               timestamp,
             }));
-            fs.writeFileSync(counterPath, '0', 'utf-8');
+            reflectCounter = 0;
           }
 
           return textResult({ ok: true, verdict_self, category, learning: !!learning });

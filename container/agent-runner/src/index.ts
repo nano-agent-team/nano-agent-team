@@ -351,77 +351,79 @@ async function main(): Promise<void> {
       log.warn({ err }, 'Failed to write ephemeral result file');
     }
 
-    // ── Reflect phase: self-reflect before setting ticket to done ───────────
-    // Only on success — failed agents leave ticket in_progress for orphan detection
+    // ── Reflect phase: self-reflect after task completion ────────────────────
     const ephemeralTicketId = process.env.EPHEMERAL_TICKET_ID;
-    if (!errorSubtype && ephemeralTicketId) {
+    if (ephemeralTicketId) {
       const taskSummary = (payload as Record<string, unknown>).text as string
         ?? JSON.stringify(payloadForPrompt, null, 2).slice(0, 2000);
+      const taskResult = errorSubtype ? 'rejected' : 'done';
       const prevLearnings = readLastLearnings(AGENT_ID, '/obsidian');
       const profile = readAgentProfile(AGENT_ID, '/obsidian');
       const reflectContext = profile
         ? `${prevLearnings}\n\n### Your Learning Profile\n${profile}`
         : prevLearnings;
-      const reflectPrompt = buildReflectPrompt(taskSummary, 'done', '', reflectContext);
+      const reflectPrompt = buildReflectPrompt(taskSummary, taskResult, errorSubtype ?? '', reflectContext);
 
-      log.info({ agentId: AGENT_ID, ticketId: ephemeralTicketId }, 'Starting reflect phase');
+      log.info({ agentId: AGENT_ID, ticketId: ephemeralTicketId, taskResult }, 'Starting reflect phase');
+
+      // Ensure journal_reflect is available for the reflect phase
+      const reflectAllowedTools = AGENT_ALLOWED_TOOLS.length > 0
+        ? [...new Set([...AGENT_ALLOWED_TOOLS, 'mcp__soul__journal_reflect'])]
+        : undefined;
 
       let reflectDone = false;
       try {
-        const reflectTimeout = setTimeout(() => {
-          if (!reflectDone) {
-            log.warn({ agentId: AGENT_ID }, 'Reflect phase timed out (60s) — falling back to direct ticket_update');
-            const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
-            fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
-            }).catch(() => {});
-          }
-        }, 60_000);
+        const timeoutPromise = new Promise<void>((resolve) => setTimeout(resolve, 60_000));
 
-        const reflectRun = provider.run({
-          model: MODEL,
-          modelExplicit: MODEL_EXPLICIT,
-          cwd: '/workspace',
-          prompt: reflectPrompt,
-          maxTurns: 3,
-          systemPrompt: (systemPrompt || '') + '\n\nYou are in REFLECT PHASE. Call journal_reflect with your self-assessment. Do not do any other work.',
-          ...(AGENT_ALLOWED_TOOLS.length > 0 ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),
-          mcpServers: allMcpServers,
-        });
+        const reflectPromiseRun = (async () => {
+          const reflectRun = provider.run({
+            model: MODEL,
+            modelExplicit: MODEL_EXPLICIT,
+            cwd: '/workspace',
+            prompt: reflectPrompt,
+            maxTurns: 3,
+            systemPrompt: (systemPrompt || '') + '\n\nYou are in REFLECT PHASE. Call journal_reflect with your self-assessment. Do not do any other work.',
+            ...(reflectAllowedTools ? { allowedTools: reflectAllowedTools } : {}),
+            mcpServers: allMcpServers,
+          });
 
-        for await (const event of reflectRun) {
-          if (event.type === 'result') {
-            reflectDone = true;
-            log.info({ agentId: AGENT_ID }, 'Reflect phase completed');
+          for await (const event of reflectRun) {
+            if (event.type === 'result') {
+              reflectDone = true;
+              log.info({ agentId: AGENT_ID }, 'Reflect phase completed');
+            }
           }
+        })();
+
+        await Promise.race([reflectPromiseRun, timeoutPromise]);
+
+        if (!reflectDone) {
+          log.warn({ agentId: AGENT_ID }, 'Reflect phase timed out (60s)');
         }
-
-        clearTimeout(reflectTimeout);
       } catch (err) {
-        log.warn({ err, agentId: AGENT_ID }, 'Reflect phase failed — falling back to direct ticket_update');
+        log.warn({ err, agentId: AGENT_ID }, 'Reflect phase failed');
       }
 
-      // Always set ticket to done — reflect only writes to Obsidian, ticket_update is our responsibility
-      // Three cases: reflect succeeded, reflect threw, or timeout already fired
-      try {
-        const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
-        const resp = await fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
-        });
-        if (resp.ok) {
-          log.info({ ticketId: ephemeralTicketId, reflectDone }, 'After-work: ticket set to done');
-        } else if (resp.status === 409) {
-          // 409 = expected_status mismatch — timeout handler already set it to done
-          log.info({ ticketId: ephemeralTicketId }, 'After-work: ticket already done (timeout handler)');
-        } else {
-          log.warn({ ticketId: ephemeralTicketId, status: resp.status }, 'After-work: failed to set done');
+      // Only set ticket to done on SUCCESS — failed agents leave ticket in_progress for orphan detection
+      if (!errorSubtype) {
+        try {
+          const apiUrl = MCP_GATEWAY_URL.replace('/mcp', '') || 'http://host.docker.internal:3001';
+          const resp = await fetch(`${apiUrl}/api/tickets/${encodeURIComponent(ephemeralTicketId)}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'done', expected_status: 'in_progress', changed_by: AGENT_ID }),
+          });
+          if (resp.ok) {
+            log.info({ ticketId: ephemeralTicketId, reflectDone }, 'After-work: ticket set to done');
+          } else if (resp.status === 409) {
+            // 409 = expected_status mismatch — concurrent update already set status
+            log.info({ ticketId: ephemeralTicketId }, 'After-work: ticket already updated (409 conflict)');
+          } else {
+            log.warn({ ticketId: ephemeralTicketId, status: resp.status }, 'After-work: failed to set done');
+          }
+        } catch (err) {
+          log.warn({ err, ticketId: ephemeralTicketId }, 'After-work: error (non-fatal)');
         }
-      } catch (err) {
-        log.warn({ err, ticketId: ephemeralTicketId }, 'After-work: error (non-fatal)');
       }
     }
 
