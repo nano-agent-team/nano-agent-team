@@ -23,6 +23,26 @@ interface Connection {
 const agent = ref<AgentTopologyNode | null>(null);
 const connections = ref<Connection[]>([]);
 const activityEvents = ref<ExpandableEvent[]>([]);
+const panelWidth = ref(350);
+const isResizing = ref(false);
+
+function startResize(e: MouseEvent) {
+  isResizing.value = true;
+  const startX = e.clientX;
+  const startWidth = panelWidth.value;
+
+  const onMove = (ev: MouseEvent) => {
+    const delta = startX - ev.clientX;
+    panelWidth.value = Math.min(Math.max(startWidth + delta, 250), window.innerWidth * 0.5);
+  };
+  const onUp = () => {
+    isResizing.value = false;
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+  };
+  document.addEventListener('mousemove', onMove);
+  document.addEventListener('mouseup', onUp);
+}
 
 let cleanupStream: (() => void) | null = null;
 
@@ -34,6 +54,58 @@ function activityIcon(type: string): string {
     case 'signal': return '📡';
     default: return '•';
   }
+}
+
+function humanReadableLabel(event: ExpandableEvent): string {
+  const name = event.toolName ?? event.summary ?? event.type;
+
+  // MCP soul tools
+  const soulMap: Record<string, string> = {
+    'publish_signal': 'Signaling next step in pipeline',
+    'send_to_consciousness': 'Relaying to consciousness',
+    'create_idea': 'Creating new idea',
+    'create_goal': 'Setting a goal',
+    'create_plan': 'Writing action plan',
+    'update_idea': 'Updating idea status',
+    'dispatch_task': 'Dispatching task to agent',
+    'list_agents': 'Discovering available agents',
+    'journal_log': 'Writing to journal',
+    'journal_reflect': 'Self-reflecting',
+    'ask_user': 'Asking user a question',
+    'answer_question': 'Answering question',
+    'install_agent': 'Installing agent from hub',
+    'start_agent': 'Starting agent',
+    'stop_agent': 'Stopping agent',
+    'get_system_status': 'Checking system status',
+    'save_agent_definition': 'Creating agent definition',
+    'build_agent_image': 'Building agent image',
+  };
+
+  // Strip mcp__soul__ prefix
+  const bareName = name?.replace(/^mcp__soul__/, '') ?? '';
+  if (soulMap[bareName]) return soulMap[bareName];
+
+  // Built-in tools
+  const builtinMap: Record<string, string> = {
+    'Read': 'Reading file',
+    'Write': 'Writing file',
+    'Edit': 'Editing file',
+    'Glob': 'Searching files',
+    'Grep': 'Searching content',
+    'Bash': 'Running command',
+    'WebSearch': 'Searching the web',
+    'WebFetch': 'Fetching URL',
+    'Agent': 'Running sub-agent',
+    'ToolSearch': 'Looking up tools',
+  };
+  if (name && builtinMap[name]) return builtinMap[name];
+
+  // Event types
+  if (event.type === 'thinking') return 'Thinking...';
+  if (event.type === 'text') return 'Responding';
+
+  // Fallback: clean up the name
+  return bareName || name || event.type || 'Working';
 }
 
 function formatTime(ts: number): string {
@@ -84,8 +156,8 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <Transition name="panel-slide-left">
-    <div class="agent-detail-panel">
+    <div class="agent-detail-panel" :style="{ width: panelWidth + 'px' }">
+      <div class="resize-handle" @mousedown="startResize" />
       <!-- Header -->
       <div class="detail-header">
         <span class="detail-icon" :title="agent?.description">{{ agent?.icon || '🤖' }}</span>
@@ -113,11 +185,13 @@ onUnmounted(() => {
                  @click="ev.expanded = !ev.expanded">
               <div class="activity-summary">
                 <span class="activity-icon">{{ activityIcon(ev.type) }}</span>
-                <span class="activity-text">{{ ev.summary }}</span>
+                <span class="activity-text">{{ humanReadableLabel(ev) }}</span>
+                <span v-if="ev.inputPreview" class="activity-preview">{{ ev.inputPreview }}</span>
                 <span class="activity-time">{{ formatTime(ev.timestamp) }}</span>
               </div>
-              <div v-if="ev.expanded && ev.detail" class="activity-detail">
-                <pre>{{ ev.detail }}</pre>
+              <div v-if="ev.expanded && (ev.detail || ev.text)" class="activity-detail">
+                <pre v-if="ev.detail">{{ ev.detail }}</pre>
+                <pre v-if="ev.text" class="llm-text">{{ ev.text }}</pre>
               </div>
             </div>
             <div v-if="activityEvents.length === 0" class="empty">No activity yet</div>
@@ -125,34 +199,34 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
-  </Transition>
 </template>
 
 <style scoped>
 .agent-detail-panel {
-  position: fixed;
-  left: 0;
-  top: 0;
-  height: 100vh;
-  width: 340px;
-  background: #1e293b;
-  border-right: 1px solid #334155;
-  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
-  z-index: 40;
+  position: relative;
+  border-left: 1px solid #374151;
+  overflow-y: auto;
+  flex-shrink: 0;
+  background: #111827;
   display: flex;
   flex-direction: column;
   color: #e2e8f0;
   font-family: 'Inter', sans-serif;
 }
 
-/* Slide transition */
-.panel-slide-left-enter-active,
-.panel-slide-left-leave-active {
-  transition: transform 0.25s ease;
+.resize-handle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  background: transparent;
+  z-index: 10;
 }
-.panel-slide-left-enter-from,
-.panel-slide-left-leave-to {
-  transform: translateX(-100%);
+
+.resize-handle:hover {
+  background: #6366f1;
 }
 
 /* Header */
@@ -293,11 +367,27 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 
+.activity-preview {
+  color: #94a3b8;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
+}
+
 .activity-time {
   flex-shrink: 0;
   font-size: 10px;
   color: #64748b;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.llm-text {
+  color: #a5b4fc;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
 }
 
 .activity-detail {

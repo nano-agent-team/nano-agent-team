@@ -326,22 +326,18 @@ export function registerSoulTools(
             from: agentId, to: 'user', subtype: 'question', timestamp: Date.now(),
           });
 
-          // Create a chat thread for this question
+          // Write question to main chat thread so user sees it in dashboard
           const threadDir = path.join(dataDir, 'chat', 'threads');
           try {
             fs.mkdirSync(threadDir, { recursive: true });
-            const threadId = `ask-${questionId}`;
-            const threadPath = path.join(threadDir, `${threadId}.json`);
-            const thread = {
-              id: threadId,
-              title: question.substring(0, 50),
-              messages: [{ role: 'agent', text: question, agentId, ts: Date.now() }],
-              pending: true,
-              questionId,
-              createdAt: Date.now(),
-            };
-            fs.writeFileSync(threadPath, JSON.stringify(thread, null, 2));
-          } catch { /* ignore thread creation failure */ }
+            const mainThreadPath = path.join(threadDir, 'main.json');
+            if (fs.existsSync(mainThreadPath)) {
+              const mainThread = JSON.parse(fs.readFileSync(mainThreadPath, 'utf8'));
+              mainThread.messages.push({ role: 'agent', text: question, agentId, ts: Date.now() });
+              mainThread.pending = true;
+              fs.writeFileSync(mainThreadPath, JSON.stringify(mainThread, null, 2));
+            }
+          } catch { /* ignore thread write failure */ }
 
           return textResult({ questionId, status: 'pending' });
         } catch (err: unknown) {
@@ -601,7 +597,8 @@ export function registerSoulTools(
       targetAgent: z.string().regex(SAFE_ID).describe('Agent ID to send the task to'),
       payload: z.string().describe('JSON payload describing the task'),
     }, async ({ targetAgent, payload }) => {
-      try { JSON.parse(payload); } catch { return errorResult('payload must be valid JSON'); }
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(payload); } catch { return errorResult('payload must be valid JSON'); }
 
       if (listAgents) {
         const agents = listAgents();
@@ -610,8 +607,13 @@ export function registerSoulTools(
         }
       }
 
+      // Inject _replyTo so agent-runner sends completion/failure signals
+      // back to the dispatching agent instead of broadcasting
+      parsed._replyTo = `agent.${agentId}.inbox`;
+      parsed._dispatchedBy = agentId;
+
       const subject = `agent.${targetAgent}.inbox`;
-      await publish(nc, subject, payload);
+      await publish(nc, subject, JSON.stringify(parsed));
       emitActivity(nc, {
         agent: agentId, type: 'action',
         summary: `Dispatched task to ${targetAgent}`, timestamp: Date.now(),

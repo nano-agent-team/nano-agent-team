@@ -30,6 +30,8 @@ export interface ProviderRunOptions {
   extraEnv?: Record<string, string>;
   /** Extra tools to allow beyond the provider defaults (e.g. ["Skill"] for superpowers skills). */
   allowedTools?: string[];
+  /** Permission callback — captures tool inputs for activity stream. Always allows. */
+  canUseTool?: (toolName: string, input: Record<string, unknown>) => Promise<{ behavior: 'allow' }>;
 }
 
 export interface Provider {

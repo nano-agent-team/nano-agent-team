@@ -6,26 +6,29 @@
       <button :class="{ active: view === 'map' }" @click="view = 'map'">Mapa</button>
     </div>
 
-    <!-- Main area: Graph or Mind Map (fullscreen) -->
-    <AgentGraphView
-      v-if="view === 'graph'"
-      :activity="recentActivity"
-      @select-agent="selectedAgent = $event"
-      class="main-view"
-    />
-    <MindMapView
-      v-else
-      :state="soulState"
-      :activity="recentActivity"
-      class="main-view"
-    />
+    <!-- Main content area -->
+    <div class="soul-content">
+      <!-- Main area: Graph or Mind Map -->
+      <AgentGraphView
+        v-if="view === 'graph'"
+        :activity="recentActivity"
+        @select-agent="selectedAgent = $event"
+        class="main-view"
+      />
+      <MindMapView
+        v-else
+        :state="soulState"
+        :activity="recentActivity"
+        class="main-view"
+      />
 
-    <!-- Agent Detail Panel (left slide) -->
-    <AgentDetailPanel
-      v-if="selectedAgent"
-      :agentId="selectedAgent"
-      @close="selectedAgent = null"
-    />
+      <!-- Agent Detail Panel (right side, resizable) -->
+      <AgentDetailPanel
+        v-if="selectedAgent"
+        :agentId="selectedAgent"
+        @close="selectedAgent = null"
+      />
+    </div>
 
     <!-- Chat Panel (floating bottom-right) -->
     <ChatPanel />
@@ -74,11 +77,19 @@ onUnmounted(() => {
   height: 100%;
   overflow: hidden;
   background: #0f172a;
+  display: flex;
+  flex-direction: column;
+}
+
+.soul-content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
 }
 
 .main-view {
-  width: 100%;
-  height: 100%;
+  flex: 1;
+  min-width: 0;
 }
 
 .view-switcher {

@@ -63,6 +63,11 @@ export class ClaudeProvider implements Provider {
       sdkOptions.systemPrompt = options.systemPrompt;
     }
 
+    // Pass canUseTool callback for capturing tool inputs (activity stream enrichment)
+    if (options.canUseTool) {
+      sdkOptions.canUseTool = options.canUseTool;
+    }
+
     // Inject extra env vars (e.g. GH_TOKEN) without mutating process.env
     if (options.extraEnv && Object.keys(options.extraEnv).length > 0) {
       sdkOptions.env = { ...process.env, ...options.extraEnv };

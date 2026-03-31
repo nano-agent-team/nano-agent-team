@@ -2,7 +2,7 @@
  * Setup mode detection
  *
  * Determines whether the system needs to run through the setup wizard.
- * Called at startup before anything else.
+ * Called at startup and dynamically from health/status endpoints.
  */
 
 import { ConfigService } from './config-service.js';
@@ -12,8 +12,10 @@ export type SetupMode =
   | 'setup-incomplete'   // config exists but setupCompleted = false
   | 'ready';             // config valid, setupCompleted = true, provider present
 
-export async function detectSetupMode(dataDir: string): Promise<SetupMode> {
-  const svc = new ConfigService(dataDir);
+export async function detectSetupMode(dataDirOrService: string | ConfigService): Promise<SetupMode> {
+  const svc = typeof dataDirOrService === 'string'
+    ? new ConfigService(dataDirOrService)
+    : dataDirOrService;
 
   if (!svc.exists()) return 'first-run';
 

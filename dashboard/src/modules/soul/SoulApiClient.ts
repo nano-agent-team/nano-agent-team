@@ -6,7 +6,7 @@ export interface SoulState {
 export interface SoulGoal { id: string; title: string; description: string; status: string; ideas: SoulIdea[]; }
 export interface SoulIdea { id: string; title: string; description: string; status: string; conscience_verdict?: string; conscience_boundary?: string; conscience_reason?: string; dialogue: DialogueTurn[]; plans: SoulPlan[]; }
 export interface SoulPlan { id: string; title: string; description: string; status: string; tasks: SoulTask[]; }
-export interface SoulTask { id: string; title: string; done: boolean; }
+export interface SoulTask { id: string; title: string; done: boolean; status?: string; assignedTo?: string; content?: string; }
 export interface DialogueTurn { turn: number; agent: string; verdict?: string; boundary?: string; reason?: string; argument?: string; timestamp: string; }
 
 export interface ActivityEvent {
@@ -105,6 +105,8 @@ export interface AgentActivityEvent {
   summary: string;
   detail?: string;
   toolName?: string;
+  inputPreview?: string;
+  text?: string;
   timestamp: number;
 }
 

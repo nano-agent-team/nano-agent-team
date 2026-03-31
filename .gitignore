@@ -20,3 +20,4 @@ credentials.json
 .worktrees/
 data.self-dev-pipeline/
 data.self-dev-pipeline/
+.auth-backup/

@@ -28,7 +28,7 @@ import { publish, ensureConsumer } from './nats-client.js';
 import { isTracingEnabled } from './tracing/init.js';
 import type { AgentManager } from './agent-manager.js';
 import type { ConfigService } from './config-service.js';
-import type { SetupMode } from './setup-detector.js';
+import { detectSetupMode, type SetupMode } from './setup-detector.js';
 import type { McpManager } from './mcp-manager.js';
 import type { McpGateway } from './mcp-gateway.js';
 import type { WorkspaceProvider } from './workspace-provider.js';
@@ -518,14 +518,21 @@ export async function createApiApp(
     }
   });
 
+  // ── Dynamic setup mode detection ─────────────────────────────────────────
+  // Setup mode is re-read from config on every request so it reflects
+  // changes made by setup_complete MCP tool without requiring a restart.
+  const getCurrentSetupMode = async (): Promise<SetupMode> => {
+    return detectSetupMode(configService);
+  };
+
   // ── Core health endpoint ──────────────────────────────────────────────────
 
-  app.get('/api/health', (_req: Request, res: Response) => {
+  app.get('/api/health', async (_req: Request, res: Response) => {
     try {
       const agents = manager.getStates();
       res.json({
         status: 'ok',
-        setupMode: opts.setupMode,
+        setupMode: await getCurrentSetupMode(),
         agents,
         ts: Date.now(),
       });
@@ -1224,10 +1231,10 @@ export async function createApiApp(
     res.status(403).json({ error: 'Forbidden' });
   });
 
-  app.get('/internal/status', (_req: Request, res: Response) => {
+  app.get('/internal/status', async (_req: Request, res: Response) => {
     try {
       res.json({
-        setupMode: opts.setupMode,
+        setupMode: await getCurrentSetupMode(),
         agents: manager.getStates(),
         mcpServers: opts.mcpManager?.getStates() ?? [],
         ts: Date.now(),
@@ -1242,8 +1249,21 @@ export async function createApiApp(
     try {
       const { agentId } = req.params;
       if (!isValidAgentId(agentId)) return res.status(400).json({ error: 'Invalid agent ID' });
-      const agent = manager.getAgent(agentId);
-      if (!agent) return res.status(404).json({ error: `Agent '${agentId}' not found` });
+      let agent = manager.getAgent(agentId);
+      if (!agent) {
+        // Agent not in manager memory — try loading from disk (freshly installed/created)
+        const agentDir = path.join(DATA_DIR, 'agents', agentId);
+        if (fs.existsSync(path.join(agentDir, 'manifest.json'))) {
+          const { loadManifest } = await import('./agent-registry.js');
+          const manifest = loadManifest(agentDir);
+          agent = { manifest, dir: agentDir };
+          const topics = resolveTopicsForAgent(manifest);
+          await ensureConsumer(nc, 'AGENTS', manifest.id, topics);
+          logger.info({ agentId }, 'Loading freshly installed agent from disk');
+        } else {
+          return res.status(404).json({ error: `Agent '${agentId}' not found` });
+        }
+      }
       await manager.startAgent(agent);
       res.json({ ok: true, agentId });
     } catch (err) {
@@ -1538,13 +1558,25 @@ export async function startApiServer(
 ): Promise<http.Server> {
   const app = await createApiApp(manager, nc, configService, opts);
 
-  // Subscribe to chat.push for proactive messages from chat agent → dashboard SSE
+  // Subscribe to chat.push for proactive messages from chat agent → dashboard SSE + main thread
   const chatPushSub = nc.subscribe('chat.push');
   (async () => {
     for await (const msg of chatPushSub) {
       try {
         const data = JSON.parse(codec.decode(msg.data)) as { text?: string; from?: string };
         emitSseEvent('chat-push', data);
+        // Also persist to main chat thread so messages appear in chat history
+        if (data.text) {
+          try {
+            const chatDir = path.join(DATA_DIR, 'chat', 'threads');
+            const mainPath = path.join(chatDir, 'main.json');
+            if (fs.existsSync(mainPath)) {
+              const thread = JSON.parse(fs.readFileSync(mainPath, 'utf8'));
+              thread.messages.push({ role: 'agent', text: data.text, agentId: data.from ?? 'system', ts: Date.now() });
+              fs.writeFileSync(mainPath, JSON.stringify(thread, null, 2));
+            }
+          } catch { /* ignore */ }
+        }
         logger.debug({ from: data.from }, 'Chat push message broadcast via SSE');
       } catch {
         logger.warn('Invalid chat.push payload');

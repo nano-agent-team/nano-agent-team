@@ -12,7 +12,7 @@ interface DialogueTurn {
   timestamp: string;
 }
 
-interface SoulTask { id: string; title: string; done: boolean; }
+interface SoulTask { id: string; title: string; done: boolean; status?: string; assignedTo?: string; content?: string; }
 interface SoulPlan { id: string; title: string; description: string; status: string; tasks: SoulTask[]; ideaId?: string; }
 interface SoulIdea {
   id: string; title: string; description: string; status: string;
@@ -68,7 +68,8 @@ export function getSoulState(dataDir: string, filters?: { status?: string; since
 
   const goals = parseDir<SoulGoal>(path.join(obsidianDir, 'goals'), parseGoalFile);
   const ideas = parseDir<SoulIdea>(path.join(obsidianDir, 'ideas'), parseIdeaFile);
-  const plans = parseDir<SoulPlan>(path.join(obsidianDir, 'plans'), parsePlanFile);
+  const tasksDir = path.join(obsidianDir, 'tasks');
+  const plans = parseDir<SoulPlan>(path.join(obsidianDir, 'plans'), (filePath) => parsePlanFile(filePath, tasksDir));
 
   // Build tree: link ideas to goals, plans to ideas
   const linkedIdeaIds = new Set<string>();
@@ -139,14 +140,14 @@ function parseIdeaFile(filePath: string): SoulIdea | null {
   return { id, title, description, status, conscience_verdict, conscience_boundary, conscience_reason, dialogue, plans: [], goalId };
 }
 
-function parsePlanFile(filePath: string): SoulPlan | null {
+function parsePlanFile(filePath: string, tasksDir: string): SoulPlan | null {
   const content = fs.readFileSync(filePath, 'utf-8');
   const id = path.basename(filePath, '.md');
   const title = resolveTitle(content, id);
   const description = extractBody(content);
   const status = extractField(content, 'status') || 'pending';
   const ideaId = extractField(content, 'idea');
-  const tasks = parseTasks(content);
+  const tasks = parseTasks(content, id, tasksDir);
   return { id, title, description, status, tasks, ideaId };
 }
 
@@ -198,13 +199,52 @@ function parseDialogue(content: string): DialogueTurn[] {
   return turns;
 }
 
-function parseTasks(content: string): SoulTask[] {
-  const tasks: SoulTask[] = [];
-  const regex = /- \[([ x])\] (.+)/g;
-  let match;
-  let idx = 0;
-  while ((match = regex.exec(content)) !== null) {
-    tasks.push({ id: `task-${idx++}`, title: match[2].trim(), done: match[1] === 'x' });
+function parseFrontmatter(content: string): Record<string, string> {
+  const fm: Record<string, string> = {};
+  const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
+  if (!fmMatch) return fm;
+  for (const line of fmMatch[1].split('\n')) {
+    const colon = line.indexOf(':');
+    if (colon > 0) {
+      fm[line.substring(0, colon).trim()] = line.substring(colon + 1).trim();
+    }
   }
+  return fm;
+}
+
+function parseTasks(planContent: string, planId: string, tasksDir: string): SoulTask[] {
+  const tasks: SoulTask[] = [];
+
+  // Read task files from /obsidian/Consciousness/tasks/ matching this planId
+  if (fs.existsSync(tasksDir)) {
+    for (const file of fs.readdirSync(tasksDir)) {
+      if (!file.endsWith('.md')) continue;
+      try {
+        const content = fs.readFileSync(path.join(tasksDir, file), 'utf8');
+        const fm = parseFrontmatter(content);
+        if (fm.planId !== planId && !file.startsWith(`task-${planId}`)) continue;
+        const body = extractBody(content);
+        tasks.push({
+          id: fm.id ?? file.replace('.md', ''),
+          title: fm.title ?? file.replace('.md', ''),
+          done: fm.status === 'completed',
+          status: fm.status,
+          assignedTo: fm.assignedTo,
+          content: body || undefined,
+        });
+      } catch { /* skip malformed */ }
+    }
+  }
+
+  // Fallback: parse checkbox items from plan content (legacy format)
+  if (tasks.length === 0) {
+    const regex = /- \[([ x])\] (.+)/g;
+    let match;
+    let idx = 0;
+    while ((match = regex.exec(planContent)) !== null) {
+      tasks.push({ id: `task-${idx++}`, title: match[2].trim(), done: match[1] === 'x' });
+    }
+  }
+
   return tasks;
 }

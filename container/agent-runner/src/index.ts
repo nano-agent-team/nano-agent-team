@@ -64,7 +64,54 @@ const SESSION_TYPE = (() => {
 const WAIT_FOR_START_SIGNAL = process.env.WAIT_FOR_START_SIGNAL === 'true';
 const CLAUDE_MD_PATH = '/workspace/agent/CLAUDE.md';
 const AGENT_SYSTEM_PROMPT = process.env.AGENT_SYSTEM_PROMPT ?? '';
-const AGENT_ALLOWED_TOOLS = (process.env.AGENT_ALLOWED_TOOLS ?? '').split(',').filter(Boolean);
+// ─── Tool whitelist ──────────────────────────────────────────────────────────
+// Whitelist model: if AGENT_ALLOWED_TOOLS is set (even empty), only those tools
+// are available. Manifest declares abstract capabilities; we map to SDK tools.
+
+/** Map abstract capabilities to concrete Claude Code SDK tool names */
+const CAPABILITY_MAP: Record<string, string[]> = {
+  file_read:  ['Read', 'Glob', 'Grep'],
+  file_write: ['Write', 'Edit'],
+  shell:      ['Bash'],
+  web:        ['WebSearch', 'WebFetch'],
+};
+
+function resolveAllowedTools(): string[] | null {
+  const raw = process.env.AGENT_ALLOWED_TOOLS;
+  if (raw === undefined) return null; // env var not set → legacy (all tools)
+
+  // Expand capabilities to SDK tools
+  const sdkTools: string[] = [];
+  for (const cap of raw.split(',').filter(Boolean)) {
+    const mapped = CAPABILITY_MAP[cap];
+    if (mapped) {
+      sdkTools.push(...mapped);
+    } else {
+      // Not a capability — pass through as-is (direct SDK tool name)
+      sdkTools.push(cap);
+    }
+  }
+
+  // Expand MCP permissions to SDK MCP tool names
+  // Format: "soul:publish_signal,journal_log;management:get_system_status"
+  const mcpRaw = process.env.AGENT_MCP_PERMISSIONS;
+  if (mcpRaw) {
+    for (const part of mcpRaw.split(';').filter(Boolean)) {
+      const [_ns, toolsStr] = part.split(':');
+      if (!toolsStr) continue;
+      if (toolsStr === '*') continue; // wildcard — can't enumerate, gateway handles filtering
+      // All MCP namespaces route through the 'soul' MCP server key in agent-runner
+      const MCP_SERVER_KEY = 'soul';
+      for (const tool of toolsStr.split(',').filter(Boolean)) {
+        sdkTools.push(`mcp__${MCP_SERVER_KEY}__${tool}`);
+      }
+    }
+  }
+
+  return sdkTools;
+}
+
+const AGENT_ALLOWED_TOOLS = resolveAllowedTools();
 const SESSION_FILE = '/workspace/sessions/session_id';
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const DB_PATH = process.env.DB_PATH ?? '/workspace/db/nano-agent-team.db';
@@ -108,6 +155,10 @@ const allMcpServers: Record<string, McpServerConfig> = {
 
 // Output validation: check if agent has declared outputs in manifest
 let outputValidationEnabled = false;
+// If agent has publish_signal in MCP permissions, it's responsible for its own signaling.
+// Fallback pipeline.task.failed should NOT be sent — it causes self-loops when the agent
+// also subscribes to pipeline.task.failed (e.g. dispatcher).
+let hasPublishSignalPermission = false;
 try {
   const manifestPath = '/workspace/agent/manifest.json';
   if (fs.existsSync(manifestPath)) {
@@ -117,6 +168,11 @@ try {
       outputValidationEnabled = true; // legacy format
     } else {
       outputValidationEnabled = hasOutputs;
+    }
+    // Check if agent has publish_signal in soul MCP permissions
+    const soulPerms = manifest.mcp_permissions?.soul;
+    if (Array.isArray(soulPerms) && soulPerms.includes('publish_signal')) {
+      hasPublishSignalPermission = true;
     }
   }
 } catch {
@@ -316,8 +372,9 @@ async function main(): Promise<void> {
         maxTurns: 0, // unlimited — watchdog agent will handle stuck loops in the future
         systemPrompt: claudeMdContent || undefined,
         ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
-        ...(AGENT_ALLOWED_TOOLS.length > 0 ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),
+        ...(AGENT_ALLOWED_TOOLS !== null ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),
         mcpServers: allMcpServers,
+        canUseTool: captureToolInput,
       });
 
       for await (const event of providerRun) {
@@ -367,7 +424,7 @@ async function main(): Promise<void> {
       log.info({ agentId: AGENT_ID, ticketId: ephemeralTicketId, taskResult }, 'Starting reflect phase');
 
       // Ensure journal_reflect is available for the reflect phase
-      const reflectAllowedTools = AGENT_ALLOWED_TOOLS.length > 0
+      const reflectAllowedTools = AGENT_ALLOWED_TOOLS !== null
         ? [...new Set([...AGENT_ALLOWED_TOOLS, 'mcp__soul__journal_reflect'])]
         : undefined;
 
@@ -479,6 +536,34 @@ async function main(): Promise<void> {
       TodoRead: 'reading todos',
     };
     return map[toolName] ?? toolName;
+  }
+
+  /** Extract a short preview of tool input for activity stream. */
+  function toolInputPreview(toolName: string, input: Record<string, unknown>): string | undefined {
+    const name = toolName.replace(/^mcp__\w+__/, '');
+    switch (name) {
+      case 'WebFetch': return (input.url as string)?.substring(0, 200);
+      case 'WebSearch': return (input.query as string)?.substring(0, 100);
+      case 'Read': return (input.file_path as string)?.replace(/^\/workspace\//, '');
+      case 'Write': return (input.file_path as string)?.replace(/^\/workspace\//, '');
+      case 'Edit': return (input.file_path as string)?.replace(/^\/workspace\//, '');
+      case 'Bash': return (input.command as string)?.substring(0, 100);
+      case 'dispatch_task': return `→ ${input.targetAgent ?? '?'}`;
+      case 'publish_signal': return `output: ${(JSON.parse((input.payload as string) ?? '{}') as Record<string, unknown>).output ?? '?'}`;
+      case 'create_idea': return (input.title as string)?.substring(0, 80);
+      case 'create_plan': return (input.title as string)?.substring(0, 80);
+      default: return undefined;
+    }
+  }
+
+  /** Last tool input — captured by canUseTool, read by tool_call event handler. */
+  let lastToolInput: { toolName: string; preview?: string } | null = null;
+
+  /** canUseTool callback — captures tool input for activity stream. Always allows. */
+  async function captureToolInput(toolName: string, input: Record<string, unknown>): Promise<{ behavior: 'allow' }> {
+    const preview = toolInputPreview(toolName, input);
+    lastToolInput = { toolName, preview };
+    return { behavior: 'allow' };
   }
 
   heartbeatTimer = setInterval(() => {
@@ -619,6 +704,10 @@ async function main(): Promise<void> {
         continue;
       }
 
+      // ── Extract dispatch metadata ─────────────────────────────────────
+      const replyTo = (payload as Record<string, unknown>)._replyTo as string | undefined;
+      const dispatchedBy = (payload as Record<string, unknown>)._dispatchedBy as string | undefined;
+
       // ── Mark agent as busy ──────────────────────────────────────────────
       const ticketId = (payload as Record<string, unknown>).ticket_id as string | undefined;
       const ticketTitle = ((payload as Record<string, unknown>).ticket as Record<string, unknown>)?.title as string | undefined
@@ -711,8 +800,9 @@ async function main(): Promise<void> {
           maxTurns: 0, // unlimited — watchdog agent will handle stuck loops in the future
           systemPrompt: claudeMdContent || undefined,
           ...(ghToken ? { extraEnv: { GH_TOKEN: ghToken } } : {}),
-          ...(AGENT_ALLOWED_TOOLS.length > 0 ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),
+          ...(AGENT_ALLOWED_TOOLS !== null ? { allowedTools: AGENT_ALLOWED_TOOLS } : {}),
           mcpServers: allMcpServers,
+          canUseTool: captureToolInput,
         });
 
         for await (const event of providerRun) {
@@ -723,14 +813,14 @@ async function main(): Promise<void> {
             if (streamSubject) {
               nc.publish(streamSubject, codec.encode(JSON.stringify({ type: 'chunk', text: event.text })));
             }
-            // Debounced thinking activity for per-agent SSE stream
-            if (Date.now() - lastThinkingEmit > 5000) {
+            // Stream thinking text to activity feed (debounced — every 2s for real-time feel)
+            if (Date.now() - lastThinkingEmit > 2000) {
               lastThinkingEmit = Date.now();
               try {
                 nc.publish(`activity.${AGENT_ID}`, codec.encode(JSON.stringify({
                   type: 'thinking',
                   summary: 'Thinking...',
-                  preview: event.text.substring(0, 100),
+                  text: event.text.substring(0, 500),
                   timestamp: Date.now(),
                 })));
               } catch { /* ignore */ }
@@ -751,12 +841,15 @@ async function main(): Promise<void> {
             if (bareName === 'publish_signal') {
               publishSignalCalled = true;
             }
-            // Publish activity event for per-agent SSE stream
+            // Publish activity event for per-agent SSE stream (with input preview from canUseTool)
             try {
+              const inputPreview = lastToolInput?.toolName === event.toolName ? lastToolInput.preview : undefined;
+              lastToolInput = null;
               nc.publish(`activity.${AGENT_ID}`, codec.encode(JSON.stringify({
                 type: 'tool_call',
                 summary: toolActivity(event.toolName),
                 toolName: event.toolName,
+                inputPreview,
                 timestamp: Date.now(),
               })));
             } catch { /* ignore activity publish failure */ }
@@ -844,6 +937,25 @@ async function main(): Promise<void> {
       replySpan?.end();
       processSpan?.end();
 
+      // ── Targeted dispatch reply: always notify dispatcher if _replyTo present ──
+      if (replyTo) {
+        const dispatchReply = JSON.stringify({
+          type: publishSignalCalled ? 'task_done' : 'task_failed',
+          agentId: AGENT_ID,
+          ...(publishSignalCalled ? {} : { reason: 'Agent did not call publish_signal' }),
+          resultPreview: result.substring(0, 300),
+          subject,
+          _dispatchedBy: dispatchedBy,
+          ts: Date.now(),
+        });
+        try {
+          nc.publish(replyTo, codec.encode(dispatchReply));
+          log.info({ agentId: AGENT_ID, replyTo, type: publishSignalCalled ? 'task_done' : 'task_failed' }, 'Sent targeted dispatch reply');
+        } catch (err) {
+          log.error({ err, replyTo }, 'Failed to send targeted dispatch reply');
+        }
+      }
+
       // Mark agent as idle
       isBusy = false;
       baseTask = '';
@@ -873,20 +985,23 @@ async function main(): Promise<void> {
         clearInterval(retryWorking);
         msg.ack();
         if (!publishSignalCalled) {
-          log.error({ agentId: AGENT_ID }, 'Agent swallowed message — no publish_signal after retry');
-          // Fallback: publish pipeline.task.failed so dispatcher knows the task didn't complete properly
-          try {
-            const failPayload = JSON.stringify({
-              agentId: AGENT_ID,
-              reason: 'Agent completed work but did not call publish_signal — likely missing mcp_permissions.soul',
-              resultPreview: result.substring(0, 300),
-              subject,
-              ts: Date.now(),
-            });
-            nc.publish('pipeline.task.failed', codec.encode(failPayload));
-            log.info({ agentId: AGENT_ID }, 'Published pipeline.task.failed fallback signal');
-          } catch (fallbackErr) {
-            log.error({ err: fallbackErr }, 'Failed to publish fallback signal');
+          log.warn({ agentId: AGENT_ID, hasPublishSignalPermission, replyTo }, 'Agent did not call publish_signal');
+          // Legacy broadcast only for messages without _replyTo (not dispatched via dispatch_task)
+          if (!replyTo) {
+            try {
+              const failPayload = JSON.stringify({
+                type: 'task_failed',
+                agentId: AGENT_ID,
+                reason: 'Agent completed work but did not call publish_signal',
+                resultPreview: result.substring(0, 300),
+                subject,
+                ts: Date.now(),
+              });
+              nc.publish('pipeline.task.failed', codec.encode(failPayload));
+              log.info({ agentId: AGENT_ID }, 'Published pipeline.task.failed legacy broadcast (no _replyTo)');
+            } catch (fallbackErr) {
+              log.error({ err: fallbackErr }, 'Failed to publish fallback signal');
+            }
           }
         }
       }

@@ -129,6 +129,35 @@ export class AgentManager {
     this.alarmClock = alarmClock;
   }
 
+  /**
+   * Build env vars for agent tool permissions.
+   * Manifest declares abstract capabilities (file_read, shell, web) and
+   * MCP permission names — agent-runner maps both to concrete SDK tools.
+   */
+  private buildToolEnvVars(manifest: { allowedTools?: string[]; mcp_permissions?: Record<string, string[] | '*'> }): string[] {
+    const vars: string[] = [];
+
+    // Capabilities: abstract names like file_read, shell, web
+    // Agent-runner maps these to SDK-specific tools
+    vars.push(`AGENT_ALLOWED_TOOLS=${(manifest.allowedTools ?? []).join(',')}`);
+
+    // MCP permissions: namespace.toolName pairs for agent-runner to map to SDK MCP tool names
+    // Format: namespace:tool1,tool2;namespace2:tool3,tool4
+    const perms = manifest.mcp_permissions ?? {};
+    const parts: string[] = [];
+    for (const [ns, toolNames] of Object.entries(perms)) {
+      if (toolNames === '*') { parts.push(`${ns}:*`); continue; }
+      if (Array.isArray(toolNames) && toolNames.length > 0) {
+        parts.push(`${ns}:${toolNames.join(',')}`);
+      }
+    }
+    if (parts.length > 0) {
+      vars.push(`AGENT_MCP_PERMISSIONS=${parts.join(';')}`);
+    }
+
+    return vars;
+  }
+
   /** Returns true when credentials.json exists — agents use proxy instead of direct token */
   private isProxyMode(): boolean {
     return fs.existsSync(path.join(DATA_DIR, 'credentials.json'));
@@ -1127,8 +1156,10 @@ export class AgentManager {
       `LOG_LEVEL=info`,
       // Pass GitHub token if available (from team config or env vars, for gh CLI and git push)
       ...(githubToken ? [`GH_TOKEN=${githubToken}`] : []),
-      // Inject allowed tools from manifest (e.g. ["Skill"] for superpowers skills) — LLM agents only
-      ...(!isDeterministic && agent.manifest.allowedTools?.length ? [`AGENT_ALLOWED_TOOLS=${agent.manifest.allowedTools.join(',')}`] : []),
+      // Whitelist model: agents can ONLY use explicitly allowed tools.
+      // Capabilities (file_read, shell, web) + MCP permissions passed separately.
+      // Agent-runner maps both to concrete SDK tools.
+      ...(!isDeterministic ? this.buildToolEnvVars(agent.manifest) : []),
       // Enable context-mode MCP server for code search (opt-in via manifest) — LLM agents only
       ...(!isDeterministic && agent.manifest.context_mode ? ['CONTEXT_MODE=true'] : []),
       // Preload specific skills into systemPrompt (injected at startup) — LLM agents only
@@ -1158,8 +1189,8 @@ export class AgentManager {
         ] : []),
         // Pass CLAUDE.md content as env var (avoids Docker bind mount path resolution issues)
         ...(claudeMdContent ? [`AGENT_SYSTEM_PROMPT=${claudeMdContent}`] : []),
-        // Inject allowed tools from manifest (e.g. ["Skill"] for superpowers skills)
-        ...(agent.manifest.allowedTools?.length ? [`AGENT_ALLOWED_TOOLS=${agent.manifest.allowedTools.join(',')}`] : []),
+        // Whitelist model: capabilities + MCP permissions
+        ...this.buildToolEnvVars(agent.manifest),
         // Inject MCP servers from mcp_config manifest field
         ...(() => {
           if (!agent.manifest.mcp_config) return [];

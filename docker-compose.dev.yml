@@ -23,7 +23,7 @@ services:
       # Self-update: project source directory (for git pull + docker build)
       - .:/host-source
       # Local hub catalog mount — used for dev bootstrap (HUB_URL=file:///local-hub)
-      - ../hub:/local-hub
+      - ../core-hub:/local-hub
       # Note: SSH keys are NOT mounted. git pull uses HTTPS (default for GitHub).
       # For SSH-based remotes, configure SSH agent forwarding on the host instead.
       # Claude Code credentials — shared with host so OAuth tokens persist

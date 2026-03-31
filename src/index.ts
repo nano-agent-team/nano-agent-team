@@ -42,7 +42,7 @@ import { WorkspaceProvider } from './workspace-provider.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const DEFAULT_HUB_URL = process.env.HUB_URL ?? 'https://github.com/nano-agent-team-dev/hub.git';
+const DEFAULT_HUB_URL = process.env.HUB_URL ?? 'https://github.com/nano-agent-team/core-hub.git';
 const HUB_CACHE_DIR = '/tmp/hub';
 
 /**
@@ -57,6 +57,22 @@ const BASE_AGENTS = ['chat-agent', 'consciousness', 'conscience', 'strategist', 
  */
 function fetchHubCatalog(): boolean {
   const hubUrl = DEFAULT_HUB_URL;
+
+  // Dev mode: file:// URL → use the directory directly (supports uncommitted changes)
+  if (hubUrl.startsWith('file://')) {
+    const localPath = hubUrl.replace('file://', '');
+    if (fs.existsSync(path.join(localPath, 'agents'))) {
+      // Symlink or copy to HUB_CACHE_DIR so the rest of the code uses a consistent path
+      if (!fs.existsSync(HUB_CACHE_DIR)) {
+        fs.symlinkSync(localPath, HUB_CACHE_DIR);
+        logger.info({ localPath }, 'Hub: symlinked local directory (dev mode)');
+      }
+      return true;
+    }
+    logger.error({ localPath }, 'Hub: file:// path has no agents/ directory');
+    return false;
+  }
+
   const ghToken = process.env.GH_TOKEN;
   let cloneUrl = hubUrl;
   if (ghToken && hubUrl.includes('github.com')) {
@@ -177,19 +193,30 @@ async function main(): Promise<void> {
   // ── 1b. Start credential proxy (if credentials.json exists) ─────────────────
   let proxyServer: http.Server | null = null;
   const credPath = path.join(DATA_DIR, 'credentials.json');
-  if (fs.existsSync(credPath)) {
-    proxyServer = await startCredentialProxy(DATA_DIR);
-    logger.info('Credential proxy started on :8082');
 
-    // Auto-refresh OAuth token before expiry.
-    // Proxy reads fresh token per-request from credentials.json, so agent reload
-    // is not strictly needed — but we reload to update the gate-pass CLAUDE_CODE_OAUTH_TOKEN
-    // env var that SDK uses for its internal login check.
-    startAutoRefresh(DATA_DIR, () => {
-      logger.info('Token auto-refreshed — reloading agents for fresh gate-pass token');
-      void fetch(`http://localhost:${process.env.API_PORT ?? '3001'}/internal/reload`, { method: 'POST' }).catch(() => {});
+  function startProxyIfNeeded(): void {
+    if (proxyServer) return; // already running
+    if (!fs.existsSync(credPath)) return;
+    startCredentialProxy(DATA_DIR).then((server) => {
+      proxyServer = server;
+      logger.info('Credential proxy started on :8082');
+      startAutoRefresh(DATA_DIR, () => {
+        logger.info('Token auto-refreshed — reloading agents for fresh gate-pass token');
+        void fetch(`http://localhost:${process.env.API_PORT ?? '3001'}/internal/reload`, { method: 'POST' }).catch(() => {});
+      });
+    }).catch((err) => {
+      logger.error({ err }, 'Failed to start credential proxy');
     });
   }
+
+  startProxyIfNeeded();
+
+  // Watch for credentials.json creation (OAuth completes after first-run setup)
+  // Check every 5s — simple, no fs.watch complexity
+  const proxyWatchTimer = setInterval(() => {
+    if (proxyServer) { clearInterval(proxyWatchTimer); return; }
+    startProxyIfNeeded();
+  }, 5_000);
 
   // ── 2. Start embedded NATS if needed, then connect ─────────────────────────
   // NATS_EMBEDDED=true (or default in Docker) → spawn nats-server subprocess
@@ -397,8 +424,12 @@ async function main(): Promise<void> {
       silenceTimer = setTimeout(async () => {
         logger.info('Global silence %d min — waking consciousness', silenceMinutes);
         try {
+          // Build system state summary so consciousness can make informed decisions
+          const agents = manager.getAllAgents().map(a => `${a.manifest.id} (${a.status})`).join(', ');
           await publish(nc, 'soul.consciousness.inbox', JSON.stringify({
-            type: 'reflection', reason: 'Global silence. Read insights, check goals.', ts: Date.now(),
+            type: 'reflection',
+            reason: `Global silence for ${silenceMinutes} minutes. System state: agents=[${agents}]. Review Obsidian — check goals, plans, tasks, research outputs, and journal. What needs attention? Are there completed plans the user should know about?`,
+            ts: Date.now(),
           }));
         } catch (err) { logger.error({ err }, 'Failed to wake consciousness'); }
       }, SILENCE_TIMEOUT_MS);

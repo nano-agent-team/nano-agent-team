@@ -38,7 +38,7 @@
               </div>
 
               <!-- Plans under this idea -->
-              <div v-for="plan in idea.plans" :key="plan.id" class="tree-node plan-node">
+              <div v-for="plan in filterPlans(idea.plans)" :key="plan.id" class="tree-node plan-node">
                 <div class="node-header" @click="toggle(plan.id)">
                   <span class="expand-icon">{{ expanded[plan.id] ? '▼' : '▶' }}</span>
                   <span class="node-icon">📋</span>
@@ -48,10 +48,17 @@
 
                 <div v-if="expanded[plan.id]" class="node-children">
                   <!-- Tasks -->
-                  <div v-for="task in plan.tasks" :key="task.id" class="tree-node task-node">
-                    <div class="node-header">
-                      <span class="task-check">{{ task.done ? '✅' : '⬜' }}</span>
+                  <div v-for="task in filterTasks(plan.tasks)" :key="task.id" class="tree-node task-node">
+                    <div class="node-header" @click="toggle(task.id)">
+                      <span class="expand-icon" v-if="task.content">{{ expanded[task.id] ? '▼' : '▶' }}</span>
+                      <span class="task-status">
+                        {{ task.done ? '✅' : task.status === 'dispatched' ? '🔵' : '⬜' }}
+                      </span>
                       <span class="node-title" :class="{ done: task.done }">{{ task.title }}</span>
+                      <span v-if="task.assignedTo" class="task-assignee">→ {{ task.assignedTo }}</span>
+                    </div>
+                    <div v-if="expanded[task.id] && task.content" class="node-detail task-content">
+                      {{ task.content }}
                     </div>
                   </div>
                 </div>
@@ -80,7 +87,7 @@
               {{ idea.conscience_reason.substring(0, 150) }}{{ idea.conscience_reason.length > 150 ? '...' : '' }}
             </div>
 
-            <div v-for="plan in idea.plans" :key="plan.id" class="tree-node plan-node">
+            <div v-for="plan in filterPlans(idea.plans)" :key="plan.id" class="tree-node plan-node">
               <div class="node-header" @click="toggle(plan.id)">
                 <span class="expand-icon">{{ expanded[plan.id] ? '▼' : '▶' }}</span>
                 <span class="node-icon">📋</span>
@@ -89,10 +96,17 @@
               </div>
 
               <div v-if="expanded[plan.id]" class="node-children">
-                <div v-for="task in plan.tasks" :key="task.id" class="tree-node task-node">
-                  <div class="node-header">
-                    <span class="task-check">{{ task.done ? '✅' : '⬜' }}</span>
+                <div v-for="task in filterTasks(plan.tasks)" :key="task.id" class="tree-node task-node">
+                  <div class="node-header" @click="toggle(task.id)">
+                    <span class="expand-icon" v-if="task.content">{{ expanded[task.id] ? '▼' : '▶' }}</span>
+                    <span class="task-status">
+                      {{ task.done ? '✅' : task.status === 'dispatched' ? '🔵' : '⬜' }}
+                    </span>
                     <span class="node-title" :class="{ done: task.done }">{{ task.title }}</span>
+                    <span v-if="task.assignedTo" class="task-assignee">→ {{ task.assignedTo }}</span>
+                  </div>
+                  <div v-if="expanded[task.id] && task.content" class="node-detail task-content">
+                    {{ task.content }}
                   </div>
                 </div>
               </div>
@@ -110,7 +124,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import type { SoulState, SoulIdea, ActivityEvent } from './SoulApiClient';
+import type { SoulState, SoulIdea, SoulPlan, SoulTask, ActivityEvent } from './SoulApiClient';
 
 const props = defineProps<{
   state: SoulState;
@@ -130,6 +144,12 @@ function isHidden(status: string): boolean {
   return !showCompleted.value && HIDDEN_STATUSES.includes(status);
 }
 
+function isTaskHidden(task: { done: boolean; status?: string }): boolean {
+  if (showCompleted.value) return false;
+  if (task.done) return true;
+  return task.status ? HIDDEN_STATUSES.includes(task.status) : false;
+}
+
 const filteredGoals = computed(() => {
   return props.state.goals.filter(g => !isHidden(g.status));
 });
@@ -140,6 +160,14 @@ const filteredOrphans = computed(() => {
 
 function filterItems(items: SoulIdea[]): SoulIdea[] {
   return items.filter(i => !isHidden(i.status));
+}
+
+function filterPlans(plans: SoulPlan[]): SoulPlan[] {
+  return plans.filter(p => !isHidden(p.status));
+}
+
+function filterTasks(tasks: SoulTask[]): SoulTask[] {
+  return tasks.filter(t => !isTaskHidden(t));
 }
 </script>
 
@@ -319,9 +347,20 @@ function filterItems(items: SoulIdea[]): SoulIdea[] {
   font-weight: 600;
 }
 
-.task-check {
+.task-status {
   font-size: 12px;
   flex-shrink: 0;
+}
+
+.task-assignee {
+  color: #9ca3af;
+  font-size: 0.75rem;
+  margin-left: 0.5rem;
+}
+
+.task-content {
+  white-space: pre-wrap;
+  padding-left: 76px;
 }
 
 .tree-section {
