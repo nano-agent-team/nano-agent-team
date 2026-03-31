@@ -207,6 +207,7 @@ All notable changes to this project will be documented in this file.
 - **ci:** Update CHANGELOG [skip ci] ([`d8e96c0`](https://github.com/nano-agent-team/nano-agent-team/commit/d8e96c0f322fd4ff3ff158584153da5b81d749a7))
 - **ci:** Update CHANGELOG [skip ci] ([`ab34e96`](https://github.com/nano-agent-team/nano-agent-team/commit/ab34e9687dc986ed6ff6edaf92360163b780bff3))
 - **ci:** Update CHANGELOG [skip ci] ([`430d9f5`](https://github.com/nano-agent-team/nano-agent-team/commit/430d9f513b4432522bf5148755c5d2bcea243312))
+- **ci:** Update CHANGELOG [skip ci] ([`aec5d93`](https://github.com/nano-agent-team/nano-agent-team/commit/aec5d932b3c1507f447bc001c1168e7e4f482cc0))
 
 ### Features
 
@@ -342,6 +343,7 @@ All notable changes to this project will be documented in this file.
 - Add journal_reflect soul MCP tool for agent self-reflection ([`a4f0b72`](https://github.com/nano-agent-team/nano-agent-team/commit/a4f0b7260b9305aa2f3f14ef01e0c5c0066a003e))
 - Inject reflect phase in agent-runner before ticket_update(done) ([`bdfea0c`](https://github.com/nano-agent-team/nano-agent-team/commit/bdfea0c78a075c406b3874fec1d1fdff3263ee7f))
 - Ensure Obsidian agents/ dir exists for learnings ([`07b3624`](https://github.com/nano-agent-team/nano-agent-team/commit/07b3624bb0002e0b3d62c1e707d4c630fce53617))
+- Pipeline completion, whitelist model, layer separation, dashboard UX ([`b31f069`](https://github.com/nano-agent-team/nano-agent-team/commit/b31f0696ebfca0c5af85c26eb84db3e24367dfb4))
 
 ### Miscellaneous
 
